@@ -23,10 +23,22 @@ const (
 
 // Source binds a KPI to a live data source. Empty Kind means the value in the
 // model file is used as-is.
+//
+// Kinds: prometheus (Query), kubernetes (Metric), metrics (scrape a Prometheus
+// text endpoint: Endpoint, Path, Metric, Labels, Agg), and json or the
+// aliases gravia|netra|fabric (Endpoint, Path, Field).
 type Source struct {
-	Kind   string `yaml:"kind" json:"kind"`
-	Query  string `yaml:"query,omitempty" json:"query,omitempty"`
-	Metric string `yaml:"metric,omitempty" json:"metric,omitempty"`
+	Kind     string            `yaml:"kind" json:"kind"`
+	Query    string            `yaml:"query,omitempty" json:"query,omitempty"`
+	Metric   string            `yaml:"metric,omitempty" json:"metric,omitempty"`
+	Endpoint string            `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	Path     string            `yaml:"path,omitempty" json:"path,omitempty"`
+	Field    string            `yaml:"field,omitempty" json:"field,omitempty"`
+	Labels   map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Agg      string            `yaml:"agg,omitempty" json:"agg,omitempty"`
+	Scale    float64           `yaml:"scale,omitempty" json:"scale,omitempty"`
+	// Rate turns a cumulative counter into a per-second rate between refreshes.
+	Rate bool `yaml:"rate,omitempty" json:"rate,omitempty"`
 }
 
 type KPI struct {
@@ -63,6 +75,13 @@ const (
 	RiskHigh   Risk = "high"
 )
 
+// Execute names an executor template and its parameters. Actions without it
+// can be approved but have nothing to run.
+type Execute struct {
+	Template string            `yaml:"template" json:"template"`
+	Params   map[string]string `yaml:"params,omitempty" json:"params,omitempty"`
+}
+
 type Action struct {
 	ID          string   `yaml:"id" json:"id"`
 	Name        string   `yaml:"name" json:"name"`
@@ -70,6 +89,7 @@ type Action struct {
 	Adapter     string   `yaml:"adapter,omitempty" json:"adapter,omitempty"`
 	Risk        Risk     `yaml:"risk,omitempty" json:"risk,omitempty"`
 	Effects     []Effect `yaml:"effects" json:"effects"`
+	Execute     *Execute `yaml:"execute,omitempty" json:"execute,omitempty"`
 }
 
 type Model struct {
@@ -237,6 +257,13 @@ func (m *Model) Clone() *Model {
 		}
 		if k.Source != nil {
 			s := *k.Source
+			if s.Labels != nil {
+				l := make(map[string]string, len(s.Labels))
+				for lk, lv := range s.Labels {
+					l[lk] = lv
+				}
+				s.Labels = l
+			}
 			k.Source = &s
 		}
 		c.KPIs[i] = k
@@ -245,6 +272,17 @@ func (m *Model) Clone() *Model {
 	c.Actions = make([]Action, len(m.Actions))
 	for i, a := range m.Actions {
 		a.Effects = append([]Effect(nil), a.Effects...)
+		if a.Execute != nil {
+			ex := *a.Execute
+			if ex.Params != nil {
+				p := make(map[string]string, len(ex.Params))
+				for pk, pv := range ex.Params {
+					p[pk] = pv
+				}
+				ex.Params = p
+			}
+			a.Execute = &ex
+		}
 		c.Actions[i] = a
 	}
 	_ = c.Validate()

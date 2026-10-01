@@ -2,3 +2,4 @@
 *.zip
 .DS_Store
 coverage.out
+.deploy-last

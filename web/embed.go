@@ -1,10 +1,22 @@
 // Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-// Package web embeds the decision pulse dashboard.
+// Package web embeds the built console (web/dist, produced by `make web`).
 package web
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
-//go:embed index.html
-var FS embed.FS
+//go:embed all:dist
+var dist embed.FS
+
+// FS returns the built console rooted at dist/.
+func FS() fs.FS {
+	sub, err := fs.Sub(dist, "dist")
+	if err != nil {
+		panic(err)
+	}
+	return sub
+}

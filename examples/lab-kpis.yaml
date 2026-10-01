@@ -1,0 +1,226 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+#
+# Zyvor lab model: live eBPF datapath signals from Netra, GPU scheduling state
+# from Gravia, host KPIs from Fabric and Keep readiness, joined to service
+# KPIs. Endpoints are configured by environment (ZYNTRA_NETRA_URL,
+# ZYNTRA_GRAVIA_URL, ZYNTRA_FABRIC_URL, ZYNTRA_KEEP_URL); `zyntra
+# fake-sources` serves look-alike data for local runs.
+name: zyvor-lab
+
+kpis:
+  # —— Netra eBPF (Prometheus text from /metrics; counters become rates) ——
+  - id: tcp_retransmits_per_s
+    name: TCP retransmits
+    unit: /s
+    owner: network
+    value: 2
+    target: 5
+    direction: lower
+    source: { kind: metrics, endpoint: netra, metric: netra_tcp_retransmissions, agg: sum, rate: true }
+  - id: kernel_drops_per_s
+    name: Kernel packet drops
+    unit: /s
+    owner: network
+    value: 1
+    target: 10
+    direction: lower
+    source: { kind: metrics, endpoint: netra, metric: netra_kernel_skb_drops, agg: sum, rate: true }
+  - id: tcp_resets_per_s
+    name: TCP resets
+    unit: /s
+    owner: network
+    value: 50
+    target: 500
+    direction: lower
+    source: { kind: metrics, endpoint: netra, metric: netra_tcp_resets, agg: sum, rate: true }
+  - id: tcp_srtt_ms
+    name: TCP smoothed RTT
+    unit: ms
+    owner: network
+    value: 4
+    target: 10
+    direction: lower
+    source: { kind: metrics, endpoint: netra, metric: netra_tcp_average_srtt_us, agg: max, scale: 0.001 }
+  - id: connect_latency_ms
+    name: TCP connect latency
+    unit: ms
+    owner: network
+    value: 5
+    target: 50
+    direction: lower
+    source: { kind: metrics, endpoint: netra, metric: netra_tcp_connect_average_latency_us, agg: max, scale: 0.001 }
+  - id: netra_stale_agents
+    name: Stale Netra agents
+    owner: observability
+    value: 0
+    target: 0
+    direction: lower
+    source: { kind: metrics, endpoint: netra, metric: netra_agents_stale, agg: max }
+  - id: ebpf_health_score
+    name: eBPF datapath health
+    unit: score
+    owner: network
+    value: 90
+    target: 80
+    direction: higher
+    source: { kind: netra, path: /api/v1/ebpf/health, field: summary.healthScore }
+
+  # —— Gravia GPU scheduler (gateway JSON) ——
+  - id: gpu_utilization
+    name: GPU utilization
+    unit: "%"
+    owner: ml-platform
+    value: 0
+    source: { kind: gravia, path: /api/cluster/stats, field: utilizationPercent }
+  - id: gravia_pending_jobs
+    name: Pending GPU jobs
+    owner: ml-platform
+    value: 0
+    target: 2
+    direction: lower
+    source: { kind: gravia, path: /api/cluster/stats, field: pendingJobs }
+  - id: gravia_available_gpus
+    name: Available GPUs
+    owner: ml-platform
+    value: 0
+    source: { kind: gravia, path: /api/cluster/stats, field: availableGPUs }
+  - id: gpu_cost_total
+    name: GPU spend (all time)
+    unit: USD
+    owner: finops
+    value: 0
+    source: { kind: gravia, path: /api/metrics/costs, field: totalCost }
+
+  # —— Fabric host (REST, admin login) ——
+  - id: host_cpu_percent
+    name: Host CPU
+    unit: "%"
+    owner: platform
+    value: 20
+    target: 80
+    direction: lower
+    source: { kind: fabric, path: /api/v1/system/metrics, field: cpu_percent }
+  - id: host_memory_percent
+    name: Host memory
+    unit: "%"
+    owner: platform
+    value: 60
+    target: 75
+    direction: lower
+    source: { kind: fabric, path: /api/v1/system/metrics, field: memory_percent }
+  - id: root_disk_percent
+    name: Root filesystem used
+    unit: "%"
+    owner: platform
+    value: 20
+    target: 80
+    direction: lower
+    source: { kind: fabric, path: /api/v1/system/info, field: "filesystems.#(mountpoint=/).usage_percent" }
+  - id: host_load_1m
+    name: Host load (1m)
+    owner: platform
+    value: 4
+    target: 12
+    direction: lower
+    source: { kind: fabric, path: /api/v1/system/info, field: cpu.load_avg_1 }
+  - id: fabric_vms_running
+    name: Fabric VMs running
+    owner: platform
+    value: 0
+    source: { kind: fabric, path: /api/v1/system/containers, field: summary.running }
+
+  # —— Fabric Keep ——
+  - id: keep_sandbox_ready
+    name: Keep sandbox ready
+    owner: security
+    value: 1
+    target: 1
+    direction: higher
+    source: { kind: json, endpoint: keep, path: /v1/keep/status, field: fluxvm.ready }
+
+  # —— Service KPIs (modelled; set by your SLO tooling) ——
+  - id: service_latency_p99_ms
+    name: Inference p99 latency
+    unit: ms
+    owner: ml-serving
+    value: 185
+    target: 200
+    direction: lower
+  - id: app_availability
+    name: Service availability
+    unit: "%"
+    owner: sre
+    value: 99.95
+    target: 99.9
+    direction: higher
+  - id: gpu_queue_wait_min
+    name: GPU queue wait
+    unit: min
+    owner: ml-platform
+    value: 12
+    target: 10
+    direction: lower
+
+edges:
+  - { from: kernel_drops_per_s, to: tcp_retransmits_per_s, weight: 0.5, why: dropped skbs are retransmitted }
+  - { from: tcp_retransmits_per_s, to: service_latency_p99_ms, weight: 0.15, why: retransmits add RTOs to tail latency }
+  - { from: tcp_srtt_ms, to: service_latency_p99_ms, weight: 0.4, why: every request pays the round trip }
+  - { from: host_cpu_percent, to: service_latency_p99_ms, weight: 0.2, why: CPU contention on the serving host }
+  - { from: host_load_1m, to: host_cpu_percent, weight: 0.3, why: run-queue depth tracks CPU pressure }
+  - { from: tcp_retransmits_per_s, to: ebpf_health_score, weight: -0.1, why: Netra scores retransmits against health }
+  - { from: connect_latency_ms, to: ebpf_health_score, weight: -0.15, why: slow or failed connects lower health }
+  - { from: tcp_resets_per_s, to: app_availability, weight: -0.0005, why: resets surface as failed requests }
+  - { from: service_latency_p99_ms, to: app_availability, weight: -0.002, why: timeouts past the client deadline }
+  - { from: gravia_pending_jobs, to: gpu_queue_wait_min, weight: 0.6, why: queue depth drives wait time }
+  - { from: gpu_utilization, to: gpu_queue_wait_min, weight: -0.3, why: packing more work per GPU drains the queue }
+  - { from: gpu_queue_wait_min, to: service_latency_p99_ms, weight: 0.05, why: inference replicas wait for GPUs }
+
+actions:
+  - id: raise-inference-priority
+    name: Raise inference priority in Gravia
+    description: Create a GryviaPriority class that lets inference preempt batch jobs, with a 10 minute queue SLA.
+    adapter: gravia
+    risk: medium
+    effects:
+      - { kpi: gpu_queue_wait_min, change: -0.35 }
+      - { kpi: service_latency_p99_ms, change: -0.05 }
+    execute:
+      template: gravia.priority
+      params: { name: zyntra-inference-critical, value: "900000", maxQueueTimeMinutes: "10" }
+  - id: enable-mig-sharing
+    name: Enable MIG GPU sharing
+    description: Partition A100/H100 GPUs into 1g.10gb slices so small inference jobs share a card.
+    adapter: gravia
+    risk: medium
+    effects:
+      - { kpi: gpu_utilization, change: 0.4 }
+      - { kpi: gpu_queue_wait_min, change: -0.25 }
+    execute:
+      template: gravia.gpu-sharing
+      params: { name: zyntra-mig-inference, profile: 1g.10gb, count: "4", nodeSelector.gryvia.io/gpu-class: datacenter }
+  - id: tune-tcp-buffers
+    name: Raise NIC ring and TCP buffer sizes
+    description: Advisory. Raise rx ring and net.core.rmem_max on nodes where Netra sees kernel drops.
+    adapter: netra
+    risk: low
+    effects:
+      - { kpi: kernel_drops_per_s, change: -0.6 }
+      - { kpi: tcp_srtt_ms, change: -0.05 }
+  - id: investigate-connect-failures
+    name: Fix failing connects flagged by Netra
+    description: Advisory. Netra estimates most connection attempts fail; find the refusing service and fix the client retry storm.
+    adapter: netra
+    risk: low
+    effects:
+      - { kpi: connect_latency_ms, change: -0.3 }
+      - { kpi: tcp_resets_per_s, change: -0.5 }
+      - { kpi: ebpf_health_score, change: 0.4 }
+  - id: rebalance-host
+    name: Move batch VMs off the serving host
+    description: Advisory. Live-migrate batch VMs in Fabric to free CPU on the inference host.
+    adapter: fabric
+    risk: high
+    effects:
+      - { kpi: host_cpu_percent, change: -0.3 }
+      - { kpi: host_load_1m, change: -0.3 }

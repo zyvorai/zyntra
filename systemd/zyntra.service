@@ -1,0 +1,29 @@
+[Unit]
+Description=Zyntra decision intelligence for infrastructure
+Documentation=https://github.com/zyvorai/zyntra
+After=network-online.target zyvor-fabric-agent-runtime.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zyntra
+Group=zyntra
+EnvironmentFile=/etc/zyntra/zyntra.env
+Environment=HOME=/var/lib/zyntra
+WorkingDirectory=/var/lib/zyntra
+ExecStart=/usr/local/bin/zyntra serve -f ${ZYNTRA_MODEL}
+StateDirectory=zyntra
+StateDirectoryMode=0750
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/etc/zyntra
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zyntra
+
+[Install]
+WantedBy=multi-user.target

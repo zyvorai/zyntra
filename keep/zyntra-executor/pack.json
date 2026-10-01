@@ -1,0 +1,20 @@
+{
+  "kind": "agent",
+  "name": "zyntra-executor",
+  "entry": "agent.mjs",
+  "manifest": {
+    "template": "node22-agent",
+    "resources": { "vcpus": 1, "memory_mib": 512 },
+    "egress_mode": "deny",
+    "egress_allow_hosts": ["127.0.0.1"],
+    "allow_private_networks": true,
+    "credentials": ["zyntra-exec"],
+    "confinement": "strict",
+    "ttl_seconds": 600,
+    "egress_approval_timeout_seconds": 180
+  },
+  "goal": {
+    "title": "Execute an approved Zyntra action",
+    "text": "Call Zyntra's exec endpoint for one approved proposal through the Keep broker, or record a Zyntra decision in Keep's audit chain."
+  }
+}

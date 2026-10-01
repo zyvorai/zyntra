@@ -1,0 +1,6 @@
+.git
+bin
+state
+web/node_modules
+web/dist
+.deploy-last
