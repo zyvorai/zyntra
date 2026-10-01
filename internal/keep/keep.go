@@ -1,5 +1,5 @@
 // Copyright 2026 Zyvor AI Labs · https://zyvor.dev
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 // Package keep talks to Fabric Keep (the Zyvor agent runtime): it deploys the
 // signed zyntra-executor agent, runs approved proposals through Keep's

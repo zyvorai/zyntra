@@ -1,5 +1,5 @@
 // Copyright 2026 Zyvor AI Labs · https://zyvor.dev
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 // Package auth gates the API with a shared admin key, exchanged by the UI for
 // an HMAC-signed HttpOnly session cookie. With no key configured the API is

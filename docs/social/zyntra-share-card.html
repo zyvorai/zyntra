@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zyntra share card</title>
+<!-- 1200x630 share card: README hero and GitHub social preview. Build: ./build-social-card.sh -->
+<style>
+  :root { --bg:#09080d; --ink:#f4f2f8; --mute:#a7a2b5; --dim:#6f6a7e; --violet:#8b5cf6; --violet2:#a78bfa; --orange:#ff5a15;
+    --sans:'Avenir Next','SF Pro Display','Helvetica Neue',Helvetica,Arial,sans-serif;
+    --mono:'SF Mono','JetBrains Mono',Menlo,monospace; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; width:1200px; height:630px; overflow:hidden; background:var(--bg); }
+  body { font-family:var(--sans); color:var(--ink); -webkit-font-smoothing:antialiased; position:relative; }
+  .glow { position:absolute; inset:0; background:
+      radial-gradient(520px 420px at 900px 300px, rgba(139,92,246,.22), transparent 70%),
+      radial-gradient(300px 260px at 1010px 470px, rgba(255,90,21,.10), transparent 70%); }
+  .grid { position:absolute; inset:0; opacity:.07;
+    background-image:linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px);
+    background-size:40px 40px; mask-image:radial-gradient(600px 500px at 880px 310px, #000, transparent 75%); }
+  .stripe { position:absolute; left:0; top:0; bottom:0; width:8px; background:linear-gradient(var(--orange), var(--violet)); }
+  .left { position:absolute; left:64px; top:84px; width:560px; }
+  .eyebrow { font-family:var(--mono); font-size:15px; letter-spacing:.28em; color:var(--violet2); }
+  h1 { margin:14px 0 0; font-size:118px; line-height:1; font-weight:700; letter-spacing:-.035em; display:flex; align-items:center; gap:18px; }
+  h1 img { width:86px; height:86px; }
+  .tag { margin:22px 0 0; font-size:28px; line-height:1.32; font-weight:600; color:#d9d5e3; }
+  .tag b { color:var(--ink); }
+  .pills { display:flex; flex-wrap:wrap; gap:10px; margin-top:28px; width:540px; }
+  .pill { font-family:var(--mono); font-size:13px; letter-spacing:.06em; padding:9px 14px; border-radius:999px;
+    border:1px solid rgba(167,139,250,.35); background:rgba(139,92,246,.12); color:#d8ccff; }
+  .pill.o { border-color:rgba(255,90,21,.4); background:rgba(255,90,21,.10); color:#ffc3a8; }
+  .foot { position:absolute; left:64px; bottom:46px; font-family:var(--mono); font-size:14px; color:var(--dim); letter-spacing:.04em; }
+  svg { position:absolute; right:28px; top:40px; }
+  .lbl { font-family:var(--mono); font-size:12.5px; letter-spacing:.12em; fill:#cfc8e2; }
+  .sub { font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; fill:#8e88a3; }
+</style>
+</head>
+<body>
+<div class="glow"></div><div class="grid"></div><div class="stripe"></div>
+<div class="left">
+  <div class="eyebrow">DECISION INTELLIGENCE FOR INFRASTRUCTURE</div>
+  <h1><img src="../../web/public/zyvor-mark.svg" alt="">Zyntra</h1>
+  <p class="tag"><b>Sense. Simulate. Act</b> — live eBPF, GPU and host signals become ranked, explainable, human-approved actions.</p>
+  <div class="pills">
+    <span class="pill">KPI GRAPH</span><span class="pill">EXPLAINABLE WHAT-IF</span><span class="pill">GROUNDED AI</span>
+    <span class="pill o">APPROVAL-GATED</span><span class="pill">NETRA · GRAVIA · FABRIC KEEP</span>
+  </div>
+</div>
+<div class="foot">github.com/zyvorai/zyntra · v0.2 · Zyvor Production License</div>
+
+<svg width="560" height="560" viewBox="0 0 560 560">
+  <defs>
+    <linearGradient id="ln" x1="0" x2="1"><stop offset="0" stop-color="#8b5cf6" stop-opacity=".25"/><stop offset="1" stop-color="#a78bfa" stop-opacity=".9"/></linearGradient>
+    <linearGradient id="lo" x1="0" x2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#ff5a15"/></linearGradient>
+    <filter id="g" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <!-- sources -> KPIs -->
+  <g stroke="url(#ln)" stroke-width="1.6" fill="none">
+    <path d="M78 110 C170 110 170 190 250 190"/><path d="M78 110 C170 110 170 290 250 290"/>
+    <path d="M78 270 C170 270 170 190 250 190"/><path d="M78 270 C170 270 170 390 250 390"/>
+    <path d="M78 430 C170 430 170 290 250 290"/><path d="M78 430 C170 430 170 390 250 390"/>
+  </g>
+  <!-- KPIs -> gate -->
+  <g stroke="#a78bfa" stroke-opacity=".75" stroke-width="1.8" fill="none">
+    <path d="M262 190 C330 190 330 270 380 280"/><path d="M262 290 L378 290"/><path d="M262 390 C330 390 330 310 380 300"/>
+  </g>
+  <!-- gate -> keep -->
+  <path d="M420 290 L480 290" stroke="url(#lo)" stroke-width="2.4" filter="url(#g)"/>
+
+  <g fill="#09080d" stroke="#8b5cf6" stroke-width="2">
+    <circle cx="70" cy="110" r="9"/><circle cx="70" cy="270" r="9"/><circle cx="70" cy="430" r="9"/>
+  </g>
+  <g fill="#a78bfa"><circle cx="70" cy="110" r="3.5"/><circle cx="70" cy="270" r="3.5"/><circle cx="70" cy="430" r="3.5"/></g>
+  <text class="lbl" x="44" y="84">NETRA</text><text class="sub" x="44" y="146">eBPF</text>
+  <text class="lbl" x="44" y="244">GRAVIA</text><text class="sub" x="44" y="306">GPU</text>
+  <text class="lbl" x="44" y="404">FABRIC</text><text class="sub" x="44" y="466">HOSTS</text>
+
+  <g filter="url(#g)">
+    <circle cx="256" cy="190" r="11" fill="#1a1428" stroke="#a78bfa" stroke-width="2"/>
+    <circle cx="256" cy="290" r="11" fill="#1a1428" stroke="#ff5a15" stroke-width="2"/>
+    <circle cx="256" cy="390" r="11" fill="#1a1428" stroke="#a78bfa" stroke-width="2"/>
+  </g>
+  <text class="sub" x="226" y="166">LATENCY</text><text class="sub" x="222" y="266">GPU QUEUE</text><text class="sub" x="214" y="426">HEALTH SCORE</text>
+
+  <g filter="url(#g)">
+    <rect x="378" y="268" width="44" height="44" rx="6" transform="rotate(45 400 290)" fill="#1a1428" stroke="#a78bfa" stroke-width="2.2"/>
+    <path d="M390 291 l7 7 l13 -15" stroke="#f4f2f8" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text class="lbl" x="362" y="350">APPROVE</text>
+
+  <g filter="url(#g)">
+    <rect x="482" y="266" width="48" height="48" rx="12" fill="#1f120c" stroke="#ff5a15" stroke-width="2.2"/>
+    <path d="M497 288 v-5 a9 9 0 0 1 18 0 v5 M494 288 h24 v14 h-24 z" stroke="#ffb08a" stroke-width="2.2" fill="none" stroke-linejoin="round"/>
+  </g>
+  <text class="lbl" x="484" y="350">KEEP</text>
+</svg>
+</body>
+</html>

@@ -1,5 +1,5 @@
 // Copyright 2026 Zyvor AI Labs · https://zyvor.dev
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 // Apple Store chapter login, ported from Zyvor Fabric: a full-bleed hero
 // chapter (brand, instance strip, title, pills, CTAs) followed by a

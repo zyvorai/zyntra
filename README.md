@@ -1,22 +1,54 @@
 # Zyntra
 
 [![CI](https://github.com/zyvorai/zyntra/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/zyntra/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: Zyvor Production v1.0](https://img.shields.io/badge/License-Zyvor%20Production%20v1.0-orange.svg)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/zyvorai/zyntra?label=version&color=informational)](CHANGELOG.md)
+[![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](go.mod)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](web/package.json)
 
-**Decision intelligence for infrastructure ops. Sense, simulate, act.**
+[![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=zyntra&utm_campaign=readme_hero)
+[![30-day PoC](https://img.shields.io/badge/30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=zyntra&utm_campaign=readme_hero)
+[![Pricing](https://img.shields.io/badge/Pricing-7c3aed?style=for-the-badge)](docs/sales/enterprise-pricing.md)
+
+![Zyntra — decision intelligence for infrastructure: live signals, KPI graph, approval gate, Fabric Keep](docs/social/zyntra-share-card.png)
+
+### Stop arguing over dashboards. Know the next best action — and why.
+
+**Decision intelligence for infrastructure ops. Sense, simulate, act — with a human in the loop.**
+
+**Explainable, not generative** · **Approval-gated** · **Dry-run by default** · **Read-only adapters**
 
 Zyntra keeps a live graph of the KPIs your infrastructure is judged on (SLOs, latency, queue wait, capacity headroom, spend), shows which ones are missing target and by how much, simulates candidate actions through the dependency graph, and ranks them. Every recommendation is explained step by step and waits for human approval.
 
+![Zyntra console — Overview](docs/ux/overview.png)
+
 > **Maturity (honest):** v0.2 adds a web console, live signals from Netra (eBPF), Gravia (GPU) and Fabric (hosts and Keep), grounded AI insights, and an approval inbox that executes Gravia CRDs **only after a human approves**, in `kubectl --dry-run=server` mode by default. The simulator is still a deterministic linear model over relative changes, and you supply the edge weights. It does not learn them yet. All adapters are read-only. The AI layer explains and forecasts; it never picks or runs an action. Learned weights are on the [roadmap](docs/PRODUCT_PLAN.md).
 
-## Why
+## Why Zyntra
 
 Infra teams answer "what should we do next?" with a dozen dashboards and a meeting. Adding nodes shortens the queue but blows the budget. MIG frees GPUs but adds latency. Zyntra makes those trade-offs explicit:
 
-- **Gaps:** which KPIs miss target, who owns them, and how far off they are.
-- **What-if:** the predicted change to every KPI if you take an action, with the full propagation path.
-- **Plan:** all actions ranked by total gap reduction minus a risk penalty, flagging any gap an action would *open*.
-- **No hallucinations:** no LLM makes decisions. Every number traces back to an input, an edge or an action effect.
+| When this happens… | Zyntra gives you… |
+|---|---|
+| Five dashboards are red and nobody agrees what matters | **Gaps:** which KPIs miss target, who owns them, and how far off they are |
+| "If we add nodes, what happens to latency and spend?" | **What-if:** the predicted change to every KPI, with the full propagation path |
+| Three fixes are proposed in the incident channel | **Plan:** all actions ranked by gap closed minus risk, flagging any gap an action would *open* |
+| You don't trust an AI to touch production | **No hallucinations:** no LLM makes decisions. Every number traces back to an input, an edge or an action effect, and nothing runs until a named human approves |
+
+![How Zyntra works — live sources, KPI graph, what-if, plan, approve and run](docs/ux/readme-how-it-works.jpg)
+
+## See it
+
+| | |
+|---|---|
+| ![Plan — every action ranked by improvement minus risk](docs/ux/plan.png) | ![Simulate — what-if with before, after and target](docs/ux/simulate.png) |
+| **Plan:** every action ranked; nothing runs until approved | **Simulate:** before/after for each KPI, plus the propagation trace |
+| ![Approvals — proposal with prediction and rendered Gravia CRD](docs/ux/approvals.png) | ![Signals — live Netra, Gravia, Fabric and Keep KPIs](docs/ux/signals.png) |
+| **Approvals:** prediction, baseline and the exact Gravia CRD | **Signals:** live sources with trend and target status |
+| ![Ask Zyntra — grounded answer with sources](docs/ux/ask.png) | ![Overview in dark mode](docs/ux/overview-dark.png) |
+| **Ask:** grounded answers that list their facts | **Dark mode**, styled like Netra |
+
+![Capabilities at a glance — Sense, Decide, AI, Act](docs/ux/readme-capabilities.jpg)
 
 ## Quick start
 
@@ -114,6 +146,8 @@ Fields support `a.b.0`, `list.#` (count), `list.#(k=v)` (count matches), `list.#
 
 ## Console
 
+![Zyntra sign-in](docs/ux/login.png)
+
 `zyntra serve` embeds a React console styled like Netra, with Fabric's two-step sign-in (operator name, then access key). Its pages are Overview, Gaps, Plan, Simulate, Approvals, Audit, Signals, Insights, Ask and Model, with light and dark themes. Sign-in sets an HMAC session cookie (12 h, or 7 days with "remember me"). Scripts can use `Authorization: Bearer $ZYNTRA_API_KEY` instead.
 
 ## AI (grounded, read-only)
@@ -123,6 +157,8 @@ Fields support `a.b.0`, `list.#` (count), `list.#(k=v)` (count matches), `list.#
 - **Digest, Ask and Explain:** built from gaps, plan, anomalies and source health, with the grounding facts listed. Set `ZYNTRA_AI_BASE_URL` (an OpenAI-compatible endpoint such as the Fabric AI gateway) and the model rewrites the grounded answer. Without it, the heuristic answer is returned.
 
 ## Approvals and execution
+
+![Approval lane — propose, approve, execute in Keep, verify](docs/ux/readme-safety.jpg)
 
 1. **Propose** an action from the plan. Zyntra stores the prediction and baseline and renders the change it would make (a `GryviaPriority`, `GryviaGPUSharingPolicy` or Job suspend).
 2. **Approve** or reject it in the inbox. The decision is recorded with the operator's name and an optional reason.
@@ -218,4 +254,31 @@ cd web && ZYNTRA_DEV_API=http://127.0.0.1:8080 npm run dev   # console with hot 
 docker build -t zyntra .
 ```
 
-See [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under Apache-2.0.
+See [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Social and README images are rebuilt from HTML; see [docs/social](docs/social/README.md).
+
+## Editions and pricing
+
+Every capability in this repository stays in **Community**, which is free for non-production use. Production use needs a commercial license. Subscriptions are priced by **managed clusters and KPI graphs**, with unlimited users and approvers.
+
+| Edition | Annual price | Capacity | Support |
+|---|---|---|---|
+| Community | Free (non-production) | Unlimited non-production clusters | Community |
+| Enterprise Essentials | INR 9 lakh / USD 11k | 2 clusters · 5 KPI graphs | 8×5, next business day |
+| **Enterprise** | **INR 24 lakh / USD 29k** | **10 clusters · 25 KPI graphs** | **24×7, P1 in 1 hour** |
+| Enterprise Scale | INR 48 lakh / USD 58k | 40 clusters · 100 KPI graphs | 24×7, P1 in 30 min + TAM |
+| Sovereign / MSP | INR 1 crore / USD 120k+ | Custom | Mission-critical |
+
+Enterprise adds multi-cluster decisions, OIDC/SAML and RBAC, approval policy (change windows, two-person rule, risk-bounded auto-approve), durable decision history, learned edge weights, managed connectors, and certified delivery. A 90-day paid pilot (INR 4–8 lakh) is credited to year one.
+
+[Full pricing sheets](docs/sales/enterprise-pricing.md) · [Pricing PDF](docs/sales/Zyvor-Zyntra-Enterprise-Pricing.pdf) · [Buyer resources](docs/sales/README.md)
+
+## License
+
+Licensed under the **[Zyvor Production License v1.0](LICENSE)**.
+
+- **Free** for development, testing, evaluation, research, education, and non-production labs
+- **Paid commercial license required** for production, customer workloads, SaaS, managed services, OEM, redistribution, and other revenue-generating use
+
+Commercial terms are issued separately: [https://zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=zyntra&utm_campaign=readme_footer).
+
+**Next step:** [Book a demo](https://zyvor.dev/schedule?utm_source=github&utm_medium=zyntra&utm_campaign=readme_footer) · [30-day PoC](https://zyvor.dev/poc?utm_source=github&utm_medium=zyntra&utm_campaign=readme_footer) · [sales@zyvor.dev](mailto:sales@zyvor.dev)

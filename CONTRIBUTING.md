@@ -8,4 +8,4 @@ Thanks for helping improve Zyntra.
 4. Run `make check` and `make test-e2e`.
 5. Keep recommendations explainable: every number Zyntra shows must be traceable to an input, an edge or an action effect.
 
-Contributions are accepted under the Apache License 2.0.
+Contributions are accepted under the Zyvor Production License. Include the `LicenseRef-Zyvor-Production-1.0` SPDX header in new source files.

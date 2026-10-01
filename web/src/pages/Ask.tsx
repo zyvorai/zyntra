@@ -22,7 +22,9 @@ export default function Ask() {
   const [busy, setBusy] = useState(false);
   const end = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), [turns]);
+  useEffect(() => {
+    end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [turns]);
 
   const ask = async (question: string) => {
     const text = question.trim();

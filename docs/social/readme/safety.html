@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Zyntra safety</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+     1600x560. Rendered by ./build.sh to docs/ux/readme-safety.jpg. Claims are the README's own. -->
+<link rel="stylesheet" href="card.css">
+<style>
+  body { height:560px; }
+  .flow { margin-top:24px; grid-template-columns:repeat(4,1fr); }
+  .flow .card { min-height:230px; }
+  .flow .card:not(:last-child)::after { content:""; position:absolute; right:-31px; top:50%; margin-top:-11px;
+    border-left:16px solid var(--soft); border-top:11px solid transparent; border-bottom:11px solid transparent; }
+  .lease { margin-top:24px; display:flex; align-items:center; gap:16px; background:var(--ink); color:#efeaf8; border-radius:12px; padding:14px 22px; font-family:var(--mono); font-size:21px; }
+  .lease .tag { color:#ff8a55; font-weight:700; letter-spacing:.1em; font-size:15px; }
+</style></head><body>
+<div class="bar"></div>
+<div class="wrap">
+  <div class="top"><img src="../../../web/public/zyvor-mark.svg" alt=""><b>Zyvor</b><span>&middot;</span><span>Zyntra</span><span class="r">Approval lane</span></div>
+  <h1>Propose. Approve. Execute. <em>Audit everything.</em></h1>
+  <div class="row flow">
+    <div class="card a"><span class="lane">PROPOSE</span><h3>Prediction stored</h3><p>The baseline, the predicted KPIs and the rendered change (a Gravia CRD or Job suspend) are saved with the proposal.</p></div>
+    <div class="card k"><span class="lane">APPROVE</span><h3>A named human</h3><p>Approve or reject in the inbox. The operator's name and reason are recorded. Rejections are mirrored to Keep.</p></div>
+    <div class="card or"><span class="lane">EXECUTE</span><h3>Keep sandbox</h3><p>A signed <b>zyntra-executor</b> runs in a FluxVM and calls back over loopback TLS with a brokered credential.</p></div>
+    <div class="card o"><span class="lane">VERIFY</span><h3>Predicted vs actual</h3><p>Keep receipt, hash-chained audit entry, and the real KPI change once values refresh.</p></div>
+  </div>
+  <div class="lease"><span class="tag">GUARANTEES</span><span>Adapters are read-only &middot; dry-run by default &middot; the signer seed never leaves your workstation.</span></div>
+  <div class="foot"><b>zyvor.dev/zyntra</b><span class="r">ZYNTRA_APPROVAL_MODE=keep</span></div>
+</div>
+</body></html>

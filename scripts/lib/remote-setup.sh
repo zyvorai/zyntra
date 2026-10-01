@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Zyvor AI Labs · https://zyvor.dev
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # remote-setup.sh — runs as root on the target host (copied by deploy-remote.sh).
 #
 #   remote-setup.sh install <stage-dir> <port> <exec-port> <owner>

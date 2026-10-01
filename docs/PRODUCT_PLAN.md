@@ -57,6 +57,5 @@ Zyntra applies the same loop to **infrastructure**, where:
 
 ## Open questions
 
-- Pricing unit: per cluster, per KPI or per managed node?
-- Open-core split: is the simulator open source with adapters and the approval gate commercial (like Argus and Argus Enterprise)?
+- Licensing (resolved in v0.2): Zyvor Production License v1.0, free for non-production use. Production needs an annual subscription priced by managed clusters and KPI graphs; see [enterprise pricing](sales/enterprise-pricing.md).
 - Domain: confirm `zyntra.dev` availability and register it.
