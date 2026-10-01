@@ -1,0 +1,111 @@
+# Zyntra KPI model: a shared GPU inference + training cluster.
+#
+# Edges use relative changes: weight 1.5 from gpu_nodes to capacity_headroom
+# means +10% nodes -> +15% headroom. Values here are a static snapshot; add a
+# `source` to a KPI to refresh it live (see prometheus-kpis.yaml).
+name: gpu-cluster-prod
+
+kpis:
+  - id: gpu_nodes
+    name: GPU nodes
+    unit: nodes
+    owner: platform
+    value: 8
+
+  - id: capacity_headroom
+    name: Capacity headroom
+    unit: "%"
+    owner: platform
+    value: 8
+    target: 20
+    direction: higher
+
+  - id: queue_wait_minutes
+    name: Training queue wait
+    unit: min
+    owner: ml-platform
+    value: 35
+    target: 15
+    direction: lower
+
+  - id: p99_inference_latency
+    name: p99 inference latency
+    unit: ms
+    owner: inference
+    value: 420
+    target: 300
+    direction: lower
+
+  - id: slo_availability
+    name: Inference availability
+    unit: "%"
+    owner: sre
+    value: 99.82
+    target: 99.9
+    direction: higher
+
+  - id: monthly_cost
+    name: Monthly GPU spend
+    unit: k$
+    owner: finops
+    value: 180
+    target: 200
+    direction: lower
+
+edges:
+  - from: gpu_nodes
+    to: capacity_headroom
+    weight: 1.5
+    why: more nodes free up schedulable GPU capacity
+  - from: gpu_nodes
+    to: monthly_cost
+    weight: 1.0
+    why: spend scales with node count
+  - from: capacity_headroom
+    to: queue_wait_minutes
+    weight: -0.8
+    why: free GPUs drain the training queue
+  - from: capacity_headroom
+    to: p99_inference_latency
+    weight: -0.5
+    why: inference pods stop competing for saturated GPUs
+  - from: p99_inference_latency
+    to: slo_availability
+    weight: -0.0025
+    why: latency spikes trip request timeouts
+
+actions:
+  - id: add_gpu_nodes
+    name: Add 2 GPU nodes
+    description: Scale the GPU node pool from 8 to 10 nodes.
+    adapter: zynera
+    risk: low
+    effects:
+      - {kpi: gpu_nodes, change: 0.25}
+
+  - id: preempt_batch_to_spot
+    name: Move batch training to spot GPUs
+    description: Preempt low-priority batch jobs onto spot capacity, freeing on-demand GPUs for inference.
+    adapter: zynera
+    risk: medium
+    effects:
+      - {kpi: capacity_headroom, change: 0.8}
+      - {kpi: monthly_cost, change: -0.05}
+
+  - id: enable_mig
+    name: Enable MIG partitioning
+    description: Split A100s into MIG slices so small inference models stop holding whole GPUs.
+    adapter: zynera
+    risk: medium
+    effects:
+      - {kpi: capacity_headroom, change: 0.6}
+      - {kpi: p99_inference_latency, change: 0.1}
+
+  - id: scale_down_idle
+    name: Scale down idle nodes overnight
+    description: Remove idle nodes outside business hours.
+    adapter: fleet
+    risk: low
+    effects:
+      - {kpi: monthly_cost, change: -0.1}
+      - {kpi: capacity_headroom, change: -0.4}

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zyntra · Decision pulse</title>
+<style>
+  :root { color-scheme: dark; --bg:#0c1222; --panel:#131b2e; --line:#24304a; --text:#e6ebf5; --muted:#8a97b2; --bad:#f0583a; --good:#3ecf8e; --accent:#7aa2ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:16px; }
+  header h1 { margin:0; font-size:18px; }
+  header .muted { color:var(--muted); }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px 24px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  section.wide { grid-column:1 / -1; }
+  h2 { margin:0 0 12px; font-size:14px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  .bad { color:var(--bad); } .good { color:var(--good); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--muted); }
+  button { background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px; padding:3px 10px; cursor:pointer; }
+  pre { white-space:pre-wrap; margin:0; color:var(--muted); font-size:12px; }
+  #pulse { width:10px; height:10px; border-radius:50%; background:var(--good); display:inline-block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zyntra</h1>
+  <span class="muted">Decision pulse</span>
+  <span id="pulse" title="live"></span>
+  <span class="muted" id="sev"></span>
+</header>
+<main>
+  <section>
+    <h2>KPI gaps</h2>
+    <table><thead><tr><th>KPI</th><th>Owner</th><th>Now</th><th>Target</th><th>Off by</th></tr></thead><tbody id="gaps"></tbody></table>
+  </section>
+  <section>
+    <h2>Recommended actions <span class="pill">pending approval</span></h2>
+    <table><thead><tr><th>#</th><th>Action</th><th>Risk</th><th>Gain</th><th></th></tr></thead><tbody id="recs"></tbody></table>
+  </section>
+  <section class="wide">
+    <h2>Simulation</h2>
+    <div id="sim" class="muted">Pick an action to see the predicted KPI changes and why.</div>
+  </section>
+</main>
+<script>
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+const row = cells => { const tr = el('tr'); cells.forEach(c => tr.append(c instanceof Node ? (() => { const td = el('td'); td.append(c); return td; })() : el('td', c))); return tr; };
+const num = v => String(+v.toFixed(2));
+const pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+
+function render(p) {
+  document.getElementById('sev').textContent = 'total gap severity ' + p.severity_total.toFixed(2);
+  const g = document.getElementById('gaps'); g.replaceChildren();
+  (p.gaps || []).forEach(x => g.append(row([x.name, x.owner || '', num(x.value) + ' ' + (x.unit || ''), num(x.target), el('span', pct(x.severity), 'bad')])));
+  if (!(p.gaps || []).length) g.append(row([el('span', 'All KPIs on target', 'good')]));
+  const r = document.getElementById('recs'); r.replaceChildren();
+  (p.top || []).forEach(x => { const b = el('button', 'Simulate'); b.onclick = () => simulate(x.action); r.append(row([String(x.rank), x.name, x.risk || 'low', el('span', '-' + x.improvement.toFixed(2), 'good'), b])); });
+}
+
+async function simulate(action) {
+  const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+  const s = await res.json();
+  const box = document.getElementById('sim'); box.replaceChildren();
+  if (s.error) { box.append(el('span', s.error, 'bad')); return; }
+  box.append(el('p', s.action_name + ': severity ' + s.severity_before.toFixed(2) + ' -> ' + s.severity_after.toFixed(2)));
+  const t = el('table'); t.append(row(['KPI', 'Before', 'After', 'Change', 'Target']));
+  s.kpis.filter(k => k.change !== 0).forEach(k => t.append(row([k.name, num(k.before), num(k.after), pct(k.change),
+    k.has_target ? el('span', k.met_after ? 'met' : 'missed', k.met_after ? 'good' : 'bad') : ''])));
+  box.append(t);
+  box.append(el('pre', s.trace.map(x => x.text).join('\n')));
+}
+
+const es = new EventSource('/api/events');
+es.addEventListener('pulse', e => render(JSON.parse(e.data)));
+es.onerror = () => { document.getElementById('pulse').style.background = 'var(--bad)'; };
+es.onopen = () => { document.getElementById('pulse').style.background = 'var(--good)'; };
+</script>
+</body>
+</html>

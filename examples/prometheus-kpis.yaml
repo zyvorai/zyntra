@@ -1,0 +1,43 @@
+# Same idea as kpis.yaml, but values refresh live:
+#   zyntra gaps -f examples/prometheus-kpis.yaml -prometheus http://prometheus:9090 -kubectl
+# Values below are fallbacks used when a source is unavailable.
+name: gpu-cluster-live
+
+kpis:
+  - id: gpu_nodes
+    name: Ready nodes
+    unit: nodes
+    value: 8
+    source: {kind: kubernetes, metric: nodes_ready}
+
+  - id: capacity_headroom
+    name: GPU headroom
+    unit: "%"
+    value: 8
+    target: 20
+    direction: higher
+    source:
+      kind: prometheus
+      query: 100 * (1 - avg(DCGM_FI_DEV_GPU_UTIL) / 100)
+
+  - id: p99_inference_latency
+    name: p99 inference latency
+    unit: ms
+    value: 420
+    target: 300
+    direction: lower
+    source:
+      kind: prometheus
+      query: 1000 * histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job="inference"}[5m])) by (le))
+
+edges:
+  - {from: gpu_nodes, to: capacity_headroom, weight: 1.5}
+  - {from: capacity_headroom, to: p99_inference_latency, weight: -0.5}
+
+actions:
+  - id: add_gpu_nodes
+    name: Add 2 GPU nodes
+    adapter: zynera
+    risk: low
+    effects:
+      - {kpi: gpu_nodes, change: 0.25}
