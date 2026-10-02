@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 */
+/* Zyvor brand for the README cards: ink #111, signal orange #ff5a15, white, warm paper.
+   Same tokens as the enterprise pricing sheets. Cards are 1600 CSS px wide and are
+   rendered at deviceScaleFactor 2 (3200 px) by build.cjs. */
+:root {
+  --ink:#111111; --signal:#ff5a15; --deep:#cc420a; --tint:#fdf5f2; --paper:#f7f3ec;
+  --rule:#e6dfda; --grey:#5b5651; --white:#ffffff;
+  --display:"Avenir Next Condensed","Avenir Next","Helvetica Neue",Arial,sans-serif;
+  --sans:"Avenir Next","Avenir","Helvetica Neue",Arial,sans-serif;
+  --mono:"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; }
+body { width:1600px; background:var(--paper); color:var(--ink); font-family:var(--sans); position:relative; overflow:hidden; -webkit-font-smoothing:antialiased; }
+.topbar { height:84px; background:var(--ink); display:flex; align-items:center; padding:0 64px; gap:18px; color:#fff; }
+.topbar img { height:44px; }
+.topbar .name { font-family:var(--display); font-weight:700; font-size:30px; letter-spacing:.2em; text-transform:uppercase; }
+.topbar .name b { color:var(--signal); font-weight:700; }
+.topbar .r { margin-left:auto; font-family:var(--mono); font-size:17px; letter-spacing:.14em; text-transform:uppercase; color:#bdb6ae; }
+.main { padding:46px 64px 0; }
+.eyebrow { font-family:var(--mono); font-size:18px; letter-spacing:.16em; text-transform:uppercase; color:var(--deep); font-weight:700; }
+h1 { margin:12px 0 0; font-family:var(--display); font-weight:800; font-size:76px; line-height:1; letter-spacing:-.01em; text-transform:none; }
+h1 em { font-style:normal; color:var(--signal); }
+.lede { margin:16px 0 0; font-size:25px; line-height:1.38; color:var(--grey); max-width:1180px; }
+.foot { margin-top:52px; height:64px; background:var(--ink); color:#bdb6ae; display:flex; align-items:center; padding:0 64px; font-family:var(--mono); font-size:16px; letter-spacing:.1em; text-transform:uppercase; }
+.foot b { color:#fff; font-weight:700; } .foot .r { margin-left:auto; color:var(--signal); }
+.tile { position:relative; background:#fff; border:2px solid var(--rule); border-radius:18px; padding:26px 28px 24px; }
+.tile::before { content:""; position:absolute; left:28px; top:0; width:64px; height:6px; background:var(--signal); border-radius:0 0 4px 4px; }
+.tile.dark { background:var(--ink); border-color:var(--ink); color:#fff; } .tile.dark p, .tile.dark li { color:#d8d2ca; }
+.tile h3 { margin:6px 0 8px; font-family:var(--display); font-size:34px; line-height:1.05; font-weight:800; }
+.tile p { margin:0; font-size:21px; line-height:1.38; color:var(--grey); }
+.tile ul { margin:12px 0 0; padding:0; list-style:none; }
+.tile li { font-size:21px; line-height:1.3; padding:7px 0 7px 26px; position:relative; border-top:1px solid var(--rule); color:#2b2825; }
+.tile.dark li { border-color:#2d2a27; }
+.tile li:first-child { border-top:0; }
+.tile li::before { content:""; position:absolute; left:2px; top:15px; width:11px; height:11px; border-radius:3px; background:var(--signal); }
+.tag { display:inline-block; font-family:var(--mono); font-size:15px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:#fff; background:var(--ink); border-radius:999px; padding:5px 14px; }
+.tag.o { background:var(--signal); } .tag.l { background:var(--tint); color:var(--deep); border:1.5px solid #f3c9b6; }
+.grid { display:grid; gap:24px; }
+.num { font-family:var(--display); font-weight:800; font-size:44px; color:var(--signal); line-height:1; }

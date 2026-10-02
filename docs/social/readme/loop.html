@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra — The decision loop</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<link rel="stylesheet" href="brand.css">
+<style>.loop{display:grid;grid-template-columns:repeat(7,1fr);gap:14px;margin-top:40px}
+.step{position:relative;background:#fff;border:2px solid var(--rule);border-radius:16px;padding:20px 16px 18px;min-height:276px;display:flex;flex-direction:column;gap:6px}
+.step h3{margin:4px 0 0;font-family:var(--display);font-size:31px;font-weight:800;line-height:1.05}
+.step p{margin:0;font-size:18px;line-height:1.35;color:var(--grey);flex:1}
+.step.hot{background:var(--ink);border-color:var(--ink);color:#fff}.step.hot p{color:#d8d2ca}
+.step:not(:last-child)::after{content:"";position:absolute;right:-15px;top:50%;width:14px;height:14px;border-top:4px solid var(--signal);border-right:4px solid var(--signal);transform:translateY(-50%) rotate(45deg);z-index:2}
+.belts{display:grid;grid-template-columns:4fr 1fr 2fr;gap:14px;margin-top:16px}
+.belt{height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:15px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+.b1{background:var(--tint);color:var(--deep);border:2px solid #f3c9b6}.b2{background:var(--signal);color:#fff}.b3{background:var(--ink);color:#fff}
+.back{margin-top:6px}.backlabel{margin:-6px 0 0 64px;font-size:21px;color:var(--grey)}
+.trust{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:26px}
+.trust div{border-left:6px solid var(--signal);padding:6px 0 6px 18px;font-size:22px;line-height:1.35;color:#2b2825}.trust b{color:var(--ink)}</style></head>
+<body>
+<div class="topbar"><img src="zyvor-mark.svg" alt=""><span class="name">Zyvor <b>Zyntra</b></span><span class="r">The decision loop</span></div>
+<div class="main">
+<div class="eyebrow">How it works</div>
+<h1>Sense. Simulate. <em>Decide.</em> Act.</h1>
+<p class="lede">Zyntra turns the numbers you already collect into one ranked list of next actions, with the reasoning attached. Nothing runs until a person approves it.</p>
+<div class="loop"><div class="step"><div class="num">1</div><h3>Sources</h3><p>CSV · JSON · Prometheus · SQL · REST · Kubernetes · webhooks</p><span class="tag">read-only</span></div><div class="step"><div class="num">2</div><h3>KPI graph</h3><p>Targets, owners and declared cause-and-effect edges</p><span class="tag">declared</span></div><div class="step"><div class="num">3</div><h3>What-if</h3><p>Interval prediction with the full propagation path</p><span class="tag">explained</span></div><div class="step"><div class="num">4</div><h3>Ranked plan</h3><p>Gap closed minus risk; hard constraints flagged</p><span class="tag">ranked</span></div><div class="step hot"><div class="num">5</div><h3>Approval</h3><p>A named human, quorum and roles, change windows</p><span class="tag o">human</span></div><div class="step"><div class="num">6</div><h3>Execute</h3><p>Re-checked first. Dry-run unless you turn it on</p><span class="tag">dry-run</span></div><div class="step"><div class="num">7</div><h3>Verify</h3><p>KPI back within target, or roll back</p><span class="tag">proven</span></div></div>
+<div class="belts"><div class="belt b1"><span>Read-only against your systems</span></div><div class="belt b2"><span>Human decision</span></div><div class="belt b3"><span>Checked after the change</span></div></div>
+<div class="back"><svg viewBox="0 0 1472 64" width="1472" height="64"><path d="M1408 4 V40 Q1408 56 1392 56 H80 Q64 56 64 40 V10" fill="none" stroke="#ff5a15" stroke-width="4" stroke-dasharray="3 10" stroke-linecap="round"/><path d="M52 20 L64 4 L76 20" fill="none" stroke="#ff5a15" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<div class="backlabel">Every outcome is recorded. Calibration backtests the model against what really happened, and only suggests corrections.</div></div>
+<div class="trust"><div><b>No model decides.</b> Every number traces to an input, an edge or an action effect.</div><div><b>Every step is on the record.</b> Hash-chained audit and Ed25519-signed decision records.</div></div>
+</div>
+<div class="foot"><span><b>Zyvor</b> · decision intelligence</span><span class="r">github.com/zyvorai/zyntra</span></div>
+</body></html>
