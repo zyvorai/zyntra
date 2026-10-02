@@ -3,7 +3,9 @@ Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 */}}
 {{- define "zyntra.fullname" -}}
-{{- if contains .Chart.Name .Release.Name -}}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else if contains .Chart.Name .Release.Name -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
 {{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
