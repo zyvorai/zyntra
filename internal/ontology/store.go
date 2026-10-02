@@ -6,11 +6,8 @@ package ontology
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -105,29 +102,46 @@ type Store struct {
 	path   string
 	schema *Schema
 	s      state
+	// backend persists changes; nil keeps the store in memory.
+	backend    Backend
+	extHistory bool // the backend keeps the change log, not memory
+	ix         index
+	dirty      []op
+	batch      int
 	// Audit, when set, is told about every ingest and merge so the
 	// decision audit chain covers ontology changes.
 	Audit func(subject, by, note string)
 }
 
-// Open loads the store from path; an empty path keeps it in memory.
+// Open loads the store from path; an empty path keeps it in memory. A .db,
+// .sqlite or .sqlite3 path selects the SQLite backend, any other the JSON file.
 func Open(path string, schema *Schema) (*Store, error) {
-	if schema == nil {
-		return nil, errors.New("ontology: nil schema")
-	}
-	st := &Store{path: path, schema: schema, s: state{Version: 1, Objects: map[string]Object{}, Links: map[string]Link{}, Candidates: map[string]Candidate{}, Redirects: map[string]string{}}}
 	if path == "" {
-		return st, nil
+		return OpenBackend(nil, schema)
 	}
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return st, nil
-	}
+	be, err := NewBackend(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, &st.s); err != nil {
+	return OpenBackend(be, schema)
+}
+
+// OpenBackend loads the store from a backend (nil for memory only).
+func OpenBackend(be Backend, schema *Schema) (*Store, error) {
+	if schema == nil {
+		return nil, errors.New("ontology: nil schema")
+	}
+	st := &Store{schema: schema, backend: be, s: emptyState(), ix: newIndex()}
+	if be == nil {
+		return st, nil
+	}
+	loaded, err := be.Load()
+	if err != nil {
+		be.Close()
 		return nil, err
+	}
+	if loaded.Objects != nil {
+		st.s = loaded
 	}
 	if st.s.Objects == nil {
 		st.s.Objects = map[string]Object{}
@@ -141,26 +155,16 @@ func Open(path string, schema *Schema) (*Store, error) {
 	if st.s.Redirects == nil {
 		st.s.Redirects = map[string]string{}
 	}
+	_, st.extHistory = be.(HistoryReader)
+	st.reindex()
 	return st, nil
 }
 
-func (s *Store) save() error {
-	if s.path == "" {
-		return nil
-	}
-	b, err := json.MarshalIndent(s.s, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
-		return err
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o640); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+func emptyState() state {
+	return state{Version: 1, Objects: map[string]Object{}, Links: map[string]Link{}, Candidates: map[string]Candidate{}, Redirects: map[string]string{}}
 }
+
+func (s *Store) save() error { return s.flush() }
 
 // Upsert adds or merges an object. Properties are replaced per name, so a
 // later observation of one property keeps the others. It rejects unknown
@@ -212,19 +216,16 @@ func (s *Store) Upsert(o Object) error {
 			if had {
 				c.Before = &old
 			}
-			s.s.History = append(s.s.History, c)
+			s.addChange(c)
 		}
 		cur.Props[k] = v
-	}
-	if n := len(s.s.History); n > maxHistory {
-		s.s.History = append([]Change(nil), s.s.History[n-maxHistory:]...)
 	}
 	for _, a := range o.Aliases {
 		if !hasAlias(cur.Aliases, a) {
 			cur.Aliases = append(cur.Aliases, a)
 		}
 	}
-	s.s.Objects[o.ID] = cur
+	s.putObject(cur)
 	return s.save()
 }
 
@@ -263,7 +264,7 @@ func (s *Store) AddLink(typ, from, to string, prov Prov) (Link, error) {
 		return Link{}, fmt.Errorf("link %s joins %s to %s, not %s to %s", typ, lt.From, lt.To, f.Type, t.Type)
 	}
 	l := Link{ID: LinkID(typ, from, to), Type: typ, From: from, To: to, Prov: prov}
-	s.s.Links[l.ID] = l
+	s.putLink(l)
 	return l, s.save()
 }
 
@@ -308,11 +309,10 @@ func (s *Store) Links(id string) []Link {
 }
 
 func (s *Store) linksLocked(id string) []Link {
-	var out []Link
-	for _, l := range s.s.Links {
-		if l.From == id || l.To == id {
-			out = append(out, l)
-		}
+	ids := s.ix.adj[id]
+	out := make([]Link, 0, len(ids))
+	for lid := range ids {
+		out = append(out, s.s.Links[lid])
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -418,6 +418,13 @@ func (s *Store) History(id string) []Change {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	id = s.resolveLocked(id)
+	if hr, ok := s.backend.(HistoryReader); ok && s.extHistory {
+		out, err := hr.History(id)
+		if err != nil {
+			return nil
+		}
+		return out
+	}
 	var out []Change
 	for _, c := range s.s.History {
 		if c.Object == id {

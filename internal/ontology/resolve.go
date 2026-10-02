@@ -53,26 +53,26 @@ func (s *Store) propose(id string) int {
 		return 0
 	}
 	mine, ok := o.Props[ot.Match]
-	if !ok || normalise(mine.V) == "" {
+	key, kok := s.matchKey(o)
+	if !ok || !kok {
 		return 0
 	}
 	n := 0
-	for _, other := range s.s.Objects {
-		// Objects of different tenants are never candidates for merging.
-		if other.ID == id || other.Type != o.Type || other.Tenant != o.Tenant {
+	// The index holds objects of this type and tenant with the same
+	// normalised value, so different tenants are never candidates.
+	for otherID := range s.ix.match[key] {
+		other := s.s.Objects[otherID]
+		if other.ID == id {
 			continue
 		}
-		theirs, ok := other.Props[ot.Match]
-		if !ok || normalise(theirs.V) != normalise(mine.V) {
-			continue
-		}
+		theirs := other.Props[ot.Match]
 		cid := candID(id, other.ID)
 		if _, seen := s.s.Candidates[cid]; seen {
 			continue
 		}
 		a, b := other.ID, id // the older object is kept
-		s.s.Candidates[cid] = Candidate{ID: cid, A: a, B: b, Status: "pending",
-			Reason: fmt.Sprintf("%s %q and %q normalise to the same value", ot.Match, mine.V, theirs.V)}
+		s.putCand(Candidate{ID: cid, A: a, B: b, Status: "pending",
+			Reason: fmt.Sprintf("%s %q and %q normalise to the same value", ot.Match, mine.V, theirs.V)})
 		n++
 	}
 	if n > 0 {
@@ -113,7 +113,7 @@ func (s *Store) Decide(id string, accept bool, by string) (Candidate, error) {
 	c.DecidedBy = by
 	if !accept {
 		c.Status = "rejected"
-		s.s.Candidates[id] = c
+		s.putCand(c)
 		err := s.save()
 		s.mu.Unlock()
 		s.note(c, by, "rejected")
@@ -140,14 +140,11 @@ func (s *Store) Decide(id string, accept bool, by string) (Candidate, error) {
 	if al := (Alias{System: ns, ExternalID: key}); !hasAlias(a.Aliases, al) {
 		a.Aliases = append(a.Aliases, al)
 	}
-	s.s.Objects[a.ID] = a
-	delete(s.s.Objects, b.ID)
-	s.s.Redirects[b.ID] = a.ID
-	for lid, l := range s.s.Links {
-		if l.From != b.ID && l.To != b.ID {
-			continue
-		}
-		delete(s.s.Links, lid)
+	s.delObject(b.ID)
+	s.putObject(a)
+	s.putRedirect(b.ID, a.ID)
+	for _, l := range s.linksLocked(b.ID) {
+		s.delLink(l.ID)
 		if l.From == b.ID {
 			l.From = a.ID
 		}
@@ -158,10 +155,10 @@ func (s *Store) Decide(id string, accept bool, by string) (Candidate, error) {
 			continue
 		}
 		l.ID = LinkID(l.Type, l.From, l.To)
-		s.s.Links[l.ID] = l
+		s.putLink(l)
 	}
 	c.Status = "accepted"
-	s.s.Candidates[id] = c
+	s.putCand(c)
 	err := s.save()
 	s.mu.Unlock()
 	s.note(c, by, "accepted: merged "+c.B+" into "+c.A)

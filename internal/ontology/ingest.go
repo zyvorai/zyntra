@@ -51,8 +51,14 @@ type IngestReport struct {
 // Ingest writes a batch of records in two passes (objects, then links) so a
 // link may point at an object later in the same batch. Records that fail
 // validation are skipped and reported; one bad row never drops the batch.
-func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (IngestReport, error) {
+func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (_ IngestReport, err error) {
 	rep := IngestReport{Source: source}
+	s.beginBatch()
+	defer func() {
+		if ferr := s.endBatch(); ferr != nil && err == nil {
+			err = ferr
+		}
+	}()
 	sorted := append([]Record(nil), recs...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].Type+sorted[i].Namespace+sorted[i].Key < sorted[j].Type+sorted[j].Namespace+sorted[j].Key
@@ -157,14 +163,9 @@ func (s *Store) digest() string {
 func (s *Store) byAlias(as []Alias, tenant string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, o := range s.s.Objects {
-		if o.Tenant != tenant {
-			continue
-		}
-		for _, a := range as {
-			if hasAlias(o.Aliases, a) {
-				return o.ID, true
-			}
+	for _, a := range as {
+		if id, ok := s.ix.alias[aliasKey(tenant, a)]; ok {
+			return id, true
 		}
 	}
 	return "", false
