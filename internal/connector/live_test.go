@@ -579,3 +579,49 @@ func TestNextRunCountsFromTheEndAndSlowIsFlagged(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLSnapshotQueryPrunesDeletedRows(t *testing.T) {
+	path := sqliteDB(t)
+	t.Setenv("ERP_DSN", "file:"+path)
+	d, err := ontology.ParseDefinition([]byte(`
+objects: [{name: Machine, properties: [{name: name, type: string}]}]
+links: []
+connectors:
+  - name: erp
+    kind: sql
+    driver: sqlite
+    dsn_env: ERP_DSN
+    prune: true
+    query: "SELECT id, name FROM assets"
+    mapping: {type: Machine, namespace: erp, key: id, props: {name: name}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := ontology.Open("", d.Schema())
+	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{}, "")
+	if rep, err := sc.RunNow(context.Background(), "erp"); err != nil || rep.Objects != 2 {
+		t.Fatalf("first: %+v %v", rep, err)
+	}
+	db, _ := sql.Open("sqlite", path)
+	if _, err := db.Exec("DELETE FROM assets WHERE id='a1'"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	rep, err := sc.RunNow(context.Background(), "erp")
+	if err != nil || rep.Pruned != 1 {
+		t.Fatalf("second: %+v %v", rep, err)
+	}
+	if _, ok := st.Get("Machine:erp:a1"); ok {
+		t.Error("a deleted row is still an object")
+	}
+	// A filtered (incremental) query cannot be pruned.
+	if _, err := ontology.ParseDefinition([]byte(`
+objects: [{name: Machine, properties: [{name: name, type: string}]}]
+links: []
+connectors:
+  - {name: x, kind: sql, driver: sqlite, dsn_env: D, prune: true, query: "SELECT id FROM t WHERE u > ?", mapping: {type: Machine, namespace: e, key: id}}
+`)); err == nil {
+		t.Error("prune on an incremental query was accepted")
+	}
+}

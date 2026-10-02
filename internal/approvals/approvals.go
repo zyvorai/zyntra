@@ -9,6 +9,8 @@
 package approvals
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -251,7 +253,12 @@ type state struct {
 	Version   int         `json:"version"`
 	Migrated  *time.Time  `json:"migrated_at,omitempty"`
 	Proposals []*Proposal `json:"proposals"`
-	Audit     []Event     `json:"audit"`
+	// Audit is held here in memory. On disk it lives in the append-only file
+	// next to the state (see auditPath); only a legacy single-file state
+	// carries it inline, and it is moved out on the next save.
+	Audit []Event `json:"audit,omitempty"`
+	// AuditFile marks a state whose audit trail is in the append-only file.
+	AuditFile bool `json:"audit_file,omitempty"`
 }
 
 type Store struct {
@@ -259,7 +266,13 @@ type Store struct {
 	path string
 	s    state
 	now  func() time.Time
+	// flushed is how many audit events are already in the audit file.
+	flushed int
 }
+
+// auditPath is the append-only audit file: one JSON event per line, never
+// rewritten, so a save costs one line instead of the whole history.
+func (s *Store) auditPath() string { return s.path + ".audit.jsonl" }
 
 // Open loads path (empty path keeps everything in memory). State written
 // by older versions is migrated: phases and approvals are derived from the
@@ -280,13 +293,123 @@ func Open(path string) (*Store, error) {
 	if err := json.Unmarshal(b, &st.s); err != nil {
 		return nil, fmt.Errorf("approvals state %s: %w", path, err)
 	}
+	legacy := len(st.s.Audit) // events kept inline by an older version
+	events, good, torn, err := readAuditFile(st.auditPath())
+	if err != nil {
+		return nil, err
+	}
+	if torn {
+		// Cut the unfinished line so the next event starts on a fresh one.
+		if err := os.Truncate(st.auditPath(), good); err != nil {
+			return nil, err
+		}
+	}
+	switch {
+	case len(events) > 0 && legacy > 0:
+		return nil, fmt.Errorf("approvals state %s holds %d inline audit events and %s holds %d: refusing to guess which is the real trail",
+			path, legacy, st.auditPath(), len(events))
+	case len(events) > 0:
+		st.s.Audit, st.flushed = events, len(events)
+	}
 	if st.s.Version < schemaVersion {
 		st.migrate()
+	}
+	// A legacy state is moved to the append-only file; the chain is intact.
+	if st.s.Version < schemaVersion || legacy > 0 || !st.s.AuditFile {
 		if err := st.save(); err != nil {
 			return nil, err
 		}
 	}
 	return st, nil
+}
+
+// readAuditFile reads the append-only trail. A torn final line (a crash in
+// the middle of an append) is ignored; a bad line anywhere else is an error,
+// because it means the trail was altered.
+func readAuditFile(path string) (events []Event, good int64, torn bool, err error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 1<<20)
+	var off int64
+	for n := 1; ; n++ {
+		line, rerr := r.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var e Event
+			if err := json.Unmarshal(line, &e); err != nil {
+				if rerr != nil { // the last line, and it did not finish: a torn append
+					return events, good, true, nil
+				}
+				return nil, 0, false, fmt.Errorf("audit file %s line %d is damaged: %w", path, n, err)
+			}
+			if rerr != nil {
+				// A complete event whose newline never landed: keep it, finish the line.
+				events = append(events, e)
+				return events, off + int64(len(line)), false, appendNewline(path)
+			}
+			events = append(events, e)
+		}
+		off += int64(len(line))
+		good = off
+		if rerr != nil {
+			return events, good, false, nil
+		}
+	}
+}
+
+func appendNewline(path string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	_, werr := f.WriteString("\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return werr
+}
+
+// appendAudit writes the events not yet on disk and syncs them.
+func (s *Store) appendAudit() error {
+	pending := s.s.Audit[s.flushed:]
+	if len(pending) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(s.auditPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	for _, e := range pending {
+		b, err := json.Marshal(e)
+		if err != nil {
+			f.Close()
+			return err
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	s.flushed = len(s.s.Audit)
+	return nil
 }
 
 func (s *Store) migrate() {
@@ -337,7 +460,14 @@ func (s *Store) save() error {
 	if s.path == "" {
 		return nil
 	}
-	b, err := json.MarshalIndent(s.s, "", "  ")
+	// The audit trail goes first and is only ever appended to; if the state
+	// write below then fails, the trail is ahead of the state, never behind.
+	if err := s.appendAudit(); err != nil {
+		return err
+	}
+	disk := s.s
+	disk.Audit, disk.AuditFile = nil, true
+	b, err := json.MarshalIndent(disk, "", "  ")
 	if err != nil {
 		return err
 	}

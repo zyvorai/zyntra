@@ -71,9 +71,11 @@ type ConnectorSpec struct {
 	DSNEnv string `yaml:"dsn_env,omitempty" json:"dsn_env,omitempty"`
 	Query  string `yaml:"query,omitempty" json:"query,omitempty"`
 
-	// Prune (kubernetes only) removes objects this connector created that a
-	// later full listing no longer contains, so a deleted pod disappears from
-	// the ontology instead of lingering. Off by default.
+	// Prune removes objects this connector created that a later full listing
+	// no longer contains, so a deleted pod or row disappears from the ontology
+	// instead of lingering. Kubernetes, or a sql query with no parameter (a
+	// query that filters on the last-run time returns changes, not everything).
+	// Off by default.
 	Prune bool `yaml:"prune,omitempty" json:"prune,omitempty"`
 
 	// Mapping turns rows (kubernetes, sql) into objects; its Source is unused.
@@ -322,8 +324,11 @@ func (d *Definition) Validate() error {
 		default:
 			errs = append(errs, fmt.Errorf("%s: unknown kind %q", label, c.Kind))
 		}
-		if c.Prune && c.Kind != "kubernetes" {
-			errs = append(errs, fmt.Errorf("%s: prune is only meaningful for a full listing (kubernetes)", label))
+		switch {
+		case c.Prune && c.Kind != "kubernetes" && c.Kind != "sql":
+			errs = append(errs, fmt.Errorf("%s: prune is only meaningful for a full listing (kubernetes or sql)", label))
+		case c.Prune && c.Kind == "sql" && QueryHasParam(c.Query):
+			errs = append(errs, fmt.Errorf("%s: prune needs a full listing, but the query filters on the last-run time; remove the parameter", label))
 		}
 		if c.Mapping != nil {
 			errs = append(errs, validateMapping(sc, *c.Mapping, label+" mapping", false)...)
@@ -427,4 +432,10 @@ func validateMapping(sc *Schema, m Mapping, label string, needSource bool) []err
 		}
 	}
 	return errs
+}
+
+// QueryHasParam reports whether a SQL query takes the last-run time argument
+// ($1 or ?). A query without one is a full listing.
+func QueryHasParam(q string) bool {
+	return strings.Contains(q, "$1") || strings.Contains(q, "?")
 }
