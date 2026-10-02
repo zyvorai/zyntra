@@ -31,7 +31,7 @@ spec:
     requests:
       storage: {{ .Values.persistence.size }}
 {{- end }}
-{{- if .Values.policy }}
+{{- if and .Values.policy (not .Values.policyExistingSecret) }}
 ---
 apiVersion: v1
 kind: ConfigMap

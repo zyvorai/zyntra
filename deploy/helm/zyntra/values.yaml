@@ -60,6 +60,10 @@ connectors:
 
 # Approval policy (quorum, expiry, windows, local users) as inline YAML.
 policy: ""
+# Or the name of a Secret whose policy.yaml key holds the policy; it wins over
+# policy. Use it when the policy carries generated values, such as the
+# token_sha256 of service tokens made by a parent chart.
+policyExistingSecret: ""
 
 # Optional OpenAI-compatible model for wording, pack drafts and rule reading.
 # Leave baseURL empty for the deterministic answers. For air-gapped sites point
