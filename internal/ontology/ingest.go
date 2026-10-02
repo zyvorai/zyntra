@@ -92,6 +92,7 @@ func (s *Store) ingest(source, by string, recs []Record, now time.Time, prune bo
 		pv Prov
 	}
 	var linkPass []pending
+	links := map[string]bool{}
 	for _, r := range recs {
 		id := MakeID(r.Type, r.Namespace, r.Key)
 		if r.Type == "" || r.Namespace == "" || r.Key == "" {
@@ -120,7 +121,6 @@ func (s *Store) ingest(source, by string, recs []Record, now time.Time, prune bo
 			rep.Skipped = append(rep.Skipped, err.Error())
 			continue
 		}
-		rep.Objects++
 		seen[o.ID] = true
 		if isNew {
 			rep.Candidates += s.propose(o.ID)
@@ -134,9 +134,12 @@ func (s *Store) ingest(source, by string, recs []Record, now time.Time, prune bo
 				rep.Skipped = append(rep.Skipped, err.Error())
 				continue
 			}
-			rep.Links++
+			links[LinkID(l.Type, p.id, to)] = true
 		}
 	}
+	// Distinct objects and links: a record seen twice (a customer on two rows)
+	// is one object, and the report should say so.
+	rep.Objects, rep.Links = len(seen), len(links)
 	if prune && len(recs) > 0 && len(rep.Skipped) < len(recs) {
 		rep.Pruned = s.pruneSource(source, seen)
 	}

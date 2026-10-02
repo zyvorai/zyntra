@@ -13,6 +13,9 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Fixed
 
+- Assistant answers about objects cited the same fact once per dependent (7 citations for 5 distinct facts); each fact is now cited once.
+- The ingest report, and so the Sources card, counted records rather than objects (11 for a store holding 10 because one customer is on two rows); it now counts distinct objects and links.
+- On a phone-width screen the menu scrolls the current section into view instead of hiding its underline off the edge.
 - **The Decision page was blank for any decision with no precedent.** `GET /proposals/{id}/similar` sent `"items": null` and the page read `.length` of it. The server now sends `[]`, the client tolerates `null` in the other places that read a list's length, and an error boundary shows what failed instead of a blank page. Found by a real-browser pass; the earlier component tests used `[]` and missed it.
 - Tenant accounts were offered the provider's object-type names, views and typed actions in the schema (all empty for them); the schema is now filtered to what the account can see.
 - Console polish: readable local times instead of raw ISO strings, tab labels capitalise only the first letter, spacing between adjacent buttons and inputs, accurate Approvals copy for non-Kubernetes packs, and the startup log names the `pack-files` source.

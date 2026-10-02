@@ -54,6 +54,13 @@ export default function Nav({
 
   useEffect(() => () => clearTimers(), []);
 
+  // On a narrow screen the link row scrolls sideways; keep the current section
+  // in view so the underline is never hidden off the edge.
+  useEffect(() => {
+    const active = navRef.current?.querySelector<HTMLElement>('.navlinks .active');
+    active?.scrollIntoView?.({ inline: 'center', block: 'nearest' });
+  }, [page]);
+
   useEffect(() => {
     if (!openGroup) return;
     const onKeyDown = (e: KeyboardEvent) => {
