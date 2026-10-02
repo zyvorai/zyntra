@@ -131,9 +131,14 @@ func TestBlockAndAuditTamper(t *testing.T) {
 	if v := s.Verify(); !v.OK || v.Head == "" {
 		t.Fatalf("verify %+v", v)
 	}
-	raw, _ := os.ReadFile(path)
-	tampered := strings.Replace(string(raw), `"to": "approved"`, `"to": "rejected"`, 1)
-	os.WriteFile(path, []byte(tampered), 0o600)
+	// The audit trail lives in its own append-only file; that is what an
+	// attacker would edit.
+	raw, _ := os.ReadFile(path + ".audit.jsonl")
+	tampered := strings.Replace(string(raw), `"to":"approved"`, `"to":"rejected"`, 1)
+	if tampered == string(raw) {
+		t.Fatal("test bug: nothing was tampered")
+	}
+	os.WriteFile(path+".audit.jsonl", []byte(tampered), 0o600)
 	r, _ := Open(path)
 	if v := r.Verify(); v.OK || v.BrokenAt != 2 {
 		t.Fatalf("tampered chain verified: %+v", v)
@@ -182,8 +187,12 @@ func TestAuditCoversPayloadAndResponse(t *testing.T) {
 	if v := s.Verify(); !v.OK {
 		t.Fatalf("verify %+v", v)
 	}
-	raw, _ := os.ReadFile(path)
-	os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), strings.Repeat("b", 64), strings.Repeat("c", 64))), 0o600)
+	raw, _ := os.ReadFile(path + ".audit.jsonl")
+	changed := strings.ReplaceAll(string(raw), strings.Repeat("b", 64), strings.Repeat("c", 64))
+	if changed == string(raw) {
+		t.Fatal("test bug: nothing was tampered")
+	}
+	os.WriteFile(path+".audit.jsonl", []byte(changed), 0o600)
 	r, _ := Open(path)
 	if v := r.Verify(); v.OK {
 		t.Fatal("changing the recorded response hash must break the chain")

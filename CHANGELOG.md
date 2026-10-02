@@ -6,6 +6,8 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Added
 
+- **Append-only audit file.** The hash-chained audit trail moves out of the rewritten state file into `approvals.json.audit.jsonl` (append and sync per save). Legacy inline trails migrate with the chain and head hash unchanged, a torn final line is trimmed, mid-file damage is refused, and an inline trail plus an audit file is refused as ambiguous. The tamper tests now edit the audit file.
+- **SQL snapshot prune.** A SQL connector whose query has no parameter is a full listing and may set `prune: true`.
 - **Storage and scale.** SQLite backend for the ontology store (`ZYNTRA_ONTOLOGY_STORE=sqlite`), indexed alias/link/match lookups, one write per ingest batch (5,000 objects: 35 s to under 0.1 s), `zyntra ontology migrate`.
 - **Live data.** Kubernetes (streamed, selectors, keyed array paths, opt-in `prune`; run against a real 12.6k-pod k3s cluster) and SQL (postgres, sqlite) connectors, a scheduler with per-connector intervals, timeouts, backoff and persisted cursors, health on the Objects page, run-now for admins. File facts are dated by modification time. SQL is read-only, single-statement, with the DSN kept out of errors.
 - **Calibration.** `zyntra calibrate` and an Insights card backtest edge weights against finished decisions and suggest corrections, validated leave-one-out; never applied automatically.

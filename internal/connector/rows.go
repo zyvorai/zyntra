@@ -306,7 +306,12 @@ func (q *SQL) Pull(ctx context.Context, since time.Time) ([]ontology.Record, err
 	if since.IsZero() {
 		since = time.Unix(0, 0)
 	}
-	rs, err := tx.QueryContext(ctx, q.Spec.Query, since.UTC().Format(time.RFC3339))
+	// A query with no parameter is a full listing and takes no argument.
+	var args []any
+	if ontology.QueryHasParam(q.Spec.Query) {
+		args = append(args, since.UTC().Format(time.RFC3339))
+	}
+	rs, err := tx.QueryContext(ctx, q.Spec.Query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", q.Name(), redact(err, os.Getenv(q.Spec.DSNEnv)))
 	}
