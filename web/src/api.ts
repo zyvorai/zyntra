@@ -120,6 +120,9 @@ export interface Recommendation {
   risk?: Risk;
   improvement: number;
   weighted_improvement: number;
+  pessimistic_improvement?: number;
+  optimistic_only?: boolean;
+  cancels?: string[];
   uncertainty: number;
   score: number;
   confidence: 'high' | 'medium' | 'low';
@@ -263,6 +266,7 @@ export interface ExecResult {
   status?: number;
   response_hash?: string;
   written?: string;
+  payload_hash?: string;
 }
 export interface KeepRef { mode: string; session_id?: string; approval_id?: string; receipt_id?: string; error?: string }
 export interface Proposal {
@@ -322,6 +326,8 @@ export interface AuditEvent {
   phase?: string;
   by: string;
   note?: string;
+  payload_sha256?: string;
+  response_sha256?: string;
   prev_hash?: string;
   hash?: string;
 }

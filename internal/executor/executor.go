@@ -11,6 +11,8 @@ package executor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -318,22 +320,45 @@ type Result struct {
 	ResponseHash string `json:"response_hash,omitempty"`
 	// Written is the file a file action wrote.
 	Written string `json:"written,omitempty"`
+	// PayloadHash is the SHA-256 of what was sent or written: the webhook
+	// body, the file content or the kubectl manifest.
+	PayloadHash string `json:"payload_hash,omitempty"`
+}
+
+// PayloadHash returns the SHA-256 of the bytes an action sends or writes.
+func PayloadHash(r Rendered) string {
+	var b string
+	switch r.Kind {
+	case graph.KindWebhook:
+		b = r.Method + " " + r.URL + "\n" + r.Body
+	case graph.KindFile:
+		b = r.Path + "\n" + r.Content
+	case graph.KindNoop:
+		b = r.Display
+	default:
+		b = strings.Join(r.Args, " ") + "\n" + r.Stdin
+	}
+	sum := sha256.Sum256([]byte(b))
+	return hex.EncodeToString(sum[:])
 }
 
 // Execute runs the rendered action. In dry-run mode kubectl gets
 // --dry-run=server and other kinds only describe what they would do.
 func (e *Executor) Execute(ctx context.Context, r Rendered) Result {
+	var res Result
 	switch r.Kind {
 	case graph.KindWebhook:
-		return e.webhook(ctx, r)
+		res = e.webhook(ctx, r)
 	case graph.KindFile:
-		return e.file(r)
+		res = e.file(r)
 	case graph.KindNoop:
-		res := Result{Mode: e.mode(), Kind: r.Kind, OK: true, Args: []string{"noop"}}
+		res = Result{Mode: e.mode(), Kind: r.Kind, OK: true, Args: []string{"noop"}}
 		res.Output = "approval recorded; no system call (the change is carried out by people)"
-		return res
+	default:
+		res = e.kubectl(ctx, r)
 	}
-	return e.kubectl(ctx, r)
+	res.PayloadHash = PayloadHash(r)
+	return res
 }
 
 func (e *Executor) mode() Mode {

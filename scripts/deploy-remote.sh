@@ -7,7 +7,7 @@
 # host needs no toolchain:
 #   1. Detect the remote arch over SSH
 #   2. Build the console (web/dist) and cross-compile ./cmd/zyntra locally
-#   3. Copy binary + examples + unit; write /etc/zyntra/zyntra.env from the
+#   3. Copy binary + examples + packs + unit; write /etc/zyntra/zyntra.env from the
 #      host's own Netra / Gravia / Fabric / Keep credentials (never printed)
 #   4. Start zyntra.service (it creates the exec listener's private CA)
 #   5. Configure Fabric Keep: zyntra-exec credential, exec token, extra CA
@@ -19,11 +19,13 @@
 #   ./scripts/deploy-remote.sh <host> [user] [password] [options]
 #   ./scripts/deploy-remote.sh 212.8.248.187 sus
 #   ./scripts/deploy-remote.sh 212.8.248.187 sus --port 19620
+#   ./scripts/deploy-remote.sh 212.8.248.187 sus --pack shop
 #   ./scripts/deploy-remote.sh 212.8.248.187 sus --uninstall
 #
 # Options:
 #   --port N      Console/API port (default: .deploy-last, else 19620)
 #   --exec-port N Loopback TLS port Keep calls to execute (default 19621)
+#   --pack NAME   Pack under packs/ to serve (default gpu, the lab model)
 #   --no-keep     Local approvals only; leave Keep untouched
 #   --skip-web    Reuse the existing web/dist build
 #   --uninstall   Remove zyntra and restore the original Keep env file
@@ -58,12 +60,15 @@ SKIP_WEB=false
 USE_KEEP=true
 PORT_FROM_CLI=""
 EXEC_PORT=19621
+PACK=gpu
 POSITIONAL=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --port)       [ $# -ge 2 ] || error "--port requires a value"; PORT_FROM_CLI="$2"; shift 2 ;;
         --port=*)     PORT_FROM_CLI="${1#*=}"; shift ;;
         --exec-port)  [ $# -ge 2 ] || error "--exec-port requires a value"; EXEC_PORT="$2"; shift 2 ;;
+        --pack)       [ $# -ge 2 ] || error "--pack requires a value"; PACK="$2"; shift 2 ;;
+        --pack=*)     PACK="${1#*=}"; shift ;;
         --no-keep)    USE_KEEP=false; shift ;;
         --skip-web)   SKIP_WEB=true; shift ;;
         --uninstall)  UNINSTALL_MODE=true; shift ;;
@@ -97,6 +102,8 @@ for p in "$ZYNTRA_PORT" "$EXEC_PORT"; do
 done
 [ "$ZYNTRA_PORT" != "$EXEC_PORT" ] || error "--port and --exec-port must differ"
 [ -f "$REPO_DIR/go.mod" ] || error "Not in the zyntra repo: $REPO_DIR"
+case "$PACK" in ''|*[!a-z0-9-]*) error "Invalid pack name: $PACK" ;; esac
+[ -f "$REPO_DIR/packs/$PACK/pack.yaml" ] || error "No pack at packs/$PACK"
 zyntra_build_metadata "$REPO_DIR"
 # shellcheck disable=SC2034
 DEPLOY_UI_PORT="$ZYNTRA_PORT"
@@ -127,6 +134,7 @@ if $DRY_RUN; then
     deploy_ui_kv "🌐" "Console" "http://${HOST}:${ZYNTRA_PORT}"
     deploy_ui_kv "🔒" "Exec" "https://127.0.0.1:${EXEC_PORT} (host loopback, Keep only)"
     deploy_ui_kv "📄" "Env file" "/etc/zyntra/zyntra.env"
+    deploy_ui_kv "📦" "Pack" "packs/$PACK"
     deploy_ui_kv "🛡️" "Keep" "$($USE_KEEP && echo "credential + CA + signed agent" || echo "untouched")"
     echo ""
     deploy_ui_note "Would: build web + linux binary → install → write env → start → configure Keep → deploy agent → smoke"
@@ -137,6 +145,7 @@ deploy_ui_banner "Remote Deploy" "${ZYNTRA_GIT_VERSION} (${ZYNTRA_GIT_COMMIT}) �
 deploy_ui_kv "🎯" "Target" "${USER}@${HOST}"
 deploy_ui_kv "🔐" "Auth" "$([ -n "$PASS" ] && echo 'password' || echo 'SSH key')"
 deploy_ui_kv "🌐" "Port" "$ZYNTRA_PORT"
+deploy_ui_kv "📦" "Pack" "packs/$PACK"
 echo ""
 
 STAGE="/tmp/zyntra-deploy.$$"
@@ -175,7 +184,8 @@ step "Cross-compiling zyntra for linux/${GOARCH}"
 ( cd "$REPO_DIR" && CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" \
     go build -trimpath -ldflags="-s -w" -o "$BUILD_DIR/zyntra" ./cmd/zyntra )
 ( cd "$REPO_DIR" && go build -o "$BUILD_DIR/zyntra-local" ./cmd/zyntra )
-COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_DIR" -czf "$BUILD_DIR/examples.tgz" examples
+"$BUILD_DIR/zyntra-local" pack validate "$REPO_DIR/packs/$PACK" >/dev/null || error "packs/$PACK does not validate (run: zyntra pack validate packs/$PACK)"
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_DIR" -czf "$BUILD_DIR/examples.tgz" examples packs
 "$BUILD_DIR/zyntra-local" keep credential > "$BUILD_DIR/credential.json"
 python3 - "$BUILD_DIR/credential.json" "$EXEC_PORT" <<'PY'
 import json, sys
@@ -200,7 +210,7 @@ _scp -q "$BUILD_DIR/zyntra" "$BUILD_DIR/examples.tgz" "$BUILD_DIR/credential.jso
     "$REPO_DIR/systemd/zyntra.service" "$SCRIPT_DIR/lib/remote-setup.sh" "${USER}@${HOST}:$STAGE/"
 KEEP_FLAG=""
 $USE_KEEP || KEEP_FLAG="ZYNTRA_DEPLOY_KEEP=0"
-_ssh "$SUDO env $KEEP_FLAG ZYNTRA_DEPLOY_EXECUTE=${ZYNTRA_DEPLOY_EXECUTE:-dry-run} bash $STAGE/remote-setup.sh install $STAGE $ZYNTRA_PORT $EXEC_PORT $USER" \
+_ssh "$SUDO env $KEEP_FLAG ZYNTRA_DEPLOY_EXECUTE=${ZYNTRA_DEPLOY_EXECUTE:-dry-run} ZYNTRA_DEPLOY_MODEL=/etc/zyntra/packs/$PACK bash $STAGE/remote-setup.sh install $STAGE $ZYNTRA_PORT $EXEC_PORT $USER" \
     || { _ssh "rm -rf $STAGE"; error "remote install failed"; }
 info "zyntra.service running"
 

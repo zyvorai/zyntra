@@ -9,6 +9,8 @@
 package planner
 
 import (
+	"fmt"
+	"math"
 	"sort"
 
 	"github.com/zyvorai/zyntra/internal/graph"
@@ -39,9 +41,6 @@ var riskPenalty = map[graph.Risk]float64{
 var riskOrder = map[graph.Risk]int{"": 0, graph.RiskLow: 1, graph.RiskMedium: 2, graph.RiskHigh: 3}
 
 const (
-	// UncertaintyWeight scales the width of the weighted-severity band into
-	// a score penalty.
-	UncertaintyWeight = 0.25
 	// StalePenalty is subtracted per stale or missing input.
 	StalePenalty = 0.1
 )
@@ -56,7 +55,17 @@ type Recommendation struct {
 	Risk        graph.Risk `json:"risk,omitempty"`
 	Improvement float64    `json:"improvement"`
 	// WeightedImprovement is the drop in criticality-weighted severity.
-	WeightedImprovement  float64        `json:"weighted_improvement"`
+	WeightedImprovement float64 `json:"weighted_improvement"`
+	// PessimisticImprovement uses the worst end of every band. The score
+	// is built on it, so a candidate that only wins when every edge goes
+	// its way ranks below one that wins either way.
+	PessimisticImprovement float64 `json:"pessimistic_improvement"`
+	// OptimisticOnly marks candidates that improve nothing in the
+	// pessimistic case.
+	OptimisticOnly bool `json:"optimistic_only,omitempty"`
+	// Cancels lists KPIs the two actions of a pair push in opposite
+	// directions.
+	Cancels              []string       `json:"cancels,omitempty"`
 	Uncertainty          float64        `json:"uncertainty"`
 	Score                float64        `json:"score"`
 	Confidence           string         `json:"confidence"`
@@ -99,6 +108,7 @@ func PlanWith(m *graph.Model, opt Options) (Result, error) {
 	sopt := sim.Options{Unusable: opt.Unusable}
 	var out Result
 	singles := map[string]float64{}
+	single := map[string]sim.Result{}
 	add := func(acts []graph.Action) error {
 		r, err := sim.ApplyPlan(m, acts, sopt)
 		if err != nil {
@@ -118,6 +128,12 @@ func PlanWith(m *graph.Model, opt Options) (Result, error) {
 			singles[acts[0].ID] = imp
 		}
 		rec := build(acts, r)
+		if len(acts) == 2 {
+			rec.Cancels = cancels(acts[0].ID, single[acts[0].ID], acts[1].ID, single[acts[1].ID])
+			if len(rec.Cancels) > 0 && rec.Confidence == ConfidenceHigh {
+				rec.Confidence = ConfidenceMedium
+			}
+		}
 		if rec.Status == StatusBlocked {
 			out.Blocked = append(out.Blocked, rec)
 		} else {
@@ -126,6 +142,9 @@ func PlanWith(m *graph.Model, opt Options) (Result, error) {
 		return nil
 	}
 	for _, a := range m.Actions {
+		if r, err := sim.ApplyPlan(m, []graph.Action{a}, sopt); err == nil {
+			single[a.ID] = r
+		}
 		if err := add([]graph.Action{a}); err != nil {
 			return Result{}, err
 		}
@@ -154,18 +173,43 @@ func PlanWith(m *graph.Model, opt Options) (Result, error) {
 	return out, nil
 }
 
-// sortRank orders approvable candidates first, then by score.
+// sortRank orders approvable candidates first, then those that still
+// improve things in the pessimistic case, then by score.
 func sortRank(recs []Recommendation) {
 	sort.SliceStable(recs, func(i, j int) bool {
 		ai, aj := recs[i].Status == StatusPendingApproval, recs[j].Status == StatusPendingApproval
 		if ai != aj {
 			return ai
 		}
+		if recs[i].OptimisticOnly != recs[j].OptimisticOnly {
+			return !recs[i].OptimisticOnly
+		}
 		return recs[i].Score > recs[j].Score
 	})
 	for i := range recs {
 		recs[i].Rank = i + 1
 	}
+}
+
+// cancelThreshold ignores relative moves smaller than 1%.
+const cancelThreshold = 0.01
+
+// cancels reports KPIs that two actions, simulated alone, move in opposite
+// directions: the pair spends part of one action undoing the other.
+func cancels(aID string, a sim.Result, bID string, b sim.Result) []string {
+	moves := map[string]float64{}
+	for _, k := range a.KPIs {
+		moves[k.KPI] = k.Change
+	}
+	var out []string
+	for _, k := range b.KPIs {
+		ca, ok := moves[k.KPI]
+		if !ok || math.Abs(ca) < cancelThreshold || math.Abs(k.Change) < cancelThreshold || (ca > 0) == (k.Change > 0) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s moves %s %+.1f%% but %s moves it %+.1f%%", aID, k.KPI, 100*ca, bID, 100*k.Change))
+	}
+	return out
 }
 
 func overlap(a, b graph.Action) bool {
@@ -200,8 +244,9 @@ func build(acts []graph.Action, r sim.Result) Recommendation {
 			rec.Adapter = "multiple"
 		}
 	}
-	rec.Score = rec.WeightedImprovement - risk - UncertaintyWeight*rec.Uncertainty -
-		StalePenalty*float64(len(rec.StaleInputs))
+	rec.PessimisticImprovement = r.WeightedBefore - r.WeightedAfterWorst
+	rec.OptimisticOnly = rec.PessimisticImprovement <= 0
+	rec.Score = rec.PessimisticImprovement - risk - StalePenalty*float64(len(rec.StaleInputs))
 	switch {
 	case len(rec.StaleInputs) > 0 || rec.Uncertainty > rec.WeightedImprovement:
 		rec.Confidence = ConfidenceLow

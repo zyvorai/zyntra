@@ -20,6 +20,10 @@ A pack is files only; it must not need engine changes.
 
 A pack that needs a new source kind is rejected until that kind is generic. No pack may recommend a clinical, legal or credit decision about a person: levers are capacity, queues, price lists and routes.
 
+## Deployment files
+
+If you change the Helm chart, run `make helm-lint` and `make k8s-manifest`, and commit the regenerated `deploy/kubernetes/zyntra.yaml`; CI fails when it drifts. If you change what the image needs at runtime, check that `make docker` still runs with a read-only root filesystem.
+
 ## Dependencies
 
 Zyntra keeps its dependency list short so the binary is easy to audit. The core needs only `gopkg.in/yaml.v3`. Authentication is the one exception: `github.com/coreos/go-oidc/v3` and `golang.org/x/oauth2` implement OpenID Connect (ID-token verification, discovery, PKCE) and `golang.org/x/crypto/bcrypt` hashes local passwords. Hand-rolled versions of these would be a security risk. Any other new dependency needs a clear reason in the pull request.

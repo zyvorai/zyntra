@@ -1,0 +1,15 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Pack zero reads Zyvor products through the built-in netra, gravia, fabric
+# and keep source kinds. Their endpoints come from the environment, not from
+# ${...} references in the model, so this pack has no variables of its own.
+# `zyntra fake-sources` serves look-alike data for local runs.
+variables: []
+files: []
+# Endpoints (set on the host, see README "Configuration"):
+#   ZYNTRA_NETRA_URL / ZYNTRA_NETRA_TOKEN     Netra API and /metrics
+#   ZYNTRA_GRAVIA_URL / ZYNTRA_GRAVIA_TOKEN   Gravia API
+#   ZYNTRA_FABRIC_URL / _USER / _PASSWORD     Fabric host metrics
+#   ZYNTRA_KEEP_URL / ZYNTRA_KEEP_TOKEN       Keep agent runtime
+#   ZYNTRA_KUBECONFIG                          kubectl execution (Gravia CRDs)

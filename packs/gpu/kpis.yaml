@@ -11,7 +11,8 @@
 # critical targets hard constraints), min/max bounds, per-KPI freshness,
 # explicit constraints, effect uncertainty/delay/saturation, edge
 # confidence and provenance, outcome criteria, rollbacks and per-action
-# approval policy. See README "Model reference".
+# approval policy. See README "Model reference". This is pack zero
+# (packs/gpu); pack.yaml carries the owners.
 name: zyvor-lab
 
 kpis:

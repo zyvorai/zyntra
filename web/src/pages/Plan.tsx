@@ -62,7 +62,7 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
         eyebrow="Decide"
         title="Plan"
         tint="green"
-        lede="Every action, and pairs that work together, simulated against live values. Ranked by criticality-weighted improvement minus risk, uncertainty and stale-input penalties. Anything that would breach a hard constraint is listed separately. Nothing runs until a human approves it."
+        lede="Every action, and pairs that work together, simulated against live values. Ranked on the worst case: criticality-weighted improvement at the pessimistic end of every band, minus risk and stale-input penalties. Anything that would breach a hard constraint is listed separately. Nothing runs until a human approves it."
       />
       <ErrorNote message={error} />
       <OwnerFilter owners={data?.owners} value={owner} onChange={setOwner} />
@@ -94,6 +94,8 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
             aside={
               <div className="pills">
                 {waiting ? <Pill tone="warn">precondition not met</Pill> : null}
+                {r.optimistic_only ? <Pill tone="warn">wins only if every edge holds</Pill> : null}
+                {r.cancels?.length ? <Pill tone="warn">works against itself</Pill> : null}
                 {r.actions && r.actions.length > 1 ? <Pill tone="purple">combined</Pill> : null}
                 {r.adapter ? <Pill tone="info">{r.adapter}</Pill> : null}
                 <Pill tone={riskTone(r.risk)}>{r.risk || 'low'} risk</Pill>
@@ -105,6 +107,11 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
               <span>
                 Weighted improvement <strong>{r.weighted_improvement.toFixed(3)}</strong> {band(r)}
               </span>
+              {r.pessimistic_improvement !== undefined ? (
+                <span>
+                  Worst case <strong>{r.pessimistic_improvement.toFixed(3)}</strong>
+                </span>
+              ) : null}
               <span>
                 Score <strong>{r.score.toFixed(3)}</strong>
               </span>
@@ -123,6 +130,7 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
               ) : null}
               {r.stale_inputs?.length ? <span className="down">stale: {r.stale_inputs.join(', ')}</span> : null}
             </div>
+            {r.cancels?.length ? <p className="info-note small">Pair works against itself: {r.cancels.join('; ')}</p> : null}
             {r.precondition_failures?.length ? (
               <p className="info-note small">Not approvable now: {r.precondition_failures.join('; ')}</p>
             ) : null}

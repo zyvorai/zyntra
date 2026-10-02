@@ -1,0 +1,16 @@
+Zyntra {{ .Chart.AppVersion }} is serving {{ include "zyntra.model" . }} (execute: {{ .Values.execute }}).
+
+Console:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "zyntra.fullname" . }} 8080:{{ .Values.service.port }}
+  open http://127.0.0.1:8080
+
+API key:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "zyntra.secretName" . }} -o jsonpath='{.data.ZYNTRA_API_KEY}' | base64 -d
+{{- if .Values.receiver.enabled }}
+
+Test inbox: http://{{ include "zyntra.fullname" . }}-receiver:9099 (inside the cluster)
+{{- end }}
+
+The image has no kubectl: kubectl actions and the Kubernetes adapters need
+the binary install. Packs with file, http, sheet, webhook and manual sources
+work as is.

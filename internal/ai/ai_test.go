@@ -163,3 +163,16 @@ func TestDigestAndExplain(t *testing.T) {
 		t.Fatalf("explain %q", x.Text)
 	}
 }
+
+func TestGroundingNamesPack(t *testing.T) {
+	m := load(t)
+	m.Pack = &graph.PackInfo{ID: "shop", Version: "0.1.0"}
+	s := snapshot(t, m, NewHistory(10))
+	a := (&Engine{}).Ask(context.Background(), "what should we do?", s)
+	if len(a.Grounding) == 0 || a.Grounding[0] != "pack:shop@0.1.0" {
+		t.Fatalf("grounding %v", a.Grounding)
+	}
+	if s.compact()["pack"] != "shop@0.1.0" {
+		t.Fatal("the LLM facts must name the pack")
+	}
+}

@@ -193,8 +193,13 @@ type Event struct {
 	Phase    Phase     `json:"phase,omitempty"`
 	By       string    `json:"by"`
 	Note     string    `json:"note,omitempty"`
-	PrevHash string    `json:"prev_hash"`
-	Hash     string    `json:"hash"`
+	// Payload is the SHA-256 of the rendered change the event refers to
+	// (what was approved, or what was sent); Response is the SHA-256 of a
+	// webhook's response body. Both are covered by Hash.
+	Payload  string `json:"payload_sha256,omitempty"`
+	Response string `json:"response_sha256,omitempty"`
+	PrevHash string `json:"prev_hash"`
+	Hash     string `json:"hash"`
 }
 
 func (e Event) digest() string {
@@ -325,7 +330,20 @@ func newID() string {
 }
 
 func (s *Store) audit(p *Proposal, from, to Status, by, note string) {
-	e := Event{Seq: len(s.s.Audit) + 1, At: s.now().UTC(), Proposal: p.ID, Action: p.Action, From: from, To: to, Phase: p.Phase, By: by, Note: note}
+	s.auditHashes(p, from, to, by, note, renderHash(p.Render), "")
+}
+
+func renderHash(render string) string {
+	if render == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(render))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) auditHashes(p *Proposal, from, to Status, by, note, payload, response string) {
+	e := Event{Seq: len(s.s.Audit) + 1, At: s.now().UTC(), Proposal: p.ID, Action: p.Action, From: from, To: to, Phase: p.Phase, By: by, Note: note,
+		Payload: payload, Response: response}
 	if n := len(s.s.Audit); n > 0 {
 		e.PrevHash = s.s.Audit[n-1].Hash
 	}
@@ -664,7 +682,11 @@ func (s *Store) Complete(id string, res executor.Result, by string) (Proposal, e
 	r := res
 	p.Status, p.Execution, p.ExecutedAt, p.ExpiresAt = to, &r, &now, nil
 	p.Phase = phaseFor(to, &r)
-	s.audit(p, Approved, to, by, note)
+	payload := res.PayloadHash
+	if payload == "" {
+		payload = renderHash(p.Render)
+	}
+	s.auditHashes(p, Approved, to, by, note, payload, res.ResponseHash)
 	return clone(p), s.save()
 }
 

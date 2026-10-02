@@ -88,10 +88,10 @@ install_zyntra() {
     install -d -m 755 $ETC
     install -d -m 750 -o zyntra -g zyntra $STATE
     install -m 755 "$stage/zyntra" $BIN
-    rm -rf $ETC/examples
+    rm -rf $ETC/examples $ETC/packs
     tar -C $ETC -xzf "$stage/examples.tgz"
     install -m 644 "$stage/zyntra.service" $UNIT
-    say "binary, examples and unit installed"
+    say "binary, examples, packs and unit installed"
 
     local kcfg=${ZYNTRA_DEPLOY_KUBECONFIG:-$owner_home/.kube/gryvia-k3s.yaml}
     [ -f "$kcfg" ] || kcfg=/etc/rancher/k3s/k3s.yaml
@@ -110,13 +110,15 @@ install_zyntra() {
     setenv $ENV_FILE ZYNTRA_API_KEY "${v:-Admin@321}"
     v=$(getenv $ENV_FILE ZYNTRA_EXEC_TOKEN)
     setenv $ENV_FILE ZYNTRA_EXEC_TOKEN "${v:-$($BIN exec-token)}"
+    v=$(getenv $ENV_FILE ZYNTRA_INGEST_TOKEN)
+    setenv $ENV_FILE ZYNTRA_INGEST_TOKEN "${v:-$($BIN exec-token)}"
     for k in ZYNTRA_AI_BASE_URL ZYNTRA_AI_API_KEY ZYNTRA_AI_MODEL ZYNTRA_AI_LABEL ZYNTRA_AI_INSECURE; do
         v=$(getenv "$stage/overrides.env" $k)
         [ -z "$v" ] || setenv $ENV_FILE $k "$v"
     done
 
     setenv $ENV_FILE ZYNTRA_LISTEN "0.0.0.0:$port"
-    setenv $ENV_FILE ZYNTRA_MODEL "${ZYNTRA_DEPLOY_MODEL:-$ETC/examples/lab-kpis.yaml}"
+    setenv $ENV_FILE ZYNTRA_MODEL "${ZYNTRA_DEPLOY_MODEL:-$ETC/packs/gpu}"
     setenv $ENV_FILE ZYNTRA_STATE_DIR $STATE
     setenv $ENV_FILE ZYNTRA_HOST "$(hostname)"
     setenv $ENV_FILE ZYNTRA_EXECUTE "${ZYNTRA_DEPLOY_EXECUTE:-dry-run}"

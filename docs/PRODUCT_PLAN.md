@@ -13,7 +13,7 @@ This plan removes that ceiling. Infrastructure stays pack zero because its signa
 - Dry-run by default. Predicted versus actual is recorded on every execution.
 - Single binary, on-prem, air-gap friendly. Packs are files. No SaaS dependency to get a plan.
 
-Status markers below: **v0.3** shipped in the decision engine release, **A** shipped in Phase A (v0.4.0-dev, deployed to the lab host on 2026-10-02), **open** not built yet.
+Status markers below: **v0.3** shipped in the decision engine release, **A** shipped in Phase A and **B** in Phase B (both v0.4.0-dev, deployed to the lab host on 2026-10-02), **open** not built yet.
 
 ## 1. What already exists
 
@@ -112,15 +112,15 @@ Webhook bodies may reference live values with `kpi:<id>` and `gap:<id>`. File co
 ### 2.5 Simulation upgrades
 
 1. **Outcome record (v0.3 + A).** v0.3 records baseline, observation window and verdict on every proposal. Phase A adds predicted, actual, absolute error and hit or miss per KPI, and a hit rate. Learned weights and auto-approve depend on this.
-2. **Bands (v0.3).** Edges and effects carry confidence; after-values render as a range and the pessimistic case is penalised in ranking. Open: rank strictly on the pessimistic edge (Phase B).
-3. **Pairs (v0.3).** Pair search; the combined trace must beat either action alone. Open: flag pairs that cancel.
+2. **Bands (v0.3 + B).** Edges and effects carry confidence; after-values render as a range. Ranking now uses the pessimistic improvement alone (B); an action that wins only when every edge holds is marked optimistic-only and ranks below the rest.
+3. **Pairs (v0.3 + B).** Pair search; the combined trace must beat either action alone. A pair whose members move the same KPI in opposite directions by 1% or more is flagged as working against itself and drops to medium confidence (B).
 4. **Clamp (v0.3).** KPI bounds and saturation stop effects past a limit (a queue cannot go below zero wait).
 5. **Learned weights (open, Phase D).** Estimate from history, show confidence, keep the weight editable, flag edges whose error stays high. Never hide the weight.
 
 ### 2.6 Identity, policy, audit
 
 - OIDC (v0.3); the shared API key remains the air-gap fallback. A separate ingest token (A) can only post to `/api/v1/ingest/<channel>`.
-- Approval record (v0.3 + A): subject, reason, model hash, prediction, rendered payload, and now pack id, action kinds, compensate link and response hash. Open: include the payload and response hash in the audit chain itself (Phase B).
+- Approval record (v0.3 + A): subject, reason, model hash, prediction, rendered payload, and now pack id, action kinds, compensate link and response hash. The audit chain itself now carries `payload_sha256` and `response_sha256` on each event, so verification fails if either is altered (B).
 - Two-person approval and change windows (v0.3); actions can now raise `approvers` and set their own `window` (A).
 - Auto-approve (open): off until an action has a pack-level outcome hit rate, low risk, a window and held invariants on the last N runs. Default stays off.
 - Keep stays available for packs that want a sandboxed executor. Webhook packs do not require Keep.
@@ -134,7 +134,8 @@ No new product surface; the existing pages are extended.
 - **Signals (A):** source state for every kind, manual value entry, webhook-in channels and when they last received data.
 - **Decision record (A):** predicted versus actual per KPI with hit or miss.
 - **Model (A + open):** shows the pack and action kinds. Open: load and validate a pack, edit a weight, graph view.
-- **Ask (open):** same contract; grounding facts should include the pack id.
+- **Ask (B):** same contract; grounding facts start with `pack:<id>@<version>`.
+- **Plan (B):** worst-case column, optimistic-only and works-against-itself pills. **Decision record (B):** payload and response hashes on audit events.
 
 ## 3. Pack catalog
 
@@ -142,7 +143,7 @@ Each pack is a file set, not a fork. The first wave is the one a buyer can feed 
 
 | Pack | Sources | KPIs | Actions | Status |
 | --- | --- | --- | --- | --- |
-| **GPU cluster** (pack zero) | Netra, Gravia, Fabric, Keep, Prometheus, kubectl | Lab model (20 KPIs) | Preempt batch, MIG share, job suspend, scale node pool | Exists as `examples/lab-kpis.yaml`; move to `packs/gpu` |
+| **GPU cluster** (pack zero) | Netra, Gravia, Fabric, Keep, Prometheus, kubectl | Lab model (20 KPIs) | Preempt batch, MIG share, job suspend, scale node pool | **`packs/gpu`** (live sources; no fixture, validated against the model) |
 | **Shop and counter** | POS, stock, settlement and supplier exports; manual counters | Stockout rate, gross margin, dead-stock days, queue wait, daily sales, cash, supplier lead time | Reorder fast movers (file PO), capped markdown (webhook), second counter in the evening window (noop), drop a supplier (file); compensate: cancel PO, reverse markdown | **A: `packs/shop` with fixture** |
 | **Manufacturing and plant** | MQTT/OPC-UA gateway via webhook-in, energy meter CSV, schedule file, Fabric | OEE, scrap rate, kWh per unit, schedule adherence, downtime | Move a job (file work order), hold a batch (noop plus ticket webhook), shed load in a tariff window (webhook) | open |
 | **Pharma and batch** | Batch-record export, environmental monitoring CSV, qualification-expiry file | Deviations, release cycle time, chamber uptime, qualification days left | Quarantine a lot (webhook, two-person), reschedule a campaign (file), fail over to a qualified spare (precondition: spare qualified) | open |
@@ -172,10 +173,10 @@ Exit: `zyntra plan -f packs/shop` ranks a plan from the CSVs in `packs/shop/fixt
 
 ### Phase B: trust
 
-- Rank strictly on the pessimistic band; flag pairs that cancel.
-- Audit chain includes the rendered payload and response hash.
-- Pack id in Ask grounding.
-- Keep egress fixed, or the fallback stays labelled. Do not hide it.
+- [x] Rank strictly on the pessimistic band; flag pairs that cancel.
+- [x] Audit chain includes the rendered payload and response hash.
+- [x] Pack id in Ask grounding.
+- [ ] Keep egress fixed. Until then the fallback stays labelled `zyntra (keep unavailable)` in the audit and the smoke test. Not hidden.
 
 Already shipped in v0.3 and extended in Phase A: two-person approval, change windows, OIDC with API-key fallback, capped pair search.
 
@@ -185,10 +186,11 @@ Exit: a high-risk webhook cannot be approved by one operator outside the window,
 
 Ship files, not claims.
 
-- Move the GPU lab model to `packs/gpu`.
-- Write plant, pharma, energy, payments and campus packs, each with a fixture and a README showing one simulate trace.
-- Webhook receiver example in `examples/receiver` so a pilot can see the PO land.
-- Owner digest page (the digest already filters by owner).
+- [x] Move the GPU lab model to `packs/gpu`.
+- [x] Ship packs everywhere: the deploy script takes `--pack`; the container image, compose file and Helm chart carry `packs/`.
+- [ ] Write plant, pharma, energy, payments and campus packs, each with a fixture and a README showing one simulate trace.
+- [x] Webhook receiver example in `examples/receiver` so a pilot can see the PO land.
+- [ ] Owner digest page (the digest already filters by owner).
 
 Exit: six packs validate in CI, and two have run against a real export (shop CSV, plant CSV or the GPU lab).
 
@@ -219,14 +221,19 @@ Pricing stays the existing production license, by clusters and KPI graphs (see [
 
 ## 6. Done when
 
-- [ ] Any pack in `packs/` runs through gaps, simulate, plan, approve, dry-run and outcome without a code change. (True for `shop`; to be proven on a second pack.)
-- [ ] The shop fixture and the GPU lab fixture both pass CI. (Shop passes; GPU waits on the move to `packs/gpu`.)
+- [ ] Any pack in `packs/` runs through gaps, simulate, plan, approve, dry-run and outcome without a code change. (True for `shop` end to end in e2e; `gpu` runs gaps, simulate, plan, approve and dry-run on the lab host. A second file-only pack would close this.)
+- [x] The shop fixture and the GPU lab model both pass CI (`pack validate` on every pack, plus e2e for both).
 - [x] Someone who has never read the infra README can point `-f` at a CSV and get a ranked action with a why-trace.
 - [x] Apply does nothing until that person approves.
 
 ## Status on the lab host
 
-v0.4.0-dev runs on the reference lab (212.8.248.187) with the GPU lab model and live Netra, Gravia, Fabric and Keep sources; the remote smoke test proposes, approves and dry-runs a Gravia change end to end. The deploy script does not ship `packs/` yet.
+v0.4.0-dev runs on the reference lab (212.8.248.187) two ways:
+
+- **systemd binary** on :19620 serving `packs/gpu` with live Netra, Gravia, Fabric and Keep sources. The remote smoke test proposes, approves and dry-runs a Gravia change end to end. Both shipped packs validate on the host.
+- **k3s Helm release** in namespace `zyntra` on NodePort 30962 serving `packs/shop` from the container image with the test receiver. The smoke test proposes, approves and dry-runs a file action end to end.
+
+The same image also passed a podman run with a read-only root and apply mode: an approved markdown reached the receiver with the proposal id as the idempotency key, and the audit chain verified after a restart.
 
 ## Known limits
 
