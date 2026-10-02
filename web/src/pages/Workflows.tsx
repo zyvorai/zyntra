@@ -11,7 +11,7 @@ export default function Workflows({ setPage }: { setPage?: (p: Page) => void }) 
   const views = schema.data?.views ?? [];
   const [sel, setSel] = useState('');
   const id = sel || views[0]?.id || '';
-  const view = useApi<{ view: OntViewSpec; rows: OntViewRow[] }>(id ? `/api/v1/ontology/views/${id}` : null, 15000);
+  const view = useApi<{ view: OntViewSpec; rows: OntViewRow[]; total?: number; truncated?: boolean }>(id ? `/api/v1/ontology/views/${id}` : null, 15000);
   const [note, setNote] = useState('');
   const [err, setErr] = useState('');
   const rows = view.data?.rows ?? [];
@@ -64,6 +64,11 @@ export default function Workflows({ setPage }: { setPage?: (p: Page) => void }) 
         <Stat label={view.data?.view.title ?? 'Objects'} value={view.data ? rows.length : '—'} />
         <Stat label="Exposed or failing" value={view.data ? flagged : '—'} tone={flagged ? 'warn' : 'ok'} />
       </div>
+      {view.data?.truncated ? (
+        <p className="info-note">
+          Showing {rows.length.toLocaleString()} of {(view.data.total ?? rows.length).toLocaleString()} objects, those needing attention first. Narrow the view in ontology.yaml to see the rest.
+        </p>
+      ) : null}
       <Card>
         {view.data && rows.length === 0 ? (
           <Empty>No objects in this view.</Empty>

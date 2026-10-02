@@ -5,7 +5,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -519,5 +521,76 @@ func TestOntologyStatsEndpoint(t *testing.T) {
 	}
 	if c := f.asTenant(t, "GET", "/api/v1/ontology/stats", "ann", "alpha", approver, "", nil); c != 403 {
 		t.Errorf("tenant stats = %d", c)
+	}
+}
+
+func TestObjectsEndpointPages(t *testing.T) {
+	f := ontSetup(t, nil)
+	get := func(q string, out any) int {
+		return f.as(t, "GET", "/api/v1/ontology/objects"+q, "boss", approver, "", out)
+	}
+	var p1, p2 struct {
+		Objects []ontology.Object `json:"objects"`
+		Next    string            `json:"next"`
+	}
+	if c := get("?limit=2", &p1); c != 200 || len(p1.Objects) != 2 || p1.Next == "" {
+		t.Fatalf("first page = %d %+v", c, p1)
+	}
+	if c := get("?limit=2&after="+url.QueryEscape(p1.Next), &p2); c != 200 || len(p2.Objects) != 1 || p2.Next != "" {
+		t.Fatalf("second page = %d %+v", c, p2)
+	}
+	if p1.Objects[0].ID >= p1.Objects[1].ID || p1.Objects[1].ID >= p2.Objects[0].ID {
+		t.Error("pages are not in id order")
+	}
+	var typed struct{ Objects []ontology.Object }
+	get("?type=Cluster", &typed)
+	if len(typed.Objects) != 2 {
+		t.Errorf("type filter: %d", len(typed.Objects))
+	}
+	var searched struct{ Objects []ontology.Object }
+	get("?q=acme", &searched)
+	if len(searched.Objects) != 1 || searched.Objects[0].Type != "Customer" {
+		t.Errorf("search: %+v", searched.Objects)
+	}
+	for _, bad := range []string{"?limit=0", "?limit=abc", "?limit=100000"} {
+		if c := get(bad, nil); c != 400 {
+			t.Errorf("%s = %d, want 400", bad, c)
+		}
+	}
+	// The default page is bounded even with no limit given.
+	var def struct{ Objects []ontology.Object }
+	get("", &def)
+	if len(def.Objects) != 3 {
+		t.Errorf("default page: %d", len(def.Objects))
+	}
+}
+
+func TestWorkflowViewIsCappedWithFlaggedRowsFirst(t *testing.T) {
+	f := ontSetup(t, nil)
+	var recs []ontology.Record
+	for i := 0; i < 700; i++ {
+		recs = append(recs, ontology.Record{Type: "Cluster", Namespace: "bulk", Key: fmt.Sprintf("%04d", i), Props: map[string]any{"name": fmt.Sprint("c", i), "status": "active"}})
+	}
+	if _, err := f.s.opt.Ontology.Store.Ingest("bulk", "t", recs, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Only the clusters bound to the failing "queue" KPI are flagged.
+	f.s.opt.Ontology.Def.Views = []ontology.ViewSpec{{ID: "all", Title: "All", Type: "Cluster", Columns: []string{"name"}}}
+	var v struct {
+		Rows []struct {
+			ID      string   `json:"id"`
+			Failing []string `json:"failing_kpis"`
+		} `json:"rows"`
+		Total     int  `json:"total"`
+		Truncated bool `json:"truncated"`
+	}
+	if c := f.as(t, "GET", "/api/v1/ontology/views/all", "boss", approver, "", &v); c != 200 {
+		t.Fatalf("view = %d", c)
+	}
+	if v.Total != 702 || !v.Truncated || len(v.Rows) != maxViewRows {
+		t.Fatalf("total %d truncated %v rows %d", v.Total, v.Truncated, len(v.Rows))
+	}
+	if len(v.Rows[0].Failing) == 0 || len(v.Rows[1].Failing) == 0 {
+		t.Errorf("flagged rows should come first: %+v %+v", v.Rows[0], v.Rows[1])
 	}
 }

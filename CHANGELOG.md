@@ -6,6 +6,7 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Added
 
+- **Paged object listing.** `GET /api/v1/ontology/objects` takes `limit` (default 200, max 1,000) and `after` (cursor) and returns `next`; the sorted-id order is cached until objects are added or removed, access filtering is applied per page, and the console pages with Load more. Workflow views are capped at 500 rows with flagged rows first and a total.
 - **Memory bounds.** `ZYNTRA_ONTOLOGY_MAX_OBJECTS` (default 1,000,000) refuses an over-limit batch whole with a clear error; `GET /api/v1/ontology/stats` and a capacity line on the Objects page with a warning from 80%. Measured cost: about 1.4 KB per object.
 
 ### Fixed

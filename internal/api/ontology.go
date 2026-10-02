@@ -118,19 +118,45 @@ func (s *Server) handleOntSchema(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d)
 }
 
+// maxViewRows bounds one workflow view response.
+const maxViewRows = 500
+
+// maxPage bounds one page of objects; the default keeps the console snappy.
+const (
+	defaultPage = 200
+	maxPage     = 1000
+)
+
+// handleOntObjects lists visible objects a page at a time. limit (default 200,
+// at most 1000) and after (the "next" cursor of the previous page) page
+// through them in id order; q and type filter. Because the cursor is an id,
+// concurrent ingests never repeat or skip an object.
 func (s *Server) handleOntObjects(w http.ResponseWriter, r *http.Request) {
 	if !s.ontOn(w) {
 		return
 	}
-	q := strings.ToLower(r.URL.Query().Get("q"))
-	out := []ontology.Object{}
-	for _, o := range s.reader(r).List(r.URL.Query().Get("type")) {
-		if q != "" && !strings.Contains(strings.ToLower(o.ID), q) && !strings.Contains(strings.ToLower(propString(o, "name")), q) {
-			continue
+	qv := r.URL.Query()
+	limit := defaultPage
+	if v := qv.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxPage {
+			writeErr(w, http.StatusBadRequest, "limit must be 1-"+strconv.Itoa(maxPage))
+			return
 		}
-		out = append(out, o)
+		limit = n
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"objects": out})
+	q := strings.ToLower(qv.Get("q"))
+	var match func(ontology.Object) bool
+	if q != "" {
+		match = func(o ontology.Object) bool {
+			return strings.Contains(strings.ToLower(o.ID), q) || strings.Contains(strings.ToLower(propString(o, "name")), q)
+		}
+	}
+	out, next := s.reader(r).Page(qv.Get("type"), qv.Get("after"), limit, match)
+	if out == nil {
+		out = []ontology.Object{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"objects": out, "next": next})
 }
 
 func propString(o ontology.Object, p string) string {
@@ -344,7 +370,15 @@ func (s *Server) handleOntView(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"view": spec, "rows": rows})
+	// Rows that need attention come first, then id order; the rest is capped
+	// so a view over a huge type stays a reasonable response.
+	flagged := func(r viewRow) bool { return len(r.Failing) > 0 || len(r.ExposedBy) > 0 }
+	sort.SliceStable(rows, func(i, j int) bool { return flagged(rows[i]) && !flagged(rows[j]) })
+	total := len(rows)
+	if len(rows) > maxViewRows {
+		rows = rows[:maxViewRows]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"view": spec, "rows": rows, "total": total, "truncated": total > len(rows)})
 }
 
 func toStr(v any) string {

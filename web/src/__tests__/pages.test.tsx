@@ -102,6 +102,34 @@ describe('Objects page', () => {
     expect(screen.queryByText(/near the object limit/)).toBeNull();
   });
 
+  it('pages through objects by cursor and starts over when the filter changes', async () => {
+    const mk = (n: number, from: number) => Array.from({ length: n }, (_, i) => obj(`Cluster:x:c${from + i}`, 'Cluster', `Cluster ${from + i}`));
+    const calls = mockApi({
+      'GET /api/v1/ontology/schema': schema,
+      'GET /api/v1/ontology/resolution': { candidates: [] },
+      'GET /api/v1/ontology/connectors': { status: 403, body: { error: 'x' } },
+      'GET /api/v1/ontology/objects': (_init?: RequestInit, _p?: string) => {
+        const last = String((globalThis.fetch as unknown as { mock: { calls: [string][] } }).mock.calls.at(-1)?.[0]);
+        const u = new URL(last, 'http://localhost');
+        if (u.searchParams.get('q') === 'zzz') return { objects: [], next: '' };
+        return u.searchParams.get('after') ? { objects: mk(3, 100), next: '' } : { objects: mk(100, 0), next: 'Cluster:x:c99' };
+      },
+    });
+    render(withWho(approverOnly(), <Objects />));
+    expect(await screen.findByText('Cluster 0')).toBeTruthy();
+    expect(screen.queryByText('Cluster 100')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText('Cluster 100')).toBeTruthy();
+    expect(screen.getByText('Cluster 0')).toBeTruthy(); // earlier pages stay
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull(); // no cursor, no button
+    const afterCall = calls.filter((c) => c.path === '/api/v1/ontology/objects').length;
+    expect(afterCall).toBe(2);
+    // A new search starts again from the first page.
+    fireEvent.change(screen.getByLabelText('Search objects'), { target: { value: 'zzz' } });
+    expect(await screen.findByText('No objects match.')).toBeTruthy();
+    expect(screen.queryByText('Cluster 0')).toBeNull();
+  });
+
   it('lets an approver decide an identity match', async () => {
     const calls = mockApi({
       ...base,
@@ -140,6 +168,16 @@ describe('Workflows page', () => {
     await waitFor(() => expect(screen.getByText(/Proposal prop-1 created/)).toBeTruthy());
     const post = calls.find((c) => c.method === 'POST' && c.path === '/api/v1/proposals');
     expect(post?.body).toEqual({ action: 'raise', inputs: { service: 'Service:x:s' } });
+  });
+
+  it('says when a view was capped, and how many objects it really holds', async () => {
+    mockApi({
+      'GET /api/v1/ontology/schema': schema,
+      'GET /api/v1/ontology/views/services': { view: schema.views[0], rows: [{ id: 'Service:x:s', cells: { name: 'Inference API', tier: 'inference' }, failing_kpis: ['queue'] }], total: 120000, truncated: true },
+    });
+    render(withWho(admin, <Workflows />));
+    expect(await screen.findByText(new RegExp(`Showing 1 of ${(120000).toLocaleString()} objects`))).toBeTruthy();
+    expect(screen.getByText(/needing attention first/)).toBeTruthy();
   });
 
   it('shows the reason the server gave when a proposal is refused', async () => {

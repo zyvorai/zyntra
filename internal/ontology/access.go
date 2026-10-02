@@ -266,3 +266,16 @@ func (r Reader) History(id string) []Change {
 	}
 	return out
 }
+
+// Page is List by cursor: up to limit visible objects after the cursor id.
+// Objects the principal may not see are skipped, not counted, and never make
+// a page look shorter or longer than it is.
+func (r Reader) Page(typ, after string, limit int, match func(Object) bool) ([]Object, string) {
+	return r.st.Page(typ, after, limit, func(o Object) (Object, bool) {
+		f, ok := r.ac.Filter(r.p, o)
+		if !ok || (match != nil && !match(f)) {
+			return Object{}, false
+		}
+		return f, true
+	})
+}
