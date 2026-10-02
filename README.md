@@ -3,7 +3,7 @@
 [![CI](https://github.com/zyvorai/zyntra/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/zyntra/actions/workflows/ci.yml)
 [![License: Zyvor Production v1.0](https://img.shields.io/badge/License-Zyvor%20Production%20v1.0-orange.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/zyvorai/zyntra?label=version&color=informational)](CHANGELOG.md)
-[![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)](go.mod)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](web/package.json)
 
 [![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=zyntra&utm_campaign=readme_hero)
@@ -14,15 +14,15 @@
 
 ### Stop arguing over dashboards. Know the next best action — and why.
 
-**Decision intelligence for infrastructure ops. Sense, simulate, act — with a human in the loop.**
+**Decision intelligence for infrastructure ops, and for any business that can export a CSV. Sense, simulate, act — with a human in the loop.**
 
-**Explainable, not generative** · **Approval-gated** · **Dry-run by default** · **Read-only adapters**
+**Explainable, not generative** · **Approval-gated** · **Dry-run by default** · **Read-only sources** · **Packs are files**
 
-Zyntra keeps a live graph of the KPIs your infrastructure is judged on (SLOs, latency, queue wait, capacity headroom, spend), shows which ones are missing target and by how much, simulates candidate actions through the dependency graph, and ranks them. Every recommendation is explained step by step and waits for human approval.
+Zyntra keeps a live graph of the KPIs your infrastructure is judged on (SLOs, latency, queue wait, capacity headroom, spend), shows which ones are missing target and by how much, simulates candidate actions through the dependency graph, and ranks them. Every recommendation is explained step by step and waits for human approval. The engine is domain-agnostic: infrastructure is pack zero, and [packs](#packs-any-industry) such as [shop](packs/shop) run the same loop on CSV exports and webhooks.
 
 ![Zyntra console — Overview](docs/ux/overview.png)
 
-> **Maturity (honest):** v0.3 turns the approval inbox into a decision engine: criticality-weighted scoring, hard constraints, prediction ranges, per-KPI freshness, combined actions, quorum approvals with roles and SSO, re-checks right before execution, outcome verification with linked rollbacks, and signed, hash-chained decision records. Changes still execute **only after human approval**, in `kubectl --dry-run=server` mode by default. The simulator is still a deterministic model over the edge weights and effects you supply; it does not learn them, and its ranges come from the uncertainty you declare, not from data. All adapters are read-only. The AI layer explains and forecasts; it never picks or runs an action. Learned weights and industry packs are on the [roadmap](docs/PRODUCT_PLAN.md).
+> **Maturity (honest):** v0.3 turned the approval inbox into a decision engine: criticality-weighted scoring, hard constraints, prediction ranges, per-KPI freshness, combined actions, quorum approvals with roles and SSO, re-checks right before execution, outcome verification with linked rollbacks, and signed, hash-chained decision records. v0.4 (in development, Phase A of the [plan](docs/PRODUCT_PLAN.md)) adds packs, file/http/sheet/webhook-in/manual sources, webhook/file/noop actions with preconditions and invariants, owner filters and predicted-versus-actual per KPI. One pack ships so far ([shop](packs/shop)); the GPU lab model has not moved to `packs/gpu` yet. Changes still execute **only after human approval** and in dry-run by default. The simulator is a deterministic model over the edge weights and effects you supply; it does not learn them, and its ranges come from the uncertainty you declare, not from data. Sources only read. The AI layer explains and forecasts; it never picks or runs an action.
 
 ## Why Zyntra
 
@@ -371,7 +371,11 @@ All routes except `/healthz`, `/api/v1/meta`, sign-in and the OIDC redirects nee
 ./scripts/deploy-remote.sh 212.8.248.187 sus --uninstall
 ```
 
-The deploy script cross-compiles locally and installs `zyntra.service`. It writes `/etc/zyntra/zyntra.env` (root:zyntra, 0640) from credentials already on the host: the Netra k8s secret, the Gravia API key, Fabric's admin password and the Keep token. They are never printed. It also adds the `zyntra-exec` credential and exec CA to Keep (after backing up Keep's env file) and signs the executor agent on your workstation. Options: `--port`, `--exec-port`, `--no-keep`, `--skip-web`, `--dry-run`, `--skip-smoke`.
+The deploy script cross-compiles locally and installs `zyntra.service` serving the lab GPU model (`examples/lab-kpis.yaml`) with live Netra, Gravia, Fabric and Keep sources. It writes `/etc/zyntra/zyntra.env` (root:zyntra, 0640) from credentials already on the host: the Netra k8s secret, the Gravia API key, Fabric's admin password and the Keep token. They are never printed. It also adds the `zyntra-exec` credential and exec CA to Keep (after backing up Keep's env file) and signs the executor agent on your workstation. Options: `--port`, `--exec-port`, `--no-keep`, `--skip-web`, `--dry-run`, `--skip-smoke`.
+
+The script does not copy `packs/` yet. To run a pack on a host, copy its directory and point `-f` at it, for example `zyntra serve -f /opt/zyntra/packs/shop` with `ZYNTRA_OUTPUT_DIR` for file actions and `ZYNTRA_INGEST_TOKEN` if the pack has webhook-in sources.
+
+On the lab host, Keep sandboxes cannot reach the egress broker, so approved actions run locally and the audit records the executor as `zyntra (keep unavailable)`. The smoke test shows this line on purpose; set `keep: required` in the policy to block instead.
 
 ## Where it fits in Zyvor
 
@@ -380,11 +384,14 @@ The deploy script cross-compiles locally and installs `zyntra.service`. It write
 - **Fabric:** host metrics, the AI gateway, and Keep for sandboxed, audited execution
 - **Kairo / KubeFlight:** deploy blast radius, to be fed in as a risk input
 
+Outside Zyvor, a pack needs nothing but files: generic sources read exports and APIs, and webhook or file actions hand the approved change to the system that already owns it (ERP, POS, ticketing).
+
 ## Develop
 
 ```bash
 make check      # gofmt, vet, unit tests, build
 make test-e2e   # CLI + API + console smoke test against fake sources
+zyntra pack validate packs/shop   # check a pack against its fixture
 cd web && ZYNTRA_DEV_API=http://127.0.0.1:8080 npm run dev   # console with hot reload
 docker build -t zyntra .
 ```

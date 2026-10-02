@@ -13,7 +13,7 @@ This plan removes that ceiling. Infrastructure stays pack zero because its signa
 - Dry-run by default. Predicted versus actual is recorded on every execution.
 - Single binary, on-prem, air-gap friendly. Packs are files. No SaaS dependency to get a plan.
 
-Status markers below: **v0.3** shipped in the decision engine release, **A** shipped in Phase A (this branch, v0.4.0 unreleased), **open** not built yet.
+Status markers below: **v0.3** shipped in the decision engine release, **A** shipped in Phase A (v0.4.0-dev, deployed to the lab host on 2026-10-02), **open** not built yet.
 
 ## 1. What already exists
 
