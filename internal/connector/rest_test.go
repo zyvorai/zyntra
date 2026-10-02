@@ -285,3 +285,83 @@ connectors:
 	p, _ := st.Get("Product:nw:1")
 	t.Logf("product 1: %v", p.Props["name"].V)
 }
+
+// sapPage is the shape SAP Gateway returns for OData v2: the list sits under
+// d.results, the next page link under d.__next, decimals and int64 values are
+// strings, and dates are "/Date(ms)/". This is what the shape looks like in
+// SAP's documentation; it has not been tested against a real SAP system.
+func sapPage(r *http.Request, srvURL string, from, to int) map[string]any {
+	var rows []any
+	for i := from; i <= to; i++ {
+		rows = append(rows, map[string]any{
+			"__metadata":   map[string]any{"id": fmt.Sprintf("%s/A_Machine('M%d')", srvURL, i), "type": "API.A_MachineType"},
+			"Machine":      fmt.Sprintf("M%d", i),
+			"Description":  fmt.Sprintf("Press %d", i),
+			"Quantity":     "12.500",
+			"LastChanged":  "/Date(1696118400000)/",
+			"SystemStatus": "REL",
+		})
+	}
+	d := map[string]any{"results": rows}
+	if to < 4 {
+		d["__next"] = fmt.Sprintf("%s%s?$skiptoken=%d&sap-client=100", srvURL, r.URL.Path, to)
+	}
+	return map[string]any{"d": d}
+}
+
+func TestRESTReadsSAPODataV2PagesWithBasicAuth(t *testing.T) {
+	t.Setenv("SAP_USER", "svc_zyntra")
+	t.Setenv("SAP_PASS", "pw")
+	var srv *httptest.Server
+	var bad []string
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, p, ok := r.BasicAuth(); !ok || u != "svc_zyntra" || p != "pw" {
+			bad = append(bad, "no basic auth: "+r.URL.String())
+		}
+		if r.URL.Query().Get("sap-client") != "100" || r.Header.Get("Accept") != "application/json" {
+			bad = append(bad, "missing sap-client or Accept: "+r.URL.String())
+		}
+		if r.URL.Query().Get("$skiptoken") == "" {
+			_ = json.NewEncoder(w).Encode(sapPage(r, srv.URL, 1, 2))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(sapPage(r, srv.URL, 3, 4))
+	}))
+	defer srv.Close()
+	d, err := ontology.ParseDefinition([]byte(`
+objects: [{name: Machine, properties: [{name: name, type: string}, {name: status, type: string}, {name: quantity, type: number}]}]
+links: []
+connectors:
+  - name: sap-machines
+    kind: rest
+    url: ` + srv.URL + `/sap/opu/odata/sap/API_MACHINE/A_Machine?sap-client=100
+    user_env: SAP_USER
+    pass_env: SAP_PASS
+    items: d.results
+    next: d.__next
+    prune: true
+    fields: {id: Machine, name: Description, status: SystemStatus, quantity: Quantity, changed: LastChanged}
+    mapping: {type: Machine, namespace: sap, key: id, observed: changed, props: {name: name, status: status, quantity: quantity}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := REST{Spec: d.Connectors[0], Schema: d.Schema()}.Pull(context.Background(), time.Time{})
+	if err != nil || len(recs) != 4 {
+		t.Fatalf("%d records, %v", len(recs), err)
+	}
+	if len(bad) > 0 {
+		t.Fatalf("requests went wrong: %v", bad)
+	}
+	if recs[3].Key != "M4" || recs[0].Props["name"] != "Press 1" || recs[0].Props["status"] != "REL" {
+		t.Errorf("mapping: %+v", recs[0])
+	}
+	// SAP's "/Date(ms)/" must set when the fact was observed, or old rows would look freshly read.
+	if want := time.Date(2023, 10, 1, 0, 0, 0, 0, time.UTC); !recs[0].ObservedAt.Equal(want) {
+		t.Errorf("observed = %v, want %v", recs[0].ObservedAt, want)
+	}
+	// SAP sends decimals as strings; a number property must still end up a number.
+	if q, ok := recs[0].Props["quantity"].(float64); !ok || q != 12.5 {
+		t.Errorf("quantity = %#v, want 12.5 as a number", recs[0].Props["quantity"])
+	}
+}
