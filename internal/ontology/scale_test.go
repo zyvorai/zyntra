@@ -43,18 +43,20 @@ func TestClusterSizedIngestIsFast(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer st.Close()
-			recs := podRecords(12000)
+			n := 12000 / (slowdown/5 + 1) // 12k pods normally; a fifth of that under the race detector
+			recs := podRecords(n)
 			t0 := time.Now()
 			rep, err := st.Ingest("k8s", "t", recs, time.Now())
 			first := time.Since(t0)
-			if err != nil || rep.Objects != 12001 || rep.Links != 12000 {
+			if err != nil || rep.Objects != n+1 || rep.Links != n {
 				t.Fatalf("%+v %v", rep, err)
 			}
 			t0 = time.Now()
 			rep, _ = st.Ingest("k8s", "t", recs, time.Now().Add(time.Minute))
 			again := time.Since(t0)
 			t.Logf("%s: first ingest %v, unchanged re-ingest %v (changed=%v)", ext, first.Round(time.Millisecond), again.Round(time.Millisecond), rep.Changed)
-			if first > 8*time.Second || again > 8*time.Second {
+			limit := 8 * time.Second * slowdown
+			if first > limit || again > limit {
 				t.Errorf("too slow: first %v, again %v", first, again)
 			}
 			t0 = time.Now()

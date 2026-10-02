@@ -340,6 +340,22 @@ connectors:
     mapping: {type: Customer, namespace: crm, key: id, props: {name: name}, observed: updated_at}
 ```
 
+A third kind, `rest`, reads any paged JSON API (OData, ServiceNow, Odoo and most ERP/MES/ticketing systems) with the same `fields` and `mapping`:
+
+```yaml
+  - name: erp-assets
+    kind: rest
+    url: https://erp.example/odata/Assets
+    token_env: ZYNTRA_ERP_TOKEN          # or user_env + pass_env for basic auth
+    items: value                          # dotted path to the list; empty if the body is the list
+    next: '@odata\.nextLink'              # a dot inside a key is escaped; or page_param: page + page_size
+    since_param: modified_after           # optional: receives the last good run's time
+    fields: {id: AssetID, name: Name, status: State}
+    mapping: {type: Asset, namespace: erp, key: id, props: {name: name, status: status}}
+```
+
+The token is sent only to the host in `url`: a next-page link or a redirect to any other host or scheme is refused, secrets and query strings are kept out of errors, and a pull is bounded (1,000 pages, 500k items, 64 MiB a page). Leave out `since_param` to make it a full listing that can `prune`. It was run against the public Northwind OData service (77 products over real `@odata.nextLink` pages); the OData and Odoo/ServiceNow shapes beyond that rest on the generic options above, not on tests against those products.
+
 The SQL connector accepts one `SELECT` (or `WITH ... SELECT`), runs it in a read-only transaction (a data-modifying CTE is refused by the database, tested against a real Postgres) and keeps the connection string out of every error. Failures back off up to 8x the interval and the wait counts from the end of a run; a connector never blocks another, and each one's last success, error, counts and cursor survive a restart. The **Sources** card on the Objects page shows health (and flags a connector that spends more than half its interval running); `POST /api/v1/ontology/connectors/{name}/run` (admin) runs one now. A fact read from a file is dated by the file's modification time, not the read time, so re-reading an old file does not make it look fresh; a typed action's `evidence:` rule (`max_age: 10m`) then blocks a proposal on stale facts until a refresh brings new ones. [examples/ontology/gpu-live.yaml](examples/ontology/gpu-live.yaml) is a live ontology for the gpu pack.
 
 Kubernetes specifics, from running it against a real k3s cluster of 12,622 pods: read an array element by key, not position (`status.conditions.[type=Ready].status`; a numeric index read the wrong condition), narrow the listing at the source with `k8s_namespace`, `k8s_selector` or `k8s_field_selector`, and set `prune: true` on a full listing so objects deleted in the cluster leave the ontology (only objects that this connector alone vouches for are removed, an empty or all-failed listing never prunes, and the removal is in the audit note). Output is streamed one item at a time (Zyntra held about 150 MB with 12.6k objects loaded) and capped at 512 MiB, but `kubectl get pods -A -o json` itself took 14 s and 1.5 GB of RAM on that cluster, which no connector can avoid: select what you need. A SQL query with no `$1`/`?` parameter is a full listing, takes no argument and may set `prune: true`; a query that filters on the last-run time returns changes only, so deleted rows are not handled there (let evidence rules age out stale facts).

@@ -6,6 +6,7 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Added
 
+- **REST connector** (`kind: rest`): any paged JSON API (next-link or page-parameter paging, optional since parameter, bearer or basic auth from the environment) mapped like Kubernetes and SQL, with `prune` for full listings. Credentials go only to the configured host; cross-host next links and redirects are refused; secrets stay out of errors; pulls are bounded. Verified against the public Northwind OData service.
 - **Append-only audit file.** The hash-chained audit trail moves out of the rewritten state file into `approvals.json.audit.jsonl` (append and sync per save). Legacy inline trails migrate with the chain and head hash unchanged, a torn final line is trimmed, mid-file damage is refused, and an inline trail plus an audit file is refused as ambiguous. The tamper tests now edit the audit file.
 - **SQL snapshot prune.** A SQL connector whose query has no parameter is a full listing and may set `prune: true`.
 - **Storage and scale.** SQLite backend for the ontology store (`ZYNTRA_ONTOLOGY_STORE=sqlite`), indexed alias/link/match lookups, one write per ingest batch (5,000 objects: 35 s to under 0.1 s), `zyntra ontology migrate`.
