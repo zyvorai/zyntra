@@ -25,7 +25,7 @@ Related: [Business ontology](ONTOLOGY.md) · [Product plan](PRODUCT_PLAN.md) · 
 - **The newer packs carry declared starting weights**, not measured ones. Calibrate them against your own outcomes before you lean on the ranking.
 - **Changes execute only after human approval**, and in dry-run by default.
 - **Sources only read.** The AI layer explains and forecasts; it never picks or runs an action.
-- **Release state.** The changelog lists what is released and what is still unreleased; read it before you pin a version.
+- **Release state.** Released versions are listed on the [GitHub releases page](https://github.com/zyvorai/zyntra/releases); anything newer is unreleased, so check it before you pin a version.
 
 ## The model
 
