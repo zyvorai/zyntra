@@ -73,9 +73,15 @@ export default function Audit() {
                 <tr key={i}>
                   <td title={e.at}>{ago(e.at)}</td>
                   <td className="mono">
-                    <button className="linklike mono" onClick={() => openDecision(e.proposal)}>
-                      {e.proposal}
-                    </button>
+                    {e.proposal ? (
+                      <button className="linklike mono" onClick={() => openDecision(e.proposal)}>
+                        {e.proposal}
+                      </button>
+                    ) : (
+                      <span className="muted" title="Not tied to a decision, such as an ingest or a manual value">
+                        —
+                      </span>
+                    )}
                   </td>
                   <td className="mono">{e.action}</td>
                   <td>
