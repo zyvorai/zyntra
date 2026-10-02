@@ -178,6 +178,10 @@ type Proposal struct {
 	Execution        *executor.Result `json:"execution,omitempty"`
 	ExecutedAt       *time.Time       `json:"executed_at,omitempty"`
 	Outcome          *outcome.Record  `json:"outcome,omitempty"`
+	// Tenant is the tenant whose objects this proposal acts on ("" for a
+	// deployment-wide proposal). Tenant-bound identities only ever see and
+	// decide proposals of their own tenant.
+	Tenant string `json:"tenant,omitempty"`
 	// Objects and ActionInputs record what a typed action works on.
 	Objects      []ontology.ObjectRef `json:"objects,omitempty"`
 	ActionInputs map[string]string    `json:"action_inputs,omitempty"`

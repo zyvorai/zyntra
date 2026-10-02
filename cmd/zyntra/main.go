@@ -70,6 +70,9 @@ Usage:
                                           business objects from the pack's ontology.yaml
   zyntra scenario run|compare -f PACK [-set kpi=v] [name=]a+b ...
                                           what-if plans with business impact
+  zyntra connector-token -name N -tenant T[,T2] [-types A,B] [-days N]
+                                          new connector credential: prints the token once
+                                          and the policy snippet (SHA-256 only)
   zyntra serve    -f kpis.yaml [-policy policy.yaml]
                                           web console, REST API and SSE pulse
   zyntra verify-decision FILE             check a signed decision export offline
@@ -329,6 +332,8 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		return keepCmd(ctx, args, out)
 	case "pack":
 		return packCmd(ctx, args, out)
+	case "connector-token":
+		return connectorTokenCmd(args, out)
 	case "ontology":
 		return ontologyCmd(ctx, &c, fs, args, out)
 	case "scenario":
@@ -520,9 +525,12 @@ func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 	a := auth.New(env("ZYNTRA_API_KEY", ""), env("ZYNTRA_EXEC_TOKEN", ""))
 	a.SetSessionSecret(env("ZYNTRA_SESSION_SECRET", ""))
 	a.SetIngestToken(env("ZYNTRA_INGEST_TOKEN", ""))
+	if err := a.SetCredentials(pol.Credentials()); err != nil {
+		return nil, fmt.Errorf("policy connectors: %w", err)
+	}
 	var users []auth.LocalUser
 	for _, u := range pol.Users {
-		lu := auth.LocalUser{Name: u.Name, Hash: u.PasswordHash}
+		lu := auth.LocalUser{Name: u.Name, Hash: u.PasswordHash, Tenant: u.Tenant}
 		for _, r := range u.Roles {
 			role, err := auth.ParseRole(r)
 			if err != nil {
@@ -553,6 +561,7 @@ func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 	cfg := auth.OIDCConfig{
 		Issuer: issuer, ClientID: env("ZYNTRA_OIDC_CLIENT_ID", ""), ClientSecret: env("ZYNTRA_OIDC_CLIENT_SECRET", ""),
 		RedirectURL: env("ZYNTRA_OIDC_REDIRECT_URL", ""), GroupsClaim: env("ZYNTRA_OIDC_GROUPS_CLAIM", "groups"), RoleMap: roleMap,
+		TenantClaim: env("ZYNTRA_OIDC_TENANT_CLAIM", ""),
 	}
 	if s := env("ZYNTRA_OIDC_SCOPES", ""); s != "" {
 		cfg.Scopes = strings.Fields(strings.ReplaceAll(s, ",", " "))

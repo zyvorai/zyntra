@@ -38,6 +38,10 @@ type OIDCConfig struct {
 	// DefaultRole is given to users whose groups map to nothing; empty
 	// refuses them.
 	DefaultRole Role
+	// TenantClaim names the ID-token claim holding the user's tenant. When
+	// set it is required: users without a valid tenant are refused, and
+	// tenant users cannot hold admin or executor roles.
+	TenantClaim string
 }
 
 type oidcState struct {
@@ -188,7 +192,16 @@ func (a *Auth) oidcCallback(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	a.setSession(w, r, newIdentity(Operator(subject), "oidc", roles...), SessionTTL)
+	id := newIdentity(Operator(subject), "oidc", roles...)
+	if claim := a.oidc.cfg.TenantClaim; claim != "" {
+		tenant, _ := claims[claim].(string)
+		var terr error
+		if id, terr = id.WithTenant(strings.ToLower(strings.TrimSpace(tenant))); terr != nil {
+			a.oidcFail(w, http.StatusForbidden, "your account has no valid tenant for this workspace")
+			return
+		}
+	}
+	a.setSession(w, r, id, SessionTTL)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 

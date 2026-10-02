@@ -3,12 +3,19 @@
 
 package ontology
 
-import "slices"
+import (
+	"errors"
+	"slices"
+)
 
 // Principal is who is asking. Retrieval and execution both take one.
 type Principal struct {
 	Subject string
 	Roles   []string
+	// Tenant confines the principal to one tenant's objects. Objects with no
+	// tenant are hidden from it unless a rule lists their type in
+	// SharedTypes.
+	Tenant string
 }
 
 func (p Principal) has(role string) bool { return slices.Contains(p.Roles, role) }
@@ -32,6 +39,9 @@ type Rule struct {
 	// IngestTenants lists the tenants a matching principal may push records
 	// into; "*" means any. Without a grant only admins may ingest.
 	IngestTenants []string `yaml:"ingest_tenants,omitempty" json:"ingest_tenants,omitempty"`
+	// SharedTypes lists object types with no tenant (provider-owned
+	// infrastructure, say) that tenant-bound principals may read.
+	SharedTypes []string `yaml:"shared_types,omitempty" json:"shared_types,omitempty"`
 }
 
 // Access enforces rules. With no rules the default holds: everyone sees every
@@ -61,6 +71,19 @@ func (a *Access) matching(p Principal) []Rule {
 // Filter returns the object as p may see it, or false when p may not see it.
 // The returned object is a copy; the store's data is never changed.
 func (a *Access) Filter(p Principal, o Object) (Object, bool) {
+	// A tenant-bound principal sees its own tenant's objects only, whether or
+	// not any access rules are configured.
+	if p.Tenant != "" && o.Tenant != p.Tenant {
+		shared := false
+		if o.Tenant == "" && a != nil {
+			for _, r := range a.matching(p) {
+				shared = shared || slices.Contains(r.SharedTypes, o.Type)
+			}
+		}
+		if !shared {
+			return Object{}, false
+		}
+	}
 	if a == nil {
 		return o, true
 	}
@@ -191,12 +214,31 @@ func (r Reader) Impact(id string, maxDepth int) []Impact {
 	return r.st.impact(id, maxDepth, func(o Object) (Object, bool) { return r.ac.Filter(r.p, o) })
 }
 
-// Candidates are visible to approvers and admins only.
+// Candidates are visible to approvers and admins only, and only when both
+// objects of the pair are visible to them.
 func (r Reader) Candidates() []Candidate {
 	if !r.p.has("approver") && !r.p.has("admin") {
 		return nil
 	}
-	return r.st.Candidates()
+	var out []Candidate
+	for _, c := range r.st.Candidates() {
+		_, a := r.Get(c.A)
+		_, b := r.Get(c.B)
+		if (a && b) || c.Status != "pending" && r.p.Tenant == "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Decide accepts or rejects a candidate the principal may see.
+func (r Reader) Decide(id string, accept bool) (Candidate, error) {
+	for _, c := range r.Candidates() {
+		if c.ID == id {
+			return r.st.Decide(id, accept, r.p.Subject)
+		}
+	}
+	return Candidate{}, errors.New("no such candidate")
 }
 
 // Schema returns the store's schema.

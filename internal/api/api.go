@@ -373,7 +373,7 @@ func (s *Server) Handler() http.Handler {
 	if s.opt.Static != nil {
 		mux.Handle("GET /", spa(s.opt.Static))
 	}
-	return mux
+	return s.tenantGate(mux)
 }
 
 // ExecHandler serves only the exec endpoint, for the loopback TLS listener
@@ -670,6 +670,11 @@ func (s *Server) handleAIAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := s.aiSnapshot()
 	snap.Objects = s.objectContext(r, snap.Model)
+	if auth.FromContext(r.Context()).Tenant != "" {
+		// A tenant-bound caller gets object answers only, and the model is
+		// never shown deployment-wide KPI, plan or source data.
+		snap = ai.Snapshot{Objects: snap.Objects, ObjectsOnly: true}
+	}
 	writeJSON(w, http.StatusOK, s.opt.AI.Ask(r.Context(), q, snap))
 }
 
@@ -689,9 +694,9 @@ func (s *Server) handleAIExplain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.opt.AI.Explain(r.Context(), res, snap))
 }
 
-func (s *Server) handleProposals(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"proposals": s.opt.Store.List(), "approval_mode": s.opt.ApprovalMode,
+		"proposals": s.ownProposals(r, s.opt.Store.List()), "approval_mode": s.opt.ApprovalMode,
 		"execute_mode": s.opt.Executor.Mode, "double_approval": s.opt.KeepDoubleApproval,
 	})
 }

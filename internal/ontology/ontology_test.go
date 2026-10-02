@@ -400,7 +400,7 @@ func TestIngestScopedIsTenantBoundAndAtomic(t *testing.T) {
 		{Type: "Cluster", Namespace: "x", Key: "mine", Props: map[string]any{"name": "Alpha cluster"}},
 		{Type: "Cluster", Namespace: "x", Key: "theirs", Props: map[string]any{"name": "hijacked"}},
 	}
-	if _, err := st.IngestScoped("alpha", "crm", "t", batch, now); err == nil || !strings.Contains(err.Error(), "another tenant") {
+	if _, err := st.IngestScoped("alpha", "crm", "t", batch, now); err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("want a cross-tenant refusal, got %v", err)
 	}
 	if _, ok := st.Get(MakeID("Cluster", "x", "mine")); ok {
@@ -413,8 +413,14 @@ func TestIngestScopedIsTenantBoundAndAtomic(t *testing.T) {
 	_ = st.Upsert(Object{ID: MakeID("Cluster", "x", "aliased"), Type: "Cluster", Tenant: "beta",
 		Props: map[string]Value{"name": {V: "n", Prov: prov()}}, Aliases: []Alias{{"erp", "A1"}}})
 	via := Record{Type: "Cluster", Namespace: "y", Key: "z", Aliases: []Alias{{"erp", "A1"}}, Props: map[string]any{"name": "x"}}
-	if _, err := st.IngestScoped("alpha", "crm", "t", []Record{via}, now); err == nil {
-		t.Error("an alias reached into another tenant")
+	if _, err := st.IngestScoped("alpha", "crm", "t", []Record{via}, now); err != nil {
+		t.Fatalf("an alias held by another tenant must simply not match: %v", err)
+	}
+	if o, _ := st.Get(MakeID("Cluster", "x", "aliased")); o.Props["name"].V != "n" {
+		t.Error("an alias pinned a record onto another tenant's object")
+	}
+	if o, ok := st.Get(MakeID("Cluster", "y", "z")); !ok || o.Tenant != "alpha" {
+		t.Errorf("the record should be a new object in its own tenant: %+v", o)
 	}
 	if _, err := st.IngestScoped("alpha", "crm", "t", []Record{{Type: "Cluster", Namespace: "x", Key: "k", Tenant: "beta"}}, now); err == nil {
 		t.Error("a record naming another tenant was accepted")
@@ -450,5 +456,43 @@ func TestCanIngest(t *testing.T) {
 	}
 	if (*Access)(nil).CanIngest(Principal{Roles: []string{"ingest"}}, "alpha") {
 		t.Error("no access rules must mean no ingest for non-admins")
+	}
+}
+
+func TestTenantPrincipalSeesOnlyItsTenant(t *testing.T) {
+	st, _ := Open("", testSchema())
+	put := func(key, tenant string) {
+		_ = st.Upsert(Object{ID: MakeID("Cluster", "x", key), Type: "Cluster", Tenant: tenant,
+			Props: map[string]Value{"name": {V: key, Prov: prov()}}})
+	}
+	put("a", "alpha")
+	put("b", "beta")
+	put("shared", "")
+	alpha := Principal{Roles: []string{"approver"}, Tenant: "alpha"}
+	for _, ac := range []*Access{nil, {Schema: st.Schema()}} {
+		got := st.As(ac, alpha).List("")
+		if len(got) != 1 || got[0].Tenant != "alpha" {
+			t.Fatalf("tenant principal saw %+v (access %v)", got, ac != nil)
+		}
+	}
+	ac := &Access{Schema: st.Schema(), Rules: []Rule{{SharedTypes: []string{"Cluster"}}}}
+	if got := st.As(ac, alpha).List(""); len(got) != 2 {
+		t.Fatalf("shared types should add the tenant-less cluster, got %d", len(got))
+	}
+	for _, o := range st.As(ac, alpha).List("") {
+		if o.Tenant == "beta" {
+			t.Error("another tenant's object is visible")
+		}
+	}
+	// Merge candidates never cross tenants.
+	s2 := testSchema()
+	s2.Objects[0].Match = "name"
+	st2, _ := Open("", s2)
+	_, _ = st2.Ingest("x", "t", []Record{
+		{Type: "Cluster", Namespace: "a", Key: "1", Tenant: "alpha", Props: map[string]any{"name": "Main Cluster"}},
+		{Type: "Cluster", Namespace: "b", Key: "1", Tenant: "beta", Props: map[string]any{"name": "main cluster"}},
+	}, time.Now())
+	if n := len(st2.Candidates()); n != 0 {
+		t.Fatalf("a cross-tenant merge candidate was proposed (%d)", n)
 	}
 }

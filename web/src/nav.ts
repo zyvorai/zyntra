@@ -95,3 +95,15 @@ export function objectFromHash(): string {
 export const openObject = (id: string) => {
   window.location.hash = `/objects/${encodeURIComponent(id)}`;
 };
+
+/** Pages a tenant-bound account may use; the server enforces the same list. */
+export const tenantPages: Page[] = ['objects', 'workflows', 'approvals', 'ask', 'decision'];
+
+/** The nav groups for this session: ontology groups only when the pack has
+ * one, and only tenant pages for a tenant-bound account. */
+export function visibleGroups(ontology?: boolean, tenant?: string): NavGroup[] {
+  return navGroups
+    .filter((g) => !g.ontology || ontology)
+    .map((g) => (tenant && g.children ? { ...g, children: g.children.filter((c) => tenantPages.includes(c.page)) } : g))
+    .filter((g) => (tenant ? (g.children ? g.children.length > 0 : !!g.page && tenantPages.includes(g.page)) : true));
+}

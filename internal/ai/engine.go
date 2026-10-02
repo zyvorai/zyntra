@@ -30,6 +30,9 @@ type Snapshot struct {
 	// Objects, when set, lets Ask answer about business objects. Its reader
 	// is already scoped to the asking principal.
 	Objects *ObjectContext `json:"-"`
+	// ObjectsOnly confines Ask to business objects: a tenant-bound caller
+	// gets no KPI, plan, forecast or source answers.
+	ObjectsOnly bool `json:"-"`
 }
 
 // compact is the JSON the LLM sees: no traces or full model, just facts.
@@ -145,6 +148,9 @@ func answer(q string, s Snapshot) Answer {
 		if a, ok := answerObjectsQ(q, ql, s); ok {
 			return a
 		}
+	}
+	if s.ObjectsOnly {
+		return Answer{Intent: "scope", Text: "I can answer questions about the business objects in your workspace: what they are, how they link, and which are exposed to a failing KPI."}
 	}
 	has := func(words ...string) bool {
 		for _, w := range words {

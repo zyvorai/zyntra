@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, AUTH_EXPIRED, logout, type Meta, type WhoAmI } from './api';
 import { usePulse } from './hooks';
-import { pageFromHash, pageTitles, type Page } from './nav';
+import { pageFromHash, pageTitles, tenantPages, type Page } from './nav';
 import { readStoredTheme, toggleTheme, type Theme } from './theme';
 import Nav from './components/Nav';
 import Login from './pages/Login';
@@ -24,14 +24,18 @@ import { WhoContext } from './session';
 type Session = { state: 'loading' } | { state: 'anon' } | { state: 'in'; who: WhoAmI };
 
 function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLogout?: () => void }) {
-  const [page, setPageState] = useState<Page>(pageFromHash);
+  const tenant = who.identity.tenant;
+  // A tenant-bound account lives in its own workspace pages only.
+  const allowed = (p: Page) => !tenant || tenantPages.includes(p);
+  const [page, setPageState] = useState<Page>(() => (allowed(pageFromHash()) ? pageFromHash() : 'objects'));
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
-  const pulse = usePulse();
+  const pulse = usePulse(!tenant);
 
   useEffect(() => {
-    const onHash = () => setPageState(pageFromHash());
+    const onHash = () => setPageState(allowed(pageFromHash()) ? pageFromHash() : 'objects');
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -58,6 +62,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         pulse={pulse}
         operator={who.identity.subject}
         ontology={meta?.ontology}
+        tenant={tenant}
       />
       <main id="main">
         {who.default_password ? (
@@ -85,7 +90,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
       </main>
       <footer className="app-footer">
         <span>
-          Zyntra {meta?.version ? `v${meta.version}` : ''} · {meta?.host || window.location.host} · signed in as{' '}
+          Zyntra {meta?.version ? `v${meta.version}` : ''} · {tenant ? `workspace ${tenant}` : meta?.host || window.location.host} · signed in as{' '}
           <strong>{who.identity.subject}</strong> ({(who.identity.roles?.length ? who.identity.roles : [who.identity.role]).join(', ')})
         </span>
         <span>
