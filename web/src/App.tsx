@@ -15,6 +15,8 @@ import Signals from './pages/Signals';
 import Insights from './pages/Insights';
 import Ask from './pages/Ask';
 import ModelPage from './pages/ModelPage';
+import Decision from './pages/Decision';
+import { WhoContext } from './session';
 
 type Session = { state: 'loading' } | { state: 'anon' } | { state: 'in'; who: WhoAmI };
 
@@ -40,7 +42,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
   }, []);
 
   return (
-    <>
+    <WhoContext.Provider value={who}>
       <a href="#main" className="skip-link">
         Skip to content
       </a>
@@ -64,11 +66,12 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         {page === 'insights' && <Insights setPage={setPage} />}
         {page === 'ask' && <Ask />}
         {page === 'model' && <ModelPage />}
+        {page === 'decision' && <Decision />}
       </main>
       <footer className="app-footer">
         <span>
           Zyntra {meta?.version ? `v${meta.version}` : ''} · {meta?.host || window.location.host} · signed in as{' '}
-          <strong>{who.identity.subject}</strong>
+          <strong>{who.identity.subject}</strong> ({(who.identity.roles?.length ? who.identity.roles : [who.identity.role]).join(', ')})
         </span>
         <span>
           {meta ? `${meta.approval_mode} approvals · ${meta.execute_mode} · AI ${meta.ai_mode}` : ''} ·{' '}
@@ -77,7 +80,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
           </a>
         </span>
       </footer>
-    </>
+    </WhoContext.Provider>
   );
 }
 

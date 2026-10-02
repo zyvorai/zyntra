@@ -243,6 +243,18 @@ func Aggregate(samples []Sample, name string, labels map[string]string, agg stri
 	if len(vals) == 0 {
 		return 0, fmt.Errorf("metric %s%s not found", name, fmtLabels(labels))
 	}
+	return Combine(vals, agg)
+}
+
+// Combine reduces values with agg: sum (default), max, min, avg, count,
+// first or last.
+func Combine(vals []float64, agg string) (float64, error) {
+	if len(vals) == 0 {
+		if agg == "count" || agg == "" || agg == "sum" {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("no values to %s", agg)
+	}
 	switch agg {
 	case "", "sum":
 		var t float64
@@ -272,8 +284,67 @@ func Aggregate(samples []Sample, name string, labels map[string]string, agg stri
 		return float64(len(vals)), nil
 	case "first":
 		return vals[0], nil
+	case "last":
+		return vals[len(vals)-1], nil
 	}
 	return 0, fmt.Errorf("unknown agg %q", agg)
+}
+
+// Values returns one number per array element for a path with a "*"
+// segment ("rows.*.qty" or "*.qty"); elements without the key are skipped.
+func Values(v any, path string) ([]float64, error) {
+	before, after, ok := strings.Cut(path, "*")
+	if !ok {
+		x, err := Field(v, path)
+		if err != nil {
+			return nil, err
+		}
+		return []float64{x}, nil
+	}
+	before = strings.TrimSuffix(before, ".")
+	after = strings.TrimPrefix(after, ".")
+	arr := v
+	if before != "" {
+		var err error
+		if arr, err = descend(v, before); err != nil {
+			return nil, err
+		}
+	}
+	list, isArr := arr.([]any)
+	if !isArr {
+		return nil, fmt.Errorf("field %q: %q is not an array", path, before)
+	}
+	out := make([]float64, 0, len(list))
+	for _, el := range list {
+		x, err := Field(el, after)
+		if err != nil {
+			continue
+		}
+		out = append(out, x)
+	}
+	return out, nil
+}
+
+func descend(v any, path string) (any, error) {
+	for _, p := range strings.Split(path, ".") {
+		switch t := v.(type) {
+		case map[string]any:
+			next, ok := t[p]
+			if !ok {
+				return nil, fmt.Errorf("key %q not found", p)
+			}
+			v = next
+		case []any:
+			idx, err := strconv.Atoi(p)
+			if err != nil || idx < 0 || idx >= len(t) {
+				return nil, fmt.Errorf("bad index %q", p)
+			}
+			v = t[idx]
+		default:
+			return nil, fmt.Errorf("cannot descend into %T at %q", v, p)
+		}
+	}
+	return v, nil
 }
 
 func fmtLabels(l map[string]string) string {

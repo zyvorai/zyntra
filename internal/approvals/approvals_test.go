@@ -4,10 +4,15 @@
 package approvals
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/zyntra/internal/executor"
+	"github.com/zyvorai/zyntra/internal/policy"
 )
 
 func TestLifecycleAndPersistence(t *testing.T) {
@@ -67,5 +72,92 @@ func TestLifecycleAndPersistence(t *testing.T) {
 	}
 	if _, err := reopened.Get("nope"); err != ErrNotFound {
 		t.Fatalf("missing proposal err = %v", err)
+	}
+}
+
+func TestQuorumDistinctAndExpiry(t *testing.T) {
+	s, _ := Open("")
+	now := time.Unix(1_800_000_000, 0).UTC()
+	s.now = func() time.Time { return now }
+	pol := &policy.Effective{Approvals: 2, DistinctFromProposer: true, PendingExpiry: time.Hour, ApprovedExpiry: 10 * time.Minute}
+	p, _, _ := s.Create(Proposal{Action: "spot", RequiredApprovals: 2, Policy: pol}, "alice")
+	if p.ExpiresAt == nil || !p.ExpiresAt.Equal(now.Add(time.Hour)) || p.Phase != PhaseProposed {
+		t.Fatalf("created %+v", p)
+	}
+	if _, _, err := s.Approve(p.ID, Approval{By: "alice"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("proposer approved: %v", err)
+	}
+	p, done, err := s.Approve(p.ID, Approval{By: "bob", Role: "approver", Reason: "ok"})
+	if err != nil || done || p.Status != Pending || len(p.Approvals) != 1 {
+		t.Fatalf("first approval %+v %v %v", p, done, err)
+	}
+	if _, _, err := s.Approve(p.ID, Approval{By: "bob"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("same approver twice: %v", err)
+	}
+	p, done, err = s.Approve(p.ID, Approval{By: "carol", Role: "admin"})
+	if err != nil || !done || p.Status != Approved || p.Phase != PhaseApproved || !p.ExpiresAt.Equal(now.Add(10*time.Minute)) {
+		t.Fatalf("quorum %+v %v %v", p, done, err)
+	}
+	now = now.Add(11 * time.Minute)
+	if _, err := s.Begin(p.ID); err == nil {
+		t.Fatal("began an expired approval")
+	}
+	if got, _ := s.Get(p.ID); got.Status != Expired || got.Phase != PhaseExpired {
+		t.Fatalf("after expiry %+v", got)
+	}
+
+	q, _, _ := s.Create(Proposal{Action: "mig", Policy: pol}, "alice")
+	now = now.Add(2 * time.Hour)
+	if ids, _ := s.ExpireDue(); len(ids) != 1 || ids[0] != q.ID {
+		t.Fatalf("expire due %v", ids)
+	}
+	if v := s.Verify(); !v.OK || v.Events != 6 {
+		t.Fatalf("verify %+v", v)
+	}
+}
+
+func TestBlockAndAuditTamper(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, _ := Open(path)
+	p, _, _ := s.Create(Proposal{Action: "spot"}, "admin")
+	s.Decide(p.ID, true, "admin", "")
+	b, err := s.Block(p.ID, Revalidation{Reasons: []string{"model changed"}}, "zyntra")
+	if err != nil || b.Status != Blocked || b.Phase != PhaseBlocked || len(b.BlockedReasons) != 1 {
+		t.Fatalf("block %+v %v", b, err)
+	}
+	if _, err := s.Complete(p.ID, executor.Result{OK: true}, "x"); err == nil {
+		t.Fatal("completed a blocked proposal")
+	}
+	if v := s.Verify(); !v.OK || v.Head == "" {
+		t.Fatalf("verify %+v", v)
+	}
+	raw, _ := os.ReadFile(path)
+	tampered := strings.Replace(string(raw), `"to": "approved"`, `"to": "rejected"`, 1)
+	os.WriteFile(path, []byte(tampered), 0o600)
+	r, _ := Open(path)
+	if v := r.Verify(); v.OK || v.BrokenAt != 2 {
+		t.Fatalf("tampered chain verified: %+v", v)
+	}
+}
+
+func TestMigratesV1State(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	v1 := `{"proposals":[{"id":"prop-1","action":"spot","status":"executed","decided_by":"admin","decided_at":"2026-01-01T00:00:00Z","execution":{"mode":"dry-run","ok":true}}],
+"audit":[{"at":"2026-01-01T00:00:00Z","proposal":"prop-1","action":"spot","to":"pending","by":"admin"},{"at":"2026-01-01T00:00:01Z","proposal":"prop-1","action":"spot","from":"pending","to":"approved","by":"admin"}]}`
+	os.WriteFile(path, []byte(v1), 0o600)
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Get("prop-1")
+	if p.Phase != PhaseDryRunValidated || len(p.Approvals) != 1 || p.Approvals[0].By != "admin" {
+		t.Fatalf("migrated %+v", p)
+	}
+	if v := s.Verify(); !v.OK || !v.Migrated || v.Events != 2 {
+		t.Fatalf("verify %+v", v)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), `"version": 2`) {
+		t.Fatal("migration not persisted")
 	}
 }

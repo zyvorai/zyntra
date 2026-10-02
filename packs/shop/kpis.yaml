@@ -1,0 +1,217 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Counter and stock: one shop, fed from CSV exports. The fixture/ files are
+# a sample day; point the file sources at your own POS, stock, settlement
+# and supplier exports (see sources.example.yaml). Weights are starting
+# points, not truth: edit them as you learn.
+name: shop-counter
+
+kpis:
+  - id: stockout_rate
+    name: SKUs out of stock
+    unitClass: ratio
+    owner: buyer
+    value: 0
+    target: 0.02
+    direction: lower
+    criticality: high
+    min: 0
+    max: 1
+    freshness: {maxAge: 26h}
+    source: {kind: file, file: fixture/stock.csv, field: "#(on_hand=0)", denominator: "#"}
+
+  - id: gross_margin
+    name: Gross margin
+    unitClass: ratio
+    owner: owner
+    value: 0
+    target: 0.25
+    direction: higher
+    criticality: high
+    source: {kind: file, file: fixture/pos.csv, field: "*.profit", denominator: "*.amount"}
+
+  - id: dead_stock_days
+    name: Days since a slow mover last sold
+    unit: days
+    unitClass: duration
+    owner: buyer
+    value: 0
+    target: 45
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/stock.csv, field: "*.days_since_sale", agg: avg, where: {class: slow}}
+
+  - id: queue_wait
+    name: Counter queue wait
+    unit: min
+    unitClass: duration
+    owner: floor
+    value: 0
+    target: 4
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/counter.csv, field: "*.wait_min", agg: avg}
+
+  - id: daily_sales
+    name: Sales today
+    currency: INR
+    owner: owner
+    value: 0
+    target: 120000
+    direction: higher
+    source: {kind: file, file: fixture/pos.csv, field: "*.amount"}
+
+  - id: cash_on_hand
+    name: Settled cash
+    currency: INR
+    owner: owner
+    value: 0
+    target: 60000
+    direction: higher
+    source: {kind: file, file: fixture/settlement.csv, field: "*.net"}
+
+  - id: supplier_lead_time
+    name: Supplier lead time
+    unit: days
+    unitClass: duration
+    owner: buyer
+    value: 0
+    target: 3
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/suppliers.csv, field: "*.lead_days", agg: avg}
+
+  - id: cashiers_open
+    name: Counters open
+    unitClass: count
+    owner: floor
+    value: 1
+    min: 0
+    source: {kind: manual}
+
+edges:
+  - {from: supplier_lead_time, to: stockout_rate, weight: 0.5, confidence: 0.4, why: slow suppliers leave shelves empty}
+  - {from: stockout_rate, to: daily_sales, weight: -0.15, confidence: 0.3, why: an empty shelf is a lost bill}
+  - {from: dead_stock_days, to: cash_on_hand, weight: -0.2, confidence: 0.5, why: dead stock locks cash}
+  - {from: cashiers_open, to: queue_wait, weight: -0.6, confidence: 0.2, why: a second counter roughly halves the wait; it cannot go below zero}
+  - {from: queue_wait, to: daily_sales, weight: -0.05, confidence: 0.5, why: long queues cause walk-outs}
+  - {from: daily_sales, to: cash_on_hand, weight: 0.3, confidence: 0.3, why: sales settle into cash}
+
+constraints:
+  - {kpi: cash_on_hand, floor: 30000, why: cash band floor}
+
+actions:
+  - id: reorder_fast_movers
+    title: Raise PO for SKUs below cover
+    description: Write a purchase order for fast movers that are out of stock or below cover.
+    adapter: file
+    risk: medium
+    window: buy-hours
+    approvers: 1
+    preconditions:
+      - {kpi: stockout_rate, worse_than: 0.02, why: only reorder when shelves are actually empty}
+    invariants:
+      - {kpi: gross_margin, max_worsen: 0.03}
+    compensate: cancel_open_po
+    effects:
+      - {kpi: stockout_rate, change: -0.4, uncertainty: 0.25}
+      - {kpi: cash_on_hand, change: -0.08}
+    outcome:
+      window: 24h
+      samples: 1
+      successCriteria: [{kpi: stockout_rate, op: met}]
+    file:
+      path: "po/{{.Stamp}}-reorder.md"
+      content: |
+        # Purchase order: fast movers below cover
+
+        Raised by Zyntra on {{.Date}} at {{.Time}} after approval.
+
+        - Stockout rate: {{pct (index .KPIs "stockout_rate").Value}} (target {{pct (index .KPIs "stockout_rate").Target}})
+        - Gross margin: {{pct (index .KPIs "gross_margin").Value}}
+
+        Reorder every fast-moving SKU with zero stock or under two days of cover.
+
+  - id: markdown_dead_stock
+    title: Mark down dead stock 30%
+    description: Ask the POS to mark slow movers down by 30 percent.
+    adapter: webhook
+    risk: medium
+    invariants:
+      - {kpi: gross_margin, max_worsen: 0.03, why: markdowns must not eat the margin}
+    compensate: reverse_markdown
+    effects:
+      - {kpi: dead_stock_days, change: -0.4}
+      - {kpi: daily_sales, change: 0.04}
+      - {kpi: gross_margin, change: -0.06}
+    webhook:
+      method: POST
+      url: ${ZYNTRA_POS_URL}/markdowns
+      body: {class: slow, percent: 30, reason: dead_stock, gap: "gap:dead_stock_days"}
+
+  - id: markdown_capped
+    title: Mark down dead stock 10% (capped)
+    description: Ask the POS to mark slow movers down by 10 percent, inside the margin invariant.
+    adapter: webhook
+    risk: low
+    invariants:
+      - {kpi: gross_margin, max_worsen: 0.03, why: markdowns must not eat the margin}
+    compensate: reverse_markdown
+    effects:
+      - {kpi: dead_stock_days, change: -0.15, uncertainty: 0.3}
+      - {kpi: daily_sales, change: 0.01}
+      - {kpi: gross_margin, change: -0.015}
+    webhook:
+      method: POST
+      url: ${ZYNTRA_POS_URL}/markdowns
+      body: {class: slow, percent: 10, reason: dead_stock, gap: "gap:dead_stock_days"}
+
+  - id: open_second_counter
+    title: Open a second counter
+    description: Put a second cashier on the counter for the evening rush.
+    adapter: noop
+    risk: low
+    window: evening
+    effects:
+      - {kpi: cashiers_open, change: 1, mode: absolute}
+
+  - id: drop_slow_supplier
+    title: Drop the slowest supplier from the next buy list
+    adapter: file
+    risk: low
+    effects:
+      - {kpi: supplier_lead_time, change: -0.25, uncertainty: 0.3}
+    file:
+      path: "buy-list/{{.Date}}-suppliers.md"
+      content: |
+        # Next buy list: supplier change
+
+        Average lead time is {{num (index .KPIs "supplier_lead_time").Value}} days against a target of {{num (index .KPIs "supplier_lead_time").Target}}.
+        Move orders from the slowest supplier to the fastest one with a fill rate of at least 95%.
+
+  - id: cancel_open_po
+    title: Cancel the open purchase order
+    description: Compensation for reorder_fast_movers.
+    adapter: webhook
+    risk: low
+    effects:
+      - {kpi: stockout_rate, change: 0.3}
+    webhook:
+      method: POST
+      url: ${ZYNTRA_ERP_URL}/po/cancel
+      headers: {Authorization: "Bearer ${ZYNTRA_ERP_TOKEN}"}
+      body: {reason: compensate}
+
+  - id: reverse_markdown
+    title: Reverse the markdown
+    description: Compensation for the markdown actions.
+    adapter: webhook
+    risk: low
+    effects:
+      - {kpi: gross_margin, change: 0.03}
+      - {kpi: dead_stock_days, change: 0.2}
+    webhook:
+      method: POST
+      url: ${ZYNTRA_POS_URL}/markdowns/reverse
+      body: {class: slow, reason: compensate}

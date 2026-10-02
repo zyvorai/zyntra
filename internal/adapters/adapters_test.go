@@ -190,14 +190,17 @@ kpis:
 	if logins != 1 {
 		t.Errorf("fabric logins = %d, want 1", logins)
 	}
-	if len(status) != 2 || status[0].Name != "fabric" || !status[0].OK || len(status[1].KPIs) != 3 {
+	if len(status) != 3 || status[0].Name != "fabric" || !status[0].OK || len(status[2].KPIs) != 3 {
 		t.Fatalf("status = %+v", status)
+	}
+	if status[1].Name != "gravia" || status[1].State != StateFallback || rep.KPIs["gone"].Fallback != true {
+		t.Fatalf("unconfigured gravia should be fallback: %+v %+v", status[1], rep.KPIs["gone"])
 	}
 
 	cfg.Endpoints["netra"] = httpsrc.New("netra", netra.URL, false).WithBearer("wrong")
 	rep, err = Refresh(context.Background(), m, cfg)
 	status = rep.Sources
-	if err == nil || status[1].OK || status[1].Error == "" {
+	if err == nil || status[2].OK || status[2].Error == "" || status[2].State != StateError {
 		t.Fatalf("expected netra failure, status=%+v err=%v", status, err)
 	}
 }

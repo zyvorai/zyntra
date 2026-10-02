@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
-import { ago, api, fmt, sev, type Proposal, type ProposalStatus } from '../api';
+import { ago, api, can, fmt, sev, until, renderLabel, type Proposal, type ProposalStatus } from '../api';
 import { useApi } from '../hooks';
+import { openDecision } from '../nav';
+import { useWho } from '../session';
 import { Card, Empty, ErrorNote, PageHero, Pill, riskTone } from '../components/ui';
+import { phaseTone } from './Decision';
 
 interface ProposalList {
   proposals: Proposal[];
@@ -15,11 +18,13 @@ const statusTone: Record<ProposalStatus, 'info' | 'ok' | 'bad' | 'warn' | 'neutr
   pending: 'info',
   approved: 'warn',
   rejected: 'neutral',
+  expired: 'neutral',
+  blocked: 'bad',
   executed: 'ok',
   failed: 'bad',
 };
 
-const filters: Array<ProposalStatus | 'all'> = ['pending', 'approved', 'executed', 'failed', 'rejected', 'all'];
+const filters: Array<ProposalStatus | 'all'> = ['pending', 'approved', 'executed', 'blocked', 'failed', 'rejected', 'expired', 'all'];
 
 export default function Approvals() {
   const { data, error, reload } = useApi<ProposalList>('/api/v1/proposals', 5000);
@@ -27,6 +32,8 @@ export default function Approvals() {
   const [reason, setReason] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
+  const who = useWho();
+  const mayApprove = can(who, 'approve');
 
   const all = data?.proposals ?? [];
   const shown = filter === 'all' ? all : all.filter((p) => p.status === filter);
@@ -42,9 +49,15 @@ export default function Approvals() {
         json: { reason: reason[p.id] || '' },
       });
       setNote(
-        out.status === 'approved' && out.keep?.session_id
-          ? `Approved. Fabric Keep session ${out.keep.session_id} is running the executor${data?.double_approval ? ' — a second approval is waiting in Keep.' : '.'}`
-          : `Proposal ${out.id} is now ${out.status}.`
+        out.status === 'pending' && approve
+          ? `Approval recorded: ${out.approvals.length} of ${out.required_approvals} needed.`
+          : out.status === 'approved' && out.keep?.session_id
+            ? `Approved. Fabric Keep session ${out.keep.session_id} is running the executor${data?.double_approval ? ' — a second approval is waiting in Keep.' : '.'}`
+            : out.status === 'approved' && out.waiting_for_window
+              ? `Approved. It will run when its maintenance window opens.`
+              : out.status === 'blocked'
+                ? `Blocked: ${(out.blocked_reasons ?? []).join('; ')}`
+                : `Proposal ${out.id} is now ${out.status} (${out.phase}).`
       );
       reload();
     } catch (e) {
@@ -118,16 +131,71 @@ export default function Approvals() {
             title={p.action_name}
             aside={
               <div className="pills">
+                {p.rollback_of ? <Pill tone="bad">rollback</Pill> : null}
                 <Pill tone={riskTone(p.risk)}>{p.risk || 'low'} risk</Pill>
                 <Pill tone={statusTone[p.status]}>{p.status}</Pill>
+                {p.phase && p.phase !== p.status ? <Pill tone={phaseTone[p.phase] ?? 'neutral'}>{p.phase}</Pill> : null}
               </div>
             }
           >
             <p className="muted small">
               <span className="mono">{p.id}</span> · proposed by {p.created_by} {ago(p.created_at)}
               {p.decided_by ? ` · ${p.status === 'rejected' ? 'rejected' : 'approved'} by ${p.decided_by} ${ago(p.decided_at)}` : ''}
-              {p.reason ? ` — “${p.reason}”` : ''}
+              {p.reason ? ` — “${p.reason}”` : ''} ·{' '}
+              <button className="linklike" onClick={() => openDecision(p.id)}>
+                decision record
+              </button>
             </p>
+
+            {p.status === 'pending' || p.approvals?.length ? (
+              <div className="quorum">
+                <span>
+                  Approvals <strong>{p.approvals?.length ?? 0}</strong> of <strong>{Math.max(1, p.required_approvals || 1)}</strong>
+                </span>
+                {p.approvals?.map((a) => (
+                  <Pill key={a.by} tone="ok">
+                    {a.by}
+                    {a.role ? ` · ${a.role}` : ''}
+                  </Pill>
+                ))}
+                {p.policy?.distinct_from_proposer ? <span className="muted small">proposer cannot approve</span> : null}
+                {p.expires_at && (p.status === 'pending' || p.status === 'approved') ? (
+                  <Pill tone="warn">
+                    {p.status === 'pending' ? 'proposal' : 'approval'} {until(p.expires_at)}
+                  </Pill>
+                ) : null}
+                {p.waiting_for_window ? <Pill tone="info">waiting for {p.policy?.maintenance_windows?.join(', ')}</Pill> : null}
+              </div>
+            ) : null}
+
+            {p.blocked_reasons?.length ? (
+              <div className="error-note">
+                <strong>Blocked before execution:</strong>
+                <ul className="blocked-list">
+                  {p.blocked_reasons.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {p.outcome ? (
+              <p className="small">
+                <Pill tone={phaseTone[p.outcome.state] ?? 'neutral'}>outcome {p.outcome.state}</Pill>{' '}
+                {p.outcome.state === 'observing'
+                  ? `${p.outcome.samples.length} samples, watching until ${new Date(p.outcome.until).toLocaleTimeString()}`
+                  : (p.outcome.reasons ?? []).join('; ')}
+                {p.rollback_id ? (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <button className="linklike" onClick={() => openDecision(p.rollback_id!)}>
+                      rollback proposal
+                    </button>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
 
             <div className="rec-metrics">
               <span>
@@ -170,13 +238,21 @@ export default function Approvals() {
 
             {p.render ? (
               <details className="trace" open={p.status === 'pending'}>
-                <summary>Gravia change ({p.template})</summary>
+                <summary>
+                  {renderLabel(p.kinds, p.template)}
+                  {p.template && p.kinds?.every((k) => k === 'kubectl') !== false ? ` (${p.template})` : ''}
+                </summary>
                 <pre className="code">{p.render}</pre>
               </details>
             ) : p.render_error ? (
-              <p className="error-note">Cannot render {p.template}: {p.render_error}</p>
-            ) : !p.template ? (
-              <p className="muted small">Advisory action — no execute template; approving records the decision only.</p>
+              <p className="error-note">Cannot render {p.template || p.action}: {p.render_error}</p>
+            ) : !p.template && !p.kinds?.length ? (
+              <p className="muted small">Advisory action — nothing to run; approving records the decision only.</p>
+            ) : null}
+            {p.compensate?.length ? (
+              <p className="muted small">
+                Undo if it goes wrong: <span className="mono">{p.compensate.join(', ')}</span> (proposed for approval, never run on its own)
+              </p>
             ) : null}
 
             {p.execution ? (
@@ -184,7 +260,18 @@ export default function Approvals() {
                 <summary>
                   Execution · {p.execution.mode} · {p.execution.ok ? 'ok' : 'failed'} {p.executed_at ? ago(p.executed_at) : ''}
                 </summary>
-                <pre className="code">{[`$ ${p.execution.args.join(' ')}`, p.execution.output, p.execution.error].filter(Boolean).join('\n')}</pre>
+                <pre className="code">
+                  {[
+                    p.execution.args?.length ? `$ ${p.execution.args.join(' ')}` : '',
+                    p.execution.status ? `HTTP ${p.execution.status}` : '',
+                    p.execution.response_hash ? `response sha256 ${p.execution.response_hash}` : '',
+                    p.execution.written ? `wrote ${p.execution.written}` : '',
+                    p.execution.output,
+                    p.execution.error,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')}
+                </pre>
               </details>
             ) : null}
 
@@ -198,7 +285,7 @@ export default function Approvals() {
               </p>
             ) : null}
 
-            {p.status === 'pending' ? (
+            {p.status === 'pending' && mayApprove ? (
               <div className="row-actions">
                 <input
                   className="reason"
@@ -207,13 +294,24 @@ export default function Approvals() {
                   onChange={(e) => setReason((r) => ({ ...r, [p.id]: e.target.value }))}
                   maxLength={500}
                 />
-                <button className="primary" disabled={busy !== '' || Boolean(p.render_error)} onClick={() => decide(p, true)}>
+                <button
+                  className="primary"
+                  disabled={
+                    busy !== '' ||
+                    Boolean(p.render_error) ||
+                    p.approvals?.some((a) => a.by === who?.identity.subject) ||
+                    (p.policy?.distinct_from_proposer && p.created_by === who?.identity.subject)
+                  }
+                  onClick={() => decide(p, true)}
+                >
                   {busy === p.id ? 'Working…' : keepMode && p.template ? 'Approve via Keep' : 'Approve'}
                 </button>
                 <button className="btn-danger" disabled={busy !== ''} onClick={() => decide(p, false)}>
                   Reject
                 </button>
               </div>
+            ) : p.status === 'pending' ? (
+              <p className="muted small">Your role cannot approve proposals.</p>
             ) : null}
           </Card>
         ))}

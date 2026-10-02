@@ -18,6 +18,8 @@ import (
 const (
 	StatusPendingApproval = "pending-approval"
 	StatusBlocked         = "blocked"
+	// StatusPreconditionFailed is shown and scored but cannot be approved.
+	StatusPreconditionFailed = "precondition-failed"
 )
 
 // Confidence labels.
@@ -54,15 +56,16 @@ type Recommendation struct {
 	Risk        graph.Risk `json:"risk,omitempty"`
 	Improvement float64    `json:"improvement"`
 	// WeightedImprovement is the drop in criticality-weighted severity.
-	WeightedImprovement float64        `json:"weighted_improvement"`
-	Uncertainty         float64        `json:"uncertainty"`
-	Score               float64        `json:"score"`
-	Confidence          string         `json:"confidence"`
-	StaleInputs         []string       `json:"stale_inputs,omitempty"`
-	BlockedReasons      []string       `json:"blocked_reasons,omitempty"`
-	SettlesAfter        graph.Duration `json:"settles_after,omitempty"`
-	Status              string         `json:"status"`
-	Result              sim.Result     `json:"result"`
+	WeightedImprovement  float64        `json:"weighted_improvement"`
+	Uncertainty          float64        `json:"uncertainty"`
+	Score                float64        `json:"score"`
+	Confidence           string         `json:"confidence"`
+	StaleInputs          []string       `json:"stale_inputs,omitempty"`
+	BlockedReasons       []string       `json:"blocked_reasons,omitempty"`
+	PreconditionFailures []string       `json:"precondition_failures,omitempty"`
+	SettlesAfter         graph.Duration `json:"settles_after,omitempty"`
+	Status               string         `json:"status"`
+	Result               sim.Result     `json:"result"`
 }
 
 // Options tune planning.
@@ -151,8 +154,15 @@ func PlanWith(m *graph.Model, opt Options) (Result, error) {
 	return out, nil
 }
 
+// sortRank orders approvable candidates first, then by score.
 func sortRank(recs []Recommendation) {
-	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Score > recs[j].Score })
+	sort.SliceStable(recs, func(i, j int) bool {
+		ai, aj := recs[i].Status == StatusPendingApproval, recs[j].Status == StatusPendingApproval
+		if ai != aj {
+			return ai
+		}
+		return recs[i].Score > recs[j].Score
+	})
 	for i := range recs {
 		recs[i].Rank = i + 1
 	}
@@ -203,8 +213,40 @@ func build(acts []graph.Action, r sim.Result) Recommendation {
 	for _, v := range r.Violations {
 		rec.BlockedReasons = append(rec.BlockedReasons, v.Text)
 	}
-	if len(rec.BlockedReasons) > 0 {
+	rec.PreconditionFailures = r.PreconditionFailures
+	switch {
+	case len(rec.BlockedReasons) > 0:
 		rec.Status = StatusBlocked
+	case len(rec.PreconditionFailures) > 0:
+		rec.Status = StatusPreconditionFailed
 	}
 	return rec
+}
+
+// ForOwner keeps the candidates that move a KPI the owner is responsible
+// for, re-ranked. An empty owner returns res unchanged.
+func ForOwner(m *graph.Model, res Result, owner string) Result {
+	if owner == "" {
+		return res
+	}
+	owned := map[string]bool{}
+	for _, k := range m.KPIs {
+		if k.Owner == owner {
+			owned[k.ID] = true
+		}
+	}
+	keep := func(recs []Recommendation) []Recommendation {
+		out := []Recommendation{}
+		for _, r := range recs {
+			for _, k := range r.Result.KPIs {
+				if k.Change != 0 && owned[k.KPI] {
+					out = append(out, r)
+					break
+				}
+			}
+		}
+		sortRank(out)
+		return out
+	}
+	return Result{Recommendations: keep(res.Recommendations), Blocked: keep(res.Blocked)}
 }

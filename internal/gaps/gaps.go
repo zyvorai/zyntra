@@ -56,7 +56,7 @@ func Detect(m *graph.Model) []Gap {
 			continue
 		}
 		out = append(out, Gap{
-			KPI: k.ID, Name: k.Name, Owner: k.Owner, Unit: k.Unit,
+			KPI: k.ID, Name: k.Name, Owner: k.Owner, Unit: k.DisplayUnit(),
 			Value: k.Value, Target: *k.Target, Direction: string(k.Direction),
 			Severity: s,
 		})
@@ -91,4 +91,18 @@ func WeightedTotal(m *graph.Model, values map[string]float64) float64 {
 		sum += Severity(k, v) * k.Weight()
 	}
 	return sum
+}
+
+// ForOwner keeps the gaps owned by owner; an empty owner keeps all.
+func ForOwner(g []Gap, owner string) []Gap {
+	if owner == "" {
+		return g
+	}
+	out := []Gap{}
+	for _, x := range g {
+		if x.Owner == owner {
+			out = append(out, x)
+		}
+	}
+	return out
 }

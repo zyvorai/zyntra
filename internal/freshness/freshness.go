@@ -20,6 +20,7 @@ const (
 	Stale   = "stale"
 	Missing = "missing" // live KPI that has never refreshed
 	Static  = "static"  // value comes from the model file
+	Held    = "held"    // outside its calendar window; last in-window value
 )
 
 // State is the freshness of one KPI.
@@ -35,13 +36,14 @@ type State struct {
 }
 
 // Usable reports whether the value can be trusted right now.
-func (s State) Usable() bool { return s.Status == Fresh || s.Status == Static }
+func (s State) Usable() bool { return s.Status == Fresh || s.Status == Static || s.Status == Held }
 
 type entry struct {
 	ok      time.Time
 	err     string
 	errAt   time.Time
 	warming bool
+	held    bool
 }
 
 // Tracker records refresh outcomes per KPI. The zero value is not usable;
@@ -76,7 +78,15 @@ func (t *Tracker) Success(id string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	x := t.get(id)
-	x.ok, x.err, x.warming = at, "", false
+	x.ok, x.err, x.warming, x.held = at, "", false, false
+}
+
+// Held records that id is outside its calendar window and keeps its last
+// in-window value.
+func (t *Tracker) Held(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.get(id).held = true
 }
 
 // Failure records a failed refresh of id.
@@ -136,7 +146,10 @@ func (t *Tracker) States(m *graph.Model) []State {
 			s.LastSuccess = &ok
 			s.AgeSeconds = now.Sub(ok).Seconds()
 			s.Status = Fresh
-			if max > 0 && now.Sub(ok) > max {
+			switch {
+			case x.held:
+				s.Status = Held
+			case max > 0 && now.Sub(ok) > max:
 				s.Status = Stale
 			}
 		}

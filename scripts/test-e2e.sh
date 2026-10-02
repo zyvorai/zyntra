@@ -29,7 +29,7 @@ expect gaps 'queue_wait_minutes' $BIN gaps -f "$MODEL"
 expect simulate 'Closes: queue_wait_minutes, p99_inference_latency, slo_availability' \
   $BIN simulate -f "$MODEL" -action preempt_batch_to_spot
 expect "plan json" '"status": "pending-approval"' $BIN plan -f "$MODEL" -o json
-expect "plan ranking" '^1 *preempt_batch_to_spot' $BIN plan -f "$MODEL"
+expect "plan ranking" '^1 *add_gpu_nodes+preempt_batch_to_spot' $BIN plan -f "$MODEL"
 if $BIN simulate -f "$MODEL" -action does_not_exist 2>/dev/null; then fail "unknown action should error"; fi
 expect "keep credential" '"requires_approval": \["POST"\]' $BIN keep credential
 
@@ -39,7 +39,7 @@ FPID=$!
 export ZYNTRA_NETRA_URL=http://127.0.0.1:$FAKE ZYNTRA_GRAVIA_URL=http://127.0.0.1:$FAKE \
   ZYNTRA_FABRIC_URL=http://127.0.0.1:$FAKE ZYNTRA_FABRIC_PASSWORD=fake ZYNTRA_KEEP_URL=http://127.0.0.1:$FAKE \
   ZYNTRA_API_KEY=$KEY ZYNTRA_EXEC_TOKEN=e2e-exec ZYNTRA_STATE_DIR=$STATE ZYNTRA_EXECUTE=dry-run
-ZYNTRA_KEEP_URL='' $BIN serve -f examples/lab-kpis.yaml -addr "127.0.0.1:$PORT" -interval 1s >/tmp/zyntra-e2e.log 2>&1 &
+$BIN serve -f examples/lab-kpis.yaml -addr "127.0.0.1:$PORT" -interval 1s >/tmp/zyntra-e2e.log 2>&1 &
 PID=$!
 trap 'kill $PID $FPID 2>/dev/null || true; rm -rf "$STATE"' EXIT
 for _ in $(seq 1 50); do
@@ -80,6 +80,9 @@ out=$(api -X POST -H 'Content-Type: application/json' -d '{"reason":"e2e"}' \
 grep -Eq '"status": "(executed|failed)"' <<<"$out" || fail "approve: $out"
 grep -q -- '--dry-run=server' <<<"$out" || fail "execution must be dry-run: $out"
 expect audit '"to": "approved"' api "http://127.0.0.1:$PORT/api/v1/audit"
+expect "audit chain" '"ok": true' api "http://127.0.0.1:$PORT/api/v1/audit/verify"
+api "http://127.0.0.1:$PORT/api/v1/decisions/$id/export" >"$STATE/decision.json" || fail "decision export"
+expect "verify decision" 'audit chain at export: intact' $BIN verify-decision "$STATE/decision.json"
 
 expect console '<div id="root">' curl -fsS "http://127.0.0.1:$PORT/"
 expect "spa fallback" '<div id="root">' curl -fsS "http://127.0.0.1:$PORT/approvals"

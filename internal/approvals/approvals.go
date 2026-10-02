@@ -136,7 +136,14 @@ type Proposal struct {
 	Template   string   `json:"template,omitempty"`
 	Render     string   `json:"render,omitempty"`
 	RenderErr  string   `json:"render_error,omitempty"`
+	// Kinds are what running the proposal does (kubectl, webhook, file,
+	// noop), one per executable action.
+	Kinds []string `json:"kinds,omitempty"`
+	// Compensate lists the actions that undo this one; they are linked, not
+	// run automatically.
+	Compensate []string `json:"compensate,omitempty"`
 
+	PackID       string             `json:"pack,omitempty"`
 	ModelVersion string             `json:"model_version,omitempty"`
 	Inputs       *Inputs            `json:"inputs,omitempty"`
 	Simulation   *sim.Result        `json:"simulation,omitempty"`
@@ -158,12 +165,15 @@ type Proposal struct {
 	DecidedBy         string     `json:"decided_by,omitempty"`
 	Reason            string     `json:"reason,omitempty"`
 
-	Revalidation   *Revalidation    `json:"revalidation,omitempty"`
-	BlockedReasons []string         `json:"blocked_reasons,omitempty"`
-	Execution      *executor.Result `json:"execution,omitempty"`
-	ExecutedAt     *time.Time       `json:"executed_at,omitempty"`
-	Outcome        *outcome.Record  `json:"outcome,omitempty"`
-	Keep           *KeepRef         `json:"keep,omitempty"`
+	// WaitingForWindow is set on approved proposals held until their
+	// maintenance window opens.
+	WaitingForWindow bool             `json:"waiting_for_window,omitempty"`
+	Revalidation     *Revalidation    `json:"revalidation,omitempty"`
+	BlockedReasons   []string         `json:"blocked_reasons,omitempty"`
+	Execution        *executor.Result `json:"execution,omitempty"`
+	ExecutedAt       *time.Time       `json:"executed_at,omitempty"`
+	Outcome          *outcome.Record  `json:"outcome,omitempty"`
+	Keep             *KeepRef         `json:"keep,omitempty"`
 
 	// RollbackOf links a rollback proposal to the decision it undoes;
 	// RollbackID links the other way.
@@ -233,6 +243,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	st.s = state{}
 	if err := json.Unmarshal(b, &st.s); err != nil {
 		return nil, fmt.Errorf("approvals state %s: %w", path, err)
 	}
@@ -320,6 +331,15 @@ func (s *Store) audit(p *Proposal, from, to Status, by, note string) {
 	}
 	e.Hash = e.digest()
 	s.s.Audit = append(s.s.Audit, e)
+}
+
+// Note appends an audit entry that is not tied to a proposal, such as an
+// operator entering a manual KPI value. subject names what changed.
+func (s *Store) Note(subject, by, note string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audit(&Proposal{Action: subject}, "", "recorded", by, note)
+	return s.save()
 }
 
 func clone(p *Proposal) Proposal {

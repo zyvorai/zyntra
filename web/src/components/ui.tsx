@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { fmt, type KPI } from '../api';
+import { fmt, unitOf, type KPI } from '../api';
 
 export function PageHero({
   eyebrow,
@@ -93,7 +93,7 @@ export function KpiValue({ k }: { k: KPI }) {
   return (
     <>
       {fmt(k.value)}
-      {k.unit ? <small className="unit"> {k.unit}</small> : null}
+      {unitOf(k) ? <small className="unit"> {unitOf(k)}</small> : null}
     </>
   );
 }
@@ -104,5 +104,23 @@ export function Meter({ value }: { value: number }) {
     <span className="meter" aria-hidden>
       <span style={{ width: `${w}%` }} className={value > 0.5 ? 'bad' : value > 0.15 ? 'warn' : 'ok'} />
     </span>
+  );
+}
+
+export function OwnerFilter({ owners, value, onChange }: { owners?: string[]; value: string; onChange: (o: string) => void }) {
+  if (!owners?.length && !value) return null;
+  return (
+    <label className="owner-filter">
+      <span className="muted small">Owner</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Everyone</option>
+        {(owners ?? []).map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+        {value && !owners?.includes(value) ? <option value={value}>{value}</option> : null}
+      </select>
+    </label>
   );
 }

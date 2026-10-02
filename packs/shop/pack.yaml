@@ -1,0 +1,15 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+id: shop
+title: Counter and stock
+industry: retail
+version: 0.1.0
+owners: [owner, floor, buyer]
+timezone: Asia/Kolkata
+# Samples outside shop hours do not count: a shop that misses target at 2am
+# is not a gap.
+calendar: shop-hours
+calendars:
+  shop-hours: {start: "09:00", end: "21:30"}
+  buy-hours: {days: [mon, tue, wed, thu, fri, sat], start: "10:00", end: "17:00"}
+  evening: {start: "17:00", end: "21:30"}

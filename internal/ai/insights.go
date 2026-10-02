@@ -35,10 +35,15 @@ func NewHistory(max int) *History {
 }
 
 // Record appends the current value of every KPI.
-func (h *History) Record(m *graph.Model, t time.Time) {
+// Record appends the current value of every KPI except those in skip (held
+// outside their calendar window), so forecasts only see in-window samples.
+func (h *History) Record(m *graph.Model, t time.Time, skip ...map[string]bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, k := range m.KPIs {
+		if len(skip) > 0 && skip[0][k.ID] {
+			continue
+		}
 		s := append(h.data[k.ID], Point{t, k.Value})
 		if len(s) > h.max {
 			s = s[len(s)-h.max:]

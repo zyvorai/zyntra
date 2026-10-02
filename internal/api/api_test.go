@@ -61,7 +61,12 @@ type fixture struct {
 
 func setup(t *testing.T, mutate func(*Options)) *fixture {
 	t.Helper()
-	m, err := graph.Parse([]byte(model))
+	return setupWith(t, model, mutate)
+}
+
+func setupWith(t *testing.T, text string, mutate func(*Options)) *fixture {
+	t.Helper()
+	m, err := graph.Parse([]byte(text))
 	if err != nil {
 		t.Fatal(err)
 	}

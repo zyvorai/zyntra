@@ -8,7 +8,8 @@ export type Page =
   | 'signals'
   | 'insights'
   | 'ask'
-  | 'model';
+  | 'model'
+  | 'decision';
 
 export interface NavChild { page: Page; label: string; blurb: string }
 export interface NavGroup { label: string; page?: Page; children?: NavChild[] }
@@ -26,8 +27,8 @@ export const navGroups: NavGroup[] = [
   {
     label: 'Act',
     children: [
-      { page: 'approvals', label: 'Approvals', blurb: 'Approve or reject proposals; execute Gravia CRDs.' },
-      { page: 'audit', label: 'Audit', blurb: 'Every decision and execution, plus Fabric Keep receipts.' },
+      { page: 'approvals', label: 'Approvals', blurb: 'Quorum approvals, revalidation and outcomes for each proposal.' },
+      { page: 'audit', label: 'Audit', blurb: 'Hash-chained decision trail, plus Fabric Keep receipts.' },
     ],
   },
   { label: 'Signals', page: 'signals' },
@@ -52,9 +53,20 @@ export const pageTitles: Record<Page, string> = {
   insights: 'Insights',
   ask: 'Ask Zyntra',
   model: 'Model',
+  decision: 'Decision',
 };
 
 export function pageFromHash(): Page {
-  const h = window.location.hash.replace(/^#\/?/, '') as Page;
+  const h = window.location.hash.replace(/^#\/?/, '').split('/')[0] as Page;
   return h in pageTitles ? h : 'overview';
 }
+
+/** The proposal id in #/decision/<id>. */
+export function decisionFromHash(): string {
+  const [page, id] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return page === 'decision' && id ? decodeURIComponent(id) : '';
+}
+
+export const openDecision = (id: string) => {
+  window.location.hash = `/decision/${encodeURIComponent(id)}`;
+};

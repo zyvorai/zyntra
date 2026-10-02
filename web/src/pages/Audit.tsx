@@ -1,5 +1,6 @@
-import { ago, type AuditEvent } from '../api';
+import { ago, type AuditEvent, type ChainStatus } from '../api';
 import { useApi } from '../hooks';
+import { openDecision } from '../nav';
 import { Card, Empty, ErrorNote, PageHero, Pill } from '../components/ui';
 
 interface KeepStatus {
@@ -24,7 +25,8 @@ function rows(v: unknown): Record<string, unknown>[] {
 const str = (v: unknown) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 
 export default function Audit() {
-  const local = useApi<{ events: AuditEvent[] }>('/api/v1/audit', 10000);
+  const local = useApi<{ events: AuditEvent[]; chain?: ChainStatus }>('/api/v1/audit', 10000);
+  const chain = local.data?.chain;
   const keep = useApi<KeepStatus>('/api/v1/keep/status', 30000);
   const configured = keep.data?.configured;
   const keepAudit = useApi<unknown>(configured ? '/api/v1/keep/audit' : null, 15000);
@@ -36,10 +38,22 @@ export default function Audit() {
       <PageHero
         eyebrow="Act"
         title="Audit"
-        lede="Every proposal transition in Zyntra, alongside the tamper-evident audit chain kept by Fabric Keep."
+        lede="Every proposal transition in Zyntra, hash-chained so edits or deletions are detectable, alongside the audit chain kept by Fabric Keep."
       />
       <ErrorNote message={local.error} />
-      <Card title="Zyntra decisions" aside={<Pill>{events.length} events</Pill>}>
+      <Card
+        title="Zyntra decisions"
+        aside={
+          <div className="pills">
+            {chain ? (
+              <Pill tone={chain.ok ? 'ok' : 'bad'}>
+                {chain.ok ? `chain intact · head ${chain.head.slice(0, 10)}` : `chain broken at #${chain.broken_at}: ${chain.error}`}
+              </Pill>
+            ) : null}
+            <Pill>{events.length} events</Pill>
+          </div>
+        }
+      >
         {events.length === 0 ? (
           <Empty>No decisions yet.</Empty>
         ) : (
@@ -58,7 +72,11 @@ export default function Audit() {
               {events.map((e, i) => (
                 <tr key={i}>
                   <td title={e.at}>{ago(e.at)}</td>
-                  <td className="mono">{e.proposal}</td>
+                  <td className="mono">
+                    <button className="linklike mono" onClick={() => openDecision(e.proposal)}>
+                      {e.proposal}
+                    </button>
+                  </td>
                   <td className="mono">{e.action}</td>
                   <td>
                     {e.from ? `${e.from} → ` : ''}

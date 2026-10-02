@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowRight, ChevronLeft, Eye, EyeOff, KeyRound, Loader2, User } from 'lucide-react';
-import { login, type Meta } from '../api';
+import { ArrowRight, ChevronLeft, Eye, EyeOff, KeyRound, Loader2, LogIn, User } from 'lucide-react';
+import { login, passwordLogin, type Meta } from '../api';
 import {
   LoginError,
   LoginField,
@@ -34,6 +34,13 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
   const [remember, setRemember] = useState(Boolean(saved));
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const methods = meta?.auth_methods ?? ['key'];
+  const sso = methods.includes('oidc');
+  const hasPassword = methods.includes('password');
+  const hasKey = methods.includes('key');
+  const [useKey, setUseKey] = useState(!hasPassword);
+  useEffect(() => setUseKey(!hasPassword), [hasPassword]);
+  const secretLabel = useKey ? 'Access key' : 'Password';
 
   useEffect(() => {
     document.title = 'Sign in · Zyntra';
@@ -65,14 +72,15 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
     setSubmitting(true);
     setError('');
     try {
-      await login(operator.trim(), token, remember);
+      if (useKey) await login(operator.trim(), token, remember);
+      else await passwordLogin(operator.trim(), token, remember);
       if (remember) localStorage.setItem(SAVE_KEY, JSON.stringify({ operator: operator.trim() }));
       else localStorage.removeItem(SAVE_KEY);
       setToken('');
       onSignedIn();
     } catch (err) {
       const msg = (err as Error).message;
-      setError(msg === 'invalid credentials' ? 'That access key was not accepted.' : msg);
+      setError(msg === 'invalid credentials' ? `That ${secretLabel.toLowerCase()} was not accepted.` : msg);
     } finally {
       setSubmitting(false);
     }
@@ -149,14 +157,18 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
       panelSubtitle={
         step === 'key' ? (
           <>
-            Enter the access key for <span className="login-apple-host">{operator.trim()}</span>
+            Enter the {secretLabel.toLowerCase()} for <span className="login-apple-host">{operator.trim()}</span>
           </>
         ) : (
           'Sign in to Zyntra'
         )
       }
       panelHint={
-        step === 'identify' ? (
+        step === 'identify' && sso ? (
+          <>Sign in with your organisation account; your groups decide whether you can view, propose, approve or execute.</>
+        ) : step === 'identify' && hasPassword ? (
+          <>Use the account from the Zyntra policy file. Your name is recorded in the decision audit trail.</>
+        ) : step === 'identify' ? (
           <>
             Your name is recorded in the approval audit trail. The access key is{' '}
             <span className="login-mono">ZYNTRA_API_KEY</span> from{' '}
@@ -178,8 +190,17 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
         <form key="identify" onSubmit={onContinue} autoComplete="on" aria-label="Operator" className="login-apple-step" noValidate>
           {formInstance}
           {error ? <LoginError message={error} /> : null}
-          <div className="login-apple-fields">
-            <LoginField label="Operator" id="operator">
+          {sso ? (
+            <>
+              <button type="button" className="login-btn-primary sso-btn" onClick={() => window.location.assign('/api/v1/auth/oidc/login')}>
+                <LogIn size={16} />
+                <span>Sign in with SSO</span>
+              </button>
+              {hasPassword || hasKey ? <p className="login-divider">or {hasPassword ? 'a local account' : 'the break-glass access key'}</p> : null}
+            </>
+          ) : null}
+          <div className="login-apple-fields" hidden={sso && !hasPassword && !hasKey}>
+            <LoginField label={hasPassword ? 'Username' : 'Operator'} id="operator">
               <User className="login-field-icon" />
               <input
                 id="operator"
@@ -196,7 +217,7 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
               />
             </LoginField>
           </div>
-          <button type="submit" className="login-btn-primary" disabled={!operator.trim()}>
+          <button type="submit" className={sso ? 'login-btn-secondary btn-secondary sso-btn' : 'login-btn-primary'} disabled={!operator.trim()} hidden={sso && !hasPassword && !hasKey}>
             <span>Continue</span>
             <ArrowRight size={16} />
           </button>
@@ -211,7 +232,7 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
           {formInstance}
           {error ? <LoginError message={error} /> : null}
           <div className="login-apple-fields">
-            <LoginField label="Access key" id="token">
+            <LoginField label={secretLabel} id="token">
               <KeyRound className="login-field-icon" />
               <input
                 id="token"
@@ -221,7 +242,7 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
                 onChange={(e) => setToken(e.target.value)}
                 className="login-input"
                 style={{ paddingRight: '2.75rem' }}
-                placeholder="Access key"
+                placeholder={secretLabel}
                 autoComplete="current-password"
                 ref={focusInPlace}
                 required
@@ -231,12 +252,17 @@ export default function Login({ meta, onSignedIn }: { meta: Meta | null; onSigne
                 type="button"
                 className="login-field-toggle"
                 onClick={() => setShow(!show)}
-                aria-label={show ? 'Hide access key' : 'Show access key'}
+                aria-label={show ? `Hide ${secretLabel.toLowerCase()}` : `Show ${secretLabel.toLowerCase()}`}
               >
                 {show ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </LoginField>
           </div>
+          {hasPassword && hasKey ? (
+            <button type="button" className="linklike small" onClick={() => setUseKey(!useKey)}>
+              {useKey ? 'Use a password instead' : 'Use the break-glass access key instead'}
+            </button>
+          ) : null}
           <LoginRemember checked={remember} onChange={setRemember} hint="Keeps you signed in for 7 days instead of 12 hours." />
           <button type="submit" className="login-btn-primary" disabled={!token || submitting}>
             {submitting ? (

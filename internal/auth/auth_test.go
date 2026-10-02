@@ -9,27 +9,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestCookieLifecycle(t *testing.T) {
 	a := New("k3y", "")
 	now := time.Unix(1_700_000_000, 0)
 	a.now = func() time.Time { return now }
-	v, _ := a.Mint(time.Hour, "jane.doe")
+	v, _ := a.Mint(time.Hour, newIdentity("jane.doe", "oidc", RoleApprover, RoleViewer))
 	valid := func(v string) bool { _, ok := a.Valid(v); return ok }
-	if op, ok := a.Valid(v); !ok || op != "jane.doe" {
-		t.Fatalf("fresh cookie: %q %v", op, ok)
+	if id, ok := a.Valid(v); !ok || id.Subject != "jane.doe" || id.Role != RoleApprover || len(id.Roles) != 2 || id.Method != "oidc" {
+		t.Fatalf("fresh cookie: %+v %v", id, ok)
 	}
 	parts := strings.Split(v, ".")
 	exp, sig := parts[0], parts[len(parts)-1]
-	if valid(exp + ".jane.doe." + strings.Repeat("0", len(sig))) {
+	if valid(exp + ".oidc.viewer+approver.jane.doe." + strings.Repeat("0", len(sig))) {
 		t.Fatal("tampered signature accepted")
 	}
-	if valid("9999999999.jane.doe." + sig) {
+	if valid("9999999999.oidc.viewer+approver.jane.doe." + sig) {
 		t.Fatal("tampered expiry accepted")
 	}
-	if valid(exp + ".root." + sig) {
+	if valid(exp + ".oidc.viewer+approver.root." + sig) {
 		t.Fatal("tampered operator accepted")
+	}
+	if valid(exp + ".oidc.viewer+admin.jane.doe." + sig) {
+		t.Fatal("tampered roles accepted")
 	}
 	if _, ok := New("other", "").Valid(v); ok {
 		t.Fatal("cookie valid under a different key")
@@ -115,6 +120,66 @@ func TestRequireAndSession(t *testing.T) {
 	}
 	if c := do("GET", "/api/v1/whoami", "", sess, "").StatusCode; c != 200 {
 		t.Fatalf("whoami: %d", c)
+	}
+}
+
+func TestRolesAndLocalUsers(t *testing.T) {
+	a := New("k3y", "")
+	hash, _ := bcrypt.GenerateFromPassword([]byte("s3cret"), bcrypt.MinCost)
+	a.SetUsers([]LocalUser{{Name: "vic", Hash: string(hash), Roles: []Role{RoleViewer}}, {Name: "pat", Hash: string(hash), Roles: []Role{RoleProposer}}})
+	mux := http.NewServeMux()
+	a.Routes(mux)
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	mux.Handle("GET /read", a.Require(ok, Readers...))
+	mux.Handle("POST /propose", a.Require(ok, Proposers...))
+	mux.Handle("POST /approve", a.Require(ok, Approvers...))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	login := func(user, pw string) *http.Cookie {
+		resp, err := http.Post(ts.URL+"/api/v1/session", "application/json", strings.NewReader(`{"username":"`+user+`","password":"`+pw+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		for _, c := range resp.Cookies() {
+			if c.Name == CookieName {
+				return c
+			}
+		}
+		return nil
+	}
+	if login("vic", "wrong") != nil || login("nobody", "s3cret") != nil {
+		t.Fatal("bad credentials accepted")
+	}
+	call := func(method, path string, c *http.Cookie) int {
+		req, _ := http.NewRequest(method, ts.URL+path, nil)
+		req.AddCookie(c)
+		resp, _ := http.DefaultClient.Do(req)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	vic, pat := login("vic", "s3cret"), login("pat", "s3cret")
+	for _, c := range []struct {
+		cookie       *http.Cookie
+		method, path string
+		want         int
+	}{
+		{vic, "GET", "/read", 200}, {vic, "POST", "/propose", 403},
+		{pat, "POST", "/propose", 200}, {pat, "POST", "/approve", 403},
+	} {
+		if got := call(c.method, c.path, c.cookie); got != c.want {
+			t.Errorf("%s %s as %s: %d want %d", c.method, c.path, c.cookie.Value[:20], got, c.want)
+		}
+	}
+	if _, err := ParseRole("exec"); err == nil {
+		t.Fatal("exec must not be assignable")
+	}
+	m, err := ParseRoleMap("sre-leads=approver+executor, platform=proposer;everyone=viewer")
+	if err != nil || len(m["sre-leads"]) != 2 || m["everyone"][0] != RoleViewer {
+		t.Fatalf("role map %v %v", m, err)
+	}
+	if _, err := ParseRoleMap("x=root"); err == nil {
+		t.Fatal("unknown role accepted")
 	}
 }
 

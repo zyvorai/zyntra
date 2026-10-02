@@ -48,3 +48,18 @@ export function usePulse() {
   }, []);
   return pulse;
 }
+
+const OWNER_KEY = 'zyntra.owner';
+
+/** useOwner keeps one owner filter across the Gaps and Plan pages. */
+export function useOwner(): [string, (o: string) => void] {
+  const [owner, set] = useState(() => localStorage.getItem(OWNER_KEY) ?? '');
+  const update = useCallback((o: string) => {
+    if (o) localStorage.setItem(OWNER_KEY, o);
+    else localStorage.removeItem(OWNER_KEY);
+    set(o);
+  }, []);
+  return [owner, update];
+}
+
+export const withOwner = (path: string, owner: string) => (owner ? `${path}?owner=${encodeURIComponent(owner)}` : path);

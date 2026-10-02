@@ -25,11 +25,14 @@ import (
 	"github.com/zyvorai/zyntra/internal/ai"
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/decisions"
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/freshness"
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/inputs"
 	"github.com/zyvorai/zyntra/internal/planner"
+	"github.com/zyvorai/zyntra/internal/policy"
 	"github.com/zyvorai/zyntra/internal/sim"
 )
 
@@ -73,6 +76,14 @@ type Options struct {
 	Store    *approvals.Store
 	Executor *executor.Executor
 	Keep     KeepBridge
+	// Inputs holds webhook-in documents and manual KPI values.
+	Inputs *inputs.Store
+	// Policy sets approval quorums, expiry, maintenance windows and Keep
+	// requirements; nil keeps the defaults.
+	Policy *policy.Policy
+	// Signer signs decision exports; nil uses a key in StateDir (or an
+	// ephemeral one without a StateDir).
+	Signer *decisions.Signer
 	// ApprovalMode is local or keep.
 	ApprovalMode string
 	// KeepDoubleApproval leaves the Keep approval for a second human in
@@ -98,8 +109,14 @@ type Server struct {
 	bg sync.WaitGroup
 }
 
-// freshness returns the current freshness of every KPI in m.
-func (s *Server) freshness(m *graph.Model) []freshness.State { return s.fresh.States(m) }
+// freshness returns the current freshness of every KPI in m. Without any
+// live refresh the model's values are all there is, so they count as static.
+func (s *Server) freshness(m *graph.Model) []freshness.State {
+	if s.opt.Refresh == nil {
+		return (*freshness.Tracker)(nil).States(m)
+	}
+	return s.fresh.States(m)
+}
 
 func New(o Options) *Server {
 	if o.Interval <= 0 {
@@ -123,6 +140,25 @@ func New(o Options) *Server {
 	if o.ApprovalMode == "" {
 		o.ApprovalMode = ModeLocal
 	}
+	if o.Policy == nil {
+		o.Policy, _ = policy.Load("")
+	}
+	o.Policy.UseModel(o.Model)
+	if o.Inputs == nil {
+		o.Inputs, _ = inputs.Open("")
+	}
+	if o.Signer == nil {
+		path := ""
+		if o.StateDir != "" {
+			path = filepath.Join(o.StateDir, "decision-signing.key")
+		}
+		signer, err := decisions.LoadSigner(path)
+		if err != nil {
+			log.Printf("decision signing key: %v; using an ephemeral key", err)
+			signer, _ = decisions.LoadSigner("")
+		}
+		o.Signer = signer
+	}
 	s := &Server{opt: o, model: o.Model, refreshed: time.Now(), fresh: freshness.New(3 * o.Interval)}
 	s.loadHistory()
 	if o.Refresh == nil {
@@ -143,11 +179,16 @@ func (s *Server) sourceStatus() []adapters.Status {
 	return append([]adapters.Status(nil), s.sources...)
 }
 
-func (s *Server) aiSnapshot() ai.Snapshot {
+func (s *Server) aiSnapshot(owner ...string) ai.Snapshot {
 	m, _ := s.snapshot()
 	plan, _, _ := s.plan(m)
+	g := gaps.Detect(m)
+	if len(owner) > 0 && owner[0] != "" {
+		plan = planner.ForOwner(m, plan, owner[0])
+		g = gaps.ForOwner(g, owner[0])
+	}
 	return ai.Snapshot{
-		Model: m, Gaps: gaps.Detect(m), Severity: gaps.Total(m, nil), Plan: plan.Recommendations,
+		Model: m, Gaps: g, Severity: gaps.Total(m, nil), Plan: plan.Recommendations,
 		Anomalies: ai.Anomalies(m, s.opt.History), Forecasts: ai.Forecasts(m, s.opt.History),
 		Sources: s.sourceStatus(),
 	}
@@ -160,6 +201,7 @@ func (s *Server) Run(ctx context.Context) {
 	saveEvery := 0
 	for {
 		s.RefreshOnce(ctx)
+		s.tick(ctx, time.Now())
 		if saveEvery++; saveEvery%20 == 0 {
 			s.saveHistory()
 		}
@@ -180,6 +222,7 @@ func (s *Server) RefreshOnce(ctx context.Context) {
 	m, _ := s.snapshot()
 	var st []adapters.Status
 	now := time.Now()
+	held := map[string]bool{}
 	if s.opt.Refresh != nil {
 		rep, err := s.opt.Refresh(ctx, m)
 		if err != nil {
@@ -190,6 +233,9 @@ func (s *Server) RefreshOnce(ctx context.Context) {
 			switch {
 			case u.OK:
 				s.fresh.Success(id, now)
+			case u.Held:
+				s.fresh.Held(id)
+				held[id] = true
 			case u.Warming:
 				s.fresh.Warming(id)
 			default:
@@ -203,7 +249,7 @@ func (s *Server) RefreshOnce(ctx context.Context) {
 		s.sources = st
 	}
 	s.mu.Unlock()
-	s.opt.History.Record(m, now)
+	s.opt.History.Record(m, now, held)
 }
 
 func (s *Server) historyPath() string {
@@ -245,7 +291,9 @@ func (s *Server) saveHistory() {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	admin := func(h http.HandlerFunc) http.Handler { return s.opt.Auth.Require(h, auth.RoleAdmin) }
+	read := func(h http.HandlerFunc) http.Handler { return s.opt.Auth.Require(h, auth.Readers...) }
+	propose := func(h http.HandlerFunc) http.Handler { return s.opt.Auth.Require(h, auth.Proposers...) }
+	approve := func(h http.HandlerFunc) http.Handler { return s.opt.Auth.Require(h, auth.Approvers...) }
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -253,34 +301,42 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/meta", s.handleMeta)
 	s.opt.Auth.Routes(mux)
 
-	mux.Handle("GET /api/v1/graph", admin(s.handleGraph))
-	mux.Handle("GET /api/v1/gaps", admin(s.handleGaps))
-	mux.Handle("GET /api/v1/plan", admin(s.handlePlan))
-	mux.Handle("POST /api/v1/simulate", admin(s.handleSimulate))
-	mux.Handle("GET /api/v1/sources", admin(s.handleSources))
-	mux.Handle("GET /api/v1/freshness", admin(s.handleFreshness))
-	mux.Handle("GET /api/v1/events", admin(s.handleEvents))
-	mux.Handle("GET /api/v1/kpis/{id}/history", admin(s.handleKPIHistory))
+	mux.Handle("GET /api/v1/graph", read(s.handleGraph))
+	mux.Handle("GET /api/v1/gaps", read(s.handleGaps))
+	mux.Handle("GET /api/v1/plan", read(s.handlePlan))
+	mux.Handle("POST /api/v1/simulate", read(s.handleSimulate))
+	mux.Handle("GET /api/v1/sources", read(s.handleSources))
+	mux.Handle("GET /api/v1/freshness", read(s.handleFreshness))
+	mux.Handle("GET /api/v1/events", read(s.handleEvents))
+	mux.Handle("GET /api/v1/kpis/{id}/history", read(s.handleKPIHistory))
+	mux.Handle("POST /api/v1/kpis/{id}/value", propose(s.handleManualValue))
+	mux.Handle("GET /api/v1/inputs", read(s.handleInputs))
+	mux.Handle("POST /api/v1/ingest/{name}", s.opt.Auth.Require(http.HandlerFunc(s.handleIngest), auth.Ingesters...))
 
-	mux.Handle("GET /api/v1/ai/status", admin(s.handleAIStatus))
-	mux.Handle("GET /api/v1/ai/digest", admin(s.handleAIDigest))
-	mux.Handle("GET /api/v1/ai/insights", admin(s.handleAIInsights))
-	mux.Handle("POST /api/v1/ai/ask", admin(s.handleAIAsk))
-	mux.Handle("POST /api/v1/ai/explain", admin(s.handleAIExplain))
+	mux.Handle("GET /api/v1/ai/status", read(s.handleAIStatus))
+	mux.Handle("GET /api/v1/ai/digest", read(s.handleAIDigest))
+	mux.Handle("GET /api/v1/ai/insights", read(s.handleAIInsights))
+	mux.Handle("POST /api/v1/ai/ask", read(s.handleAIAsk))
+	mux.Handle("POST /api/v1/ai/explain", read(s.handleAIExplain))
 
-	mux.Handle("GET /api/v1/proposals", admin(s.handleProposals))
-	mux.Handle("POST /api/v1/proposals", admin(s.handlePropose))
-	mux.Handle("GET /api/v1/proposals/{id}", admin(s.handleProposal))
-	mux.Handle("POST /api/v1/proposals/{id}/approve", admin(s.handleApprove))
-	mux.Handle("POST /api/v1/proposals/{id}/reject", admin(s.handleReject))
-	mux.Handle("GET /api/v1/audit", admin(s.handleAudit))
-	mux.Handle("POST /api/v1/exec/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleExec), auth.RoleExec, auth.RoleAdmin))
+	mux.Handle("GET /api/v1/proposals", read(s.handleProposals))
+	mux.Handle("POST /api/v1/proposals", propose(s.handlePropose))
+	mux.Handle("GET /api/v1/proposals/{id}", read(s.handleProposal))
+	mux.Handle("POST /api/v1/proposals/{id}/approve", approve(s.handleApprove))
+	mux.Handle("POST /api/v1/proposals/{id}/reject", approve(s.handleReject))
+	mux.Handle("GET /api/v1/audit", read(s.handleAudit))
+	mux.Handle("GET /api/v1/audit/verify", read(s.handleAuditVerify))
+	mux.Handle("GET /api/v1/decisions", read(s.handleDecisions))
+	mux.Handle("GET /api/v1/decisions/{id}", read(s.handleDecision))
+	mux.Handle("GET /api/v1/decisions/{id}/export", read(s.handleDecisionExport))
+	mux.Handle("GET /api/v1/policy", read(s.handlePolicy))
+	mux.Handle("POST /api/v1/exec/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleExec), auth.Executors...))
 
-	mux.Handle("GET /api/v1/keep/status", admin(s.handleKeepStatus))
-	mux.Handle("GET /api/v1/keep/approvals", admin(s.handleKeepApprovals))
-	mux.Handle("POST /api/v1/keep/approvals/{id}", admin(s.handleKeepDecide))
-	mux.Handle("GET /api/v1/keep/receipts", admin(s.handleKeepReceipts))
-	mux.Handle("GET /api/v1/keep/audit", admin(s.handleKeepAudit))
+	mux.Handle("GET /api/v1/keep/status", read(s.handleKeepStatus))
+	mux.Handle("GET /api/v1/keep/approvals", read(s.handleKeepApprovals))
+	mux.Handle("POST /api/v1/keep/approvals/{id}", approve(s.handleKeepDecide))
+	mux.Handle("GET /api/v1/keep/receipts", read(s.handleKeepReceipts))
+	mux.Handle("GET /api/v1/keep/audit", read(s.handleKeepAudit))
 
 	if s.opt.Static != nil {
 		mux.Handle("GET /", spa(s.opt.Static))
@@ -295,7 +351,7 @@ func (s *Server) ExecHandler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.Handle("POST /api/v1/exec/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleExec), auth.RoleExec, auth.RoleAdmin))
+	mux.Handle("POST /api/v1/exec/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleExec), auth.Executors...))
 	return mux
 }
 
@@ -345,8 +401,8 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	}
 	m, _ := s.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"product": "Zyntra", "version": s.opt.Version, "host": s.opt.Host, "model": m.Name,
-		"auth_required": s.opt.Auth.Required(),
+		"product": "Zyntra", "version": s.opt.Version, "host": s.opt.Host, "model": m.Name, "pack": m.Pack,
+		"auth_required": s.opt.Auth.Required(), "auth_methods": s.opt.Auth.Methods(),
 		"sources":       map[string]int{"total": len(src), "healthy": healthy},
 		"approval_mode": s.opt.ApprovalMode, "execute_mode": s.opt.Executor.Mode,
 		"ai_mode": s.opt.AI.Status().Mode,
@@ -357,7 +413,7 @@ func (s *Server) handleGraph(w http.ResponseWriter, _ *http.Request) {
 	m, at := s.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"model": m, "refreshed_at": at, "version": m.Version(),
-		"constraints": m.AllConstraints(), "freshness": s.freshness(m),
+		"constraints": m.AllConstraints(), "freshness": s.freshness(m), "owners": m.Owners(),
 	})
 }
 
@@ -371,13 +427,13 @@ func (s *Server) handleFreshness(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"kpis": st, "unusable": unusable, "refreshed_at": at})
 }
 
-func (s *Server) handleGaps(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleGaps(w http.ResponseWriter, r *http.Request) {
 	m, _ := s.snapshot()
-	g := gaps.Detect(m)
+	g := gaps.ForOwner(gaps.Detect(m), r.URL.Query().Get("owner"))
 	if g == nil {
 		g = []gaps.Gap{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"gaps": g, "severity_total": gaps.Total(m, nil)})
+	writeJSON(w, http.StatusOK, map[string]any{"gaps": g, "severity_total": gaps.Total(m, nil), "owners": m.Owners()})
 }
 
 // plan ranks actions for m using the current freshness.
@@ -387,20 +443,21 @@ func (s *Server) plan(m *graph.Model) (planner.Result, []freshness.State, error)
 	return r, st, err
 }
 
-func (s *Server) handlePlan(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handlePlan(w http.ResponseWriter, req *http.Request) {
 	m, _ := s.snapshot()
 	r, st, err := s.plan(m)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	r = planner.ForOwner(m, r, req.URL.Query().Get("owner"))
 	unusable := freshness.Unusable(st)
 	if unusable == nil {
 		unusable = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"recommendations": r.Recommendations, "blocked": r.Blocked,
-		"unusable_inputs": unusable, "model_version": m.Version(),
+		"unusable_inputs": unusable, "model_version": m.Version(), "owners": m.Owners(),
 	})
 }
 
@@ -539,7 +596,7 @@ func (s *Server) handleAIStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAIDigest(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.opt.AI.Digest(r.Context(), s.aiSnapshot()))
+	writeJSON(w, http.StatusOK, s.opt.AI.Digest(r.Context(), s.aiSnapshot(r.URL.Query().Get("owner"))))
 }
 
 func (s *Server) handleAIInsights(w http.ResponseWriter, _ *http.Request) {
@@ -590,225 +647,6 @@ func (s *Server) handleProposals(w http.ResponseWriter, _ *http.Request) {
 		"proposals": s.opt.Store.List(), "approval_mode": s.opt.ApprovalMode,
 		"execute_mode": s.opt.Executor.Mode, "double_approval": s.opt.KeepDoubleApproval,
 	})
-}
-
-func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Action string `json:"action"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	m, _ := s.snapshot()
-	a, ok := m.Action(req.Action)
-	if !ok {
-		writeErr(w, http.StatusBadRequest, "unknown action")
-		return
-	}
-	res, err := sim.Apply(m, *a)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	p := approvals.Proposal{
-		Action: a.ID, ActionName: a.Name, Risk: string(a.Risk), Adapter: a.Adapter,
-		Predicted: approvals.Prediction{SeverityBefore: res.SeverityBefore, SeverityAfter: res.SeverityAfter,
-			Closes: res.GapsClosed, Opens: res.GapsOpened, KPIs: map[string]float64{}},
-		Baseline: map[string]float64{},
-	}
-	for _, k := range res.KPIs {
-		if k.Change != 0 {
-			p.Predicted.KPIs[k.KPI] = k.After
-			p.Baseline[k.KPI] = k.Before
-		}
-	}
-	if a.Execute != nil {
-		p.Template = a.Execute.Template
-		if rd, err := executor.Render(*a); err != nil {
-			p.RenderErr = err.Error()
-		} else {
-			p.Render = rd.Display
-		}
-	}
-	out, created, err := s.opt.Store.Create(p, auth.FromContext(r.Context()).Subject)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	code := http.StatusOK
-	if created {
-		code = http.StatusCreated
-	}
-	writeJSON(w, code, out)
-}
-
-func (s *Server) handleProposal(w http.ResponseWriter, r *http.Request) {
-	p, err := s.opt.Store.Get(r.PathValue("id"))
-	if err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, p)
-}
-
-func (s *Server) handleAudit(w http.ResponseWriter, _ *http.Request) {
-	ev := s.opt.Store.Audit()
-	if ev == nil {
-		ev = []approvals.Event{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": ev})
-}
-
-type decision struct {
-	Reason string `json:"reason"`
-}
-
-func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
-	var d decision
-	if !decodeOptional(w, r, &d) {
-		return
-	}
-	p, err := s.opt.Store.Decide(r.PathValue("id"), false, auth.FromContext(r.Context()).Subject, d.Reason)
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error())
-		return
-	}
-	s.mirror(p.ID)
-	writeJSON(w, http.StatusOK, p)
-}
-
-func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
-	var d decision
-	if !decodeOptional(w, r, &d) {
-		return
-	}
-	id := r.PathValue("id")
-	cur, err := s.opt.Store.Get(id)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
-		return
-	}
-	if cur.Status == approvals.Pending && cur.Template != "" && cur.RenderErr != "" {
-		writeErr(w, http.StatusUnprocessableEntity, "cannot approve: "+cur.RenderErr)
-		return
-	}
-	who := auth.FromContext(r.Context()).Subject
-	p, err := s.opt.Store.Decide(id, true, who, d.Reason)
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error())
-		return
-	}
-	if p.Template == "" {
-		writeJSON(w, http.StatusOK, p)
-		return
-	}
-	if s.opt.ApprovalMode == ModeKeep && s.opt.Keep != nil {
-		ref, err := s.opt.Keep.Start(r.Context(), p, strings.TrimRight(s.opt.ExecURL, "/")+"/api/v1/exec/"+p.ID)
-		if err != nil {
-			log.Printf("keep start %s: %v; executing locally", p.ID, err)
-			ref = approvals.KeepRef{Mode: ModeKeep, Error: err.Error()}
-			p, _ = s.opt.Store.Update(p.ID, func(x *approvals.Proposal) { x.Keep = &ref })
-			p = s.execute(r.Context(), p.ID, "zyntra (keep unavailable)")
-			s.mirror(p.ID)
-			writeJSON(w, http.StatusOK, p)
-			return
-		}
-		p, _ = s.opt.Store.Update(p.ID, func(x *approvals.Proposal) { x.Keep = &ref })
-		if !s.opt.KeepDoubleApproval {
-			s.bg.Add(1)
-			go s.confirmKeep(p.ID, ref.SessionID)
-		}
-		writeJSON(w, http.StatusAccepted, p)
-		return
-	}
-	p = s.execute(r.Context(), p.ID, who)
-	s.mirror(p.ID)
-	writeJSON(w, http.StatusOK, p)
-}
-
-// confirmKeep decides the Keep approval raised for a session on behalf of
-// the human who already approved in Zyntra.
-func (s *Server) confirmKeep(id, session string) {
-	defer s.bg.Done()
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-	aid, err := s.opt.Keep.AwaitApproval(ctx, session)
-	if err == nil {
-		err = s.opt.Keep.Decide(ctx, aid, true)
-	}
-	p, _ := s.opt.Store.Update(id, func(x *approvals.Proposal) {
-		if x.Keep == nil {
-			x.Keep = &approvals.KeepRef{Mode: ModeKeep, SessionID: session}
-		}
-		if aid != "" {
-			x.Keep.ApprovalID = aid
-		}
-		if err != nil {
-			x.Keep.Error = err.Error()
-		}
-	})
-	if err == nil {
-		return
-	}
-	log.Printf("keep confirm %s: %v", id, err)
-	// Keep never ran the call; the human approval stands, so run it here.
-	if aid == "" && p.Status == approvals.Approved {
-		s.execute(ctx, id, "zyntra (keep unavailable)")
-		s.mirrorNow(id)
-	}
-}
-
-func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	p, err := s.opt.Store.Get(id)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
-		return
-	}
-	if p.Status != approvals.Approved {
-		writeErr(w, http.StatusConflict, "proposal is "+string(p.Status)+", not approved")
-		return
-	}
-	p = s.execute(r.Context(), id, auth.FromContext(r.Context()).Subject)
-	code := http.StatusOK
-	if p.Status == approvals.Failed {
-		code = http.StatusBadGateway
-	}
-	writeJSON(w, code, p)
-}
-
-// execute renders and runs an approved proposal, then records the KPIs that
-// the prediction covered so predicted and actual can be compared.
-func (s *Server) execute(ctx context.Context, id, by string) approvals.Proposal {
-	p, _ := s.opt.Store.Get(id)
-	m, _ := s.snapshot()
-	a, ok := m.Action(p.Action)
-	var res executor.Result
-	if !ok {
-		res = executor.Result{Mode: s.opt.Executor.Mode, Error: "action no longer in model"}
-	} else if rd, err := executor.Render(*a); err != nil {
-		res = executor.Result{Mode: s.opt.Executor.Mode, Error: err.Error()}
-	} else {
-		res = s.opt.Executor.Execute(ctx, rd)
-	}
-	out, err := s.opt.Store.Complete(id, res, by)
-	if err != nil {
-		out, _ = s.opt.Store.Get(id)
-		return out
-	}
-	if res.OK && res.Mode == executor.ModeApply {
-		s.RefreshOnce(ctx)
-		m, _ = s.snapshot()
-		actual := map[string]float64{}
-		for kid := range out.Predicted.KPIs {
-			if k, ok := m.KPI(kid); ok {
-				actual[kid] = k.Value
-			}
-		}
-		_ = s.opt.Store.RecordActual(id, actual)
-		out, _ = s.opt.Store.Get(id)
-	}
-	return out
 }
 
 // mirror copies a local decision into Keep's audit chain in the background.
