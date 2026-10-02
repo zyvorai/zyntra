@@ -123,7 +123,7 @@ export default function Ask() {
           </div>
         )}
         <form className="ask-form" onSubmit={onSubmit}>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about gaps, plans, anomalies, forecasts…" maxLength={2000} autoFocus />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about gaps, plans, anomalies, forecasts…" aria-label="Your question" maxLength={2000} autoFocus />
           <button className="primary" type="submit" disabled={busy || !q.trim()}>
             {busy ? 'Asking…' : 'Ask'}
           </button>
@@ -161,7 +161,7 @@ function DraftProposal() {
         chooses an action for you.
       </p>
       <form className="ask-form" onSubmit={(e) => { e.preventDefault(); run(); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="action id or title, then the objects" maxLength={500} />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="action id or title, then the objects" aria-label="Describe the action and the objects" maxLength={500} />
         <button className="btn-secondary" type="submit" disabled={!text.trim()}>
           Draft
         </button>

@@ -13,6 +13,7 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Fixed
 
+- **Accessibility.** The Audit page drew an invisible, focusable button for every event that belongs to no decision (ingest notes, manual values); it now shows a dash. The two text fields on Ask had only a placeholder; they now have accessible names. A reusable helper and tests (`a11y.ts`) fail if a button, link, tab or field loses its name.
 - Assistant answers about objects cited the same fact once per dependent (7 citations for 5 distinct facts); each fact is now cited once.
 - The ingest report, and so the Sources card, counted records rather than objects (11 for a store holding 10 because one customer is on two rows); it now counts distinct objects and links.
 - On a phone-width screen the menu scrolls the current section into view instead of hiding its underline off the edge.
