@@ -19,7 +19,8 @@ cat <<'EOF'
 #     --from-literal=ZYNTRA_API_KEY=$(openssl rand -hex 24) \
 #     --from-literal=ZYNTRA_SESSION_SECRET=$(openssl rand -hex 32) \
 #     --from-literal=ZYNTRA_INGEST_TOKEN=$(openssl rand -hex 24) \
-#     --from-literal=ZYNTRA_EXEC_TOKEN=$(openssl rand -hex 24)
+#     --from-literal=ZYNTRA_EXEC_TOKEN=$(openssl rand -hex 24) \
+#     --from-literal=ZYNTRA_ADMIN_PASSWORD='choose-one'     # else admin / Admin@321
 #   kubectl -n zyntra apply -f deploy/kubernetes/zyntra.yaml
 #
 # Serves packs/shop in dry-run. Change the -f argument to pick another pack.

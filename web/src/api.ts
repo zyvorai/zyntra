@@ -448,6 +448,7 @@ export interface WhoAmI {
   identity: { subject: string; role: Role; roles?: Role[]; method: string };
   auth_required: boolean;
   methods?: string[];
+  default_password?: boolean;
 }
 
 const capabilities: Record<'propose' | 'approve' | 'execute', Role[]> = {

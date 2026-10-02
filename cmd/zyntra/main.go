@@ -471,6 +471,24 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	return nil
 }
 
+// DefaultAdminPassword is the shipped password of the built-in admin account,
+// used when the policy file defines no users and ZYNTRA_ADMIN_PASSWORD is unset.
+const DefaultAdminPassword = "Admin@321"
+
+func defaultAdmin() (auth.LocalUser, error) {
+	name := env("ZYNTRA_ADMIN_USER", "admin")
+	pass := env("ZYNTRA_ADMIN_PASSWORD", DefaultAdminPassword)
+	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+	if err != nil {
+		return auth.LocalUser{}, err
+	}
+	shipped := pass == DefaultAdminPassword
+	if shipped {
+		log.Printf("warning: local account %q uses the default password; set ZYNTRA_ADMIN_PASSWORD or define users in the policy file", name)
+	}
+	return auth.LocalUser{Name: name, Hash: string(hash), Roles: []auth.Role{auth.RoleAdmin}, Default: shipped}, nil
+}
+
 // buildAuth sets up the admin key, Keep's exec token, local users from the
 // policy file and OIDC from the environment.
 func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
@@ -488,6 +506,13 @@ func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 			lu.Roles = append(lu.Roles, role)
 		}
 		users = append(users, lu)
+	}
+	if len(users) == 0 && !strings.EqualFold(env("ZYNTRA_DEFAULT_ADMIN", "on"), "off") {
+		u, err := defaultAdmin()
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
 	}
 	if len(users) > 0 {
 		a.SetUsers(users)

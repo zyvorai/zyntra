@@ -75,6 +75,8 @@ ZYNTRA_API_KEY=dev ./bin/zyntra serve -f packs/shop
 make run-shop             # same, with webhooks landing in the test receiver on :9099
 ```
 
+Sign in to the console as **`admin` / `Admin@321`**. That account exists only while the policy file defines no users. The console shows a warning banner until you change the password with `ZYNTRA_ADMIN_PASSWORD`. Set it, or define users in the policy file, before anyone else can reach the console.
+
 ```text
 $ ./bin/zyntra simulate -action preempt_batch_to_spot
 What if: Move batch training to spot GPUs (preempt_batch_to_spot)
@@ -299,7 +301,7 @@ After an apply, the decision record compares predicted and actual per KPI and ma
 - **Decision timeline** compares predicted and actual per KPI after an apply and marks each a hit or a miss.
 - **Model** shows the pack, each action's kind, window and invariants.
 
-Sign in with **SSO** (OpenID Connect, authorization code with PKCE), a **local account** from the policy file (bcrypt), or the **access key** (`ZYNTRA_API_KEY`, kept as break-glass admin access). Sign-in sets an HMAC session cookie carrying your name and roles (12 h, or 7 days with "remember me"). Scripts can use `Authorization: Bearer $ZYNTRA_API_KEY`.
+Sign in with **SSO** (OpenID Connect, authorization code with PKCE), a **local account** from the policy file (bcrypt), the **built-in admin** (`admin` / `Admin@321` until you set `ZYNTRA_ADMIN_PASSWORD`; only present when the policy file defines no users), or the **access key** (`ZYNTRA_API_KEY`, kept as break-glass admin access). Sign-in sets an HMAC session cookie carrying your name and roles (12 h, or 7 days with "remember me"). Scripts can use `Authorization: Bearer $ZYNTRA_API_KEY`.
 
 | Role | Can |
 |------|-----|
@@ -387,7 +389,8 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 
 | Variable | Purpose |
 |----------|---------|
-| `ZYNTRA_API_KEY` | Break-glass admin access key and Bearer token. With no key, OIDC or local users, the console runs open (dev) |
+| `ZYNTRA_API_KEY` | Break-glass admin access key and Bearer token |
+| `ZYNTRA_ADMIN_USER` / `ZYNTRA_ADMIN_PASSWORD` | Built-in local admin when the policy file has no users (default `admin` / `Admin@321`, flagged in the console until changed). `ZYNTRA_DEFAULT_ADMIN=off` removes it, and with no key, OIDC or users the console then runs open (dev only) |
 | `ZYNTRA_POLICY` | Policy file (same as `serve -policy`) |
 | `ZYNTRA_SESSION_SECRET` | Key for session cookies (defaults to the access key; set it so sign-ins survive key rotation and restarts) |
 | `ZYNTRA_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` | OpenID Connect sign-in |

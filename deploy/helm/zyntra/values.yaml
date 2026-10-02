@@ -20,9 +20,14 @@ approvalMode: local
 
 # Credentials. Leave empty to generate them once and keep them across
 # upgrades, or point existingSecret at a Secret with the same keys:
-# ZYNTRA_API_KEY, ZYNTRA_SESSION_SECRET, ZYNTRA_INGEST_TOKEN, ZYNTRA_EXEC_TOKEN.
+# ZYNTRA_API_KEY, ZYNTRA_SESSION_SECRET, ZYNTRA_INGEST_TOKEN, ZYNTRA_EXEC_TOKEN
+# (and optionally ZYNTRA_ADMIN_PASSWORD).
+# With no users in policy, the console has one local admin account. Its
+# default password is Admin@321; set adminPassword before exposing the console.
 auth:
   existingSecret: ""
+  adminUser: admin
+  adminPassword: ""
   apiKey: ""
   sessionSecret: ""
   ingestToken: ""
