@@ -6,6 +6,7 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Added
 
+- **Docs.** The ontology reference moved from the README to `docs/ONTOLOGY.md` with readable subsections; the README keeps a short summary. The Maturity note now describes what ships (six packs, the ontology, calibration), and two stale statements are corrected (the store is no longer "only a JSON file", and Kubernetes is a connector).
 - **`make test-incluster`** (`scripts/test-incluster.sh`): runs Zyntra as a pod under the chart's rendered read-only role and checks that Kubernetes connectors read the cluster through the service account with no `kubectl` in the container, and that a resource the role does not grant is refused with guidance. Cleans up its one namespace, ClusterRole and binding on exit.
 - **In-cluster Kubernetes client.** Kubernetes connectors read the pod's own cluster through its service account with no `kubectl` (the image has none); a fixed resource table, never secrets (refused in every mode, including kubectl). Helm `kubernetes.inCluster=true` adds a read-only ClusterRole (get/list on the listed resources only) and mounts the token; off by default. Verified on a real k3s cluster with a nodes-only service account.
 - **Deploy artifacts.** Helm values and compose pass `ZYNTRA_ONTOLOGY_STORE`, `ZYNTRA_ONTOLOGY_MAX_OBJECTS`, `ZYNTRA_DEPLOY_TOKEN` and the exec-connector switch; the plain manifest is regenerated.
