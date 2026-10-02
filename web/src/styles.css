@@ -213,12 +213,12 @@ button,
   letter-spacing: -0.01em;
   line-height: 1.17648;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border-strong);
+  border: 1px solid transparent;
   padding: 10px 18px;
   min-height: 44px;
   cursor: pointer;
-  color: var(--text-primary);
-  background: transparent;
+  color: #fff;
+  background: var(--apple-blue);
   white-space: nowrap;
   flex: 0 0 auto;
   transition: background 0.28s var(--ease-apple), color 0.28s var(--ease-apple), border-color 0.28s var(--ease-apple), transform 0.16s var(--ease-apple), filter 0.28s var(--ease-apple), box-shadow 0.28s var(--ease-apple);
@@ -226,7 +226,7 @@ button,
 button:hover,
 .buttonlike:hover,
 .buildbutton:hover {
-  background: var(--hover-fill);
+  background: var(--apple-blue-hover);
 }
 button:active,
 .buttonlike:active,
@@ -252,101 +252,38 @@ textarea:focus-visible,
   outline-offset: 2px;
 }
 
-/* Button variants — apple.com contract ("color is deviation").
-   Blue fill = the one primary action. Everything else is a quiet tinted or
-   neutral pill; solid red is reserved for destructive actions. The semantic
-   class names (btn-refresh/-next/-success/-warn/-secondary/-diag) predate the
-   contract and are kept so call sites don't change; they now map onto four
-   looks: primary, neutral, tinted-state and danger. All share the base
-   44px/17px pill, so nothing here changes sizing. No !important: variants
-   beat the base `button` rule on specificity, and the context rules
-   (.toolbar/.filters/.list button) only set layout. */
-button.primary,
-.primary,
-button.btn-next,
-.btn-next {
+/* Button variants: every button is apple.com blue (#0071e3, hover #0077ed)
+   with white text. The older class names (primary, btn-next, btn-secondary,
+   btn-refresh, btn-diag, btn-success, btn-warn, danger, btn-danger) are kept
+   so call sites don't change, and all map to the same blue pill. Nav links,
+   link-style buttons, icon toggles and chip removers opt out below. */
+button.primary, .primary, button.btn-primary, .btn-primary,
+button.btn-next, .btn-next,
+button.btn-secondary, .btn-secondary, .buttonlike.btn-secondary,
+button.btn-refresh, .btn-refresh,
+button.btn-diag, .btn-diag,
+button.btn-success, .btn-success,
+button.btn-warn, .btn-warn,
+button.danger, .danger, button.btn-danger, .policydelete {
   background: var(--apple-blue);
   color: #fff;
   border-color: transparent;
 }
-button.primary:hover,
-.primary:hover,
-button.btn-next:hover,
-.btn-next:hover {
+button.primary:hover, .primary:hover, button.btn-primary:hover, .btn-primary:hover,
+button.btn-next:hover, .btn-next:hover,
+button.btn-secondary:hover, .btn-secondary:hover, .buttonlike.btn-secondary:hover,
+button.btn-refresh:hover, .btn-refresh:hover,
+button.btn-diag:hover, .btn-diag:hover,
+button.btn-success:hover, .btn-success:hover,
+button.btn-warn:hover, .btn-warn:hover,
+button.danger:hover, .danger:hover, button.btn-danger:hover, .policydelete:hover {
   background: var(--apple-blue-hover);
-  filter: brightness(1.06);
+  filter: none;
 }
-/* The glow is reserved for dark mode, where --card-shadow is off app-wide
-   and a bit of light around the primary action marks it as the one thing on
-   a black page that is meant to be touched. */
+/* The glow is reserved for dark mode, where --card-shadow is off app-wide. */
 [data-theme="dark"] button.primary:hover,
 [data-theme="dark"] .primary:hover {
   box-shadow: 0 8px 24px rgba(0, 113, 227, 0.35);
-}
-
-/* Neutral: secondary actions, refresh. */
-button.btn-secondary,
-.btn-secondary,
-.buttonlike.btn-secondary,
-button.btn-refresh,
-.btn-refresh {
-  background: var(--fill-tertiary);
-  color: var(--text-primary);
-  border-color: var(--hairline-1);
-}
-button.btn-secondary:hover,
-.btn-secondary:hover,
-.buttonlike.btn-secondary:hover,
-button.btn-refresh:hover,
-.btn-refresh:hover {
-  background: var(--surface-hover);
-}
-
-/* Intent, not primary: explain / history / diagnose. */
-button.btn-diag,
-.btn-diag {
-  background: color-mix(in srgb, var(--apple-blue) 10%, transparent);
-  color: var(--apple-link);
-  border-color: transparent;
-}
-button.btn-diag:hover,
-.btn-diag:hover {
-  background: color-mix(in srgb, var(--apple-blue) 18%, transparent);
-}
-
-/* State pills — these mark a real state (observing / enforcing / rollback),
-   so they keep a semantic tint, but as a tint, never a solid fill. */
-button.btn-success,
-.btn-success {
-  background: var(--success-bg);
-  color: var(--success-text);
-  border-color: var(--success-border);
-}
-button.btn-warn,
-.btn-warn {
-  background: var(--warning-bg);
-  color: var(--warning-text);
-  border-color: var(--warning-border);
-}
-button.btn-success:hover,
-.btn-success:hover,
-button.btn-warn:hover,
-.btn-warn:hover {
-  filter: brightness(0.97);
-}
-
-/* Destructive: the only solid non-blue fill. */
-button.danger,
-.danger,
-.policydelete {
-  background: var(--danger);
-  color: #fff;
-  border-color: transparent;
-}
-button.danger:hover,
-.danger:hover,
-.policydelete:hover {
-  filter: brightness(1.08);
 }
 
 /* Disabled buttons get one solid, theme-aware muted look regardless of
@@ -389,11 +326,7 @@ button:disabled,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text-primary);
 }
-.buttonlike:hover { background: var(--hover-fill); }
 
 /* —— Apple global nav —— */
 .nav {
@@ -425,6 +358,8 @@ button:disabled,
   gap: 12px;
 }
 .brand {
+  background: transparent;
+  border: 0;
   flex: 0 0 auto;
   font-weight: 600;
   font-size: 17px;
@@ -557,6 +492,9 @@ button:disabled,
   gap: 20px 28px;
 }
 .mega-grid button {
+  background: transparent;
+  color: var(--text-primary);
+  border: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -860,12 +798,6 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .linklike:hover { background: transparent; text-decoration: underline; }
-button.btn-danger {
-  background: var(--danger-bg);
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-}
-button.btn-danger:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
 .row-actions .reason { flex: 1 1 260px; }
 
@@ -893,6 +825,7 @@ input, select, textarea {
   flex-wrap: wrap;
 }
 .segmented button {
+  background: transparent;
   min-height: 32px;
   padding: 6px 14px;
   border: 0;
@@ -900,7 +833,8 @@ input, select, textarea {
   text-transform: capitalize;
   color: var(--text-secondary);
 }
-.segmented button[aria-selected="true"] { background: var(--surface-1); color: var(--text-primary); box-shadow: var(--shadow-1); font-weight: 500; }
+.segmented button:hover { background: var(--hover-fill); }
+.segmented button[aria-selected="true"] { background: var(--apple-blue); color: #fff; box-shadow: var(--shadow-1); font-weight: 500; }
 .segmented .count { margin-left: 4px; font-size: 11px; color: var(--text-tertiary); }
 
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
