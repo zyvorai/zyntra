@@ -293,13 +293,16 @@ After an apply, the decision record compares predicted and actual per KPI and ma
 
 ![Zyntra sign-in](docs/ux/login.png)
 
-`zyntra serve` embeds a React console styled like Netra. Its pages are Overview, Gaps, Plan, Simulate, Approvals, Audit, Signals, Insights, Ask and Model, plus a timeline page for each decision, with light and dark themes.
+`zyntra serve` embeds a React console styled like Netra. Its pages are Overview, Gaps, Plan, Simulate, Approvals, Audit, Signals, Insights, Ask and Model, plus a timeline page for each decision, with light and dark themes. Every button, including Sign in, is apple.com blue (`#0071e3`, `#0077ed` on hover); a disabled button is grey, except the sign-in button, which stays a lighter blue.
+
+- **Sign-in** asks for a username, then a password (or SSO, or the access key). Out of the box that is `admin` / `Admin@321`, flagged with a banner until changed.
 
 - **Gaps and Plan** have an owner filter, remembered across pages. Plan shows pairs, ranges, actions waiting on a precondition (not proposable) and the list blocked by constraints or invariants.
 - **Approvals** shows what will run: the Gravia CRD, the webhook request (method, URL, headers with `${...}` references, body), the file that would be written, or "done by people" for noop actions, plus the linked compensating action.
 - **Signals** shows each source's state (healthy, stale, fallback, down), a form to enter manual KPI values with a reason, and when each webhook-in channel last received data.
 - **Decision timeline** compares predicted and actual per KPI after an apply and marks each a hit or a miss.
-- **Model** shows the pack, each action's kind, window and invariants.
+- **Model** shows the pack, each action's kind, window and invariants, plus proposed edges (not in the model), the pack rules check and the pack-draft form.
+- **Overview** has the digest with owner and close-of-window selectors; **Approvals** and the decision page show similar past decisions, the source rows behind each payload, and why a run landed or missed.
 
 Sign in with **SSO** (OpenID Connect, authorization code with PKCE), a **local account** from the policy file (bcrypt), the **built-in admin** (`admin` / `Admin@321` until you set `ZYNTRA_ADMIN_PASSWORD`; only present when the policy file defines no users), or the **access key** (`ZYNTRA_API_KEY`, kept as break-glass admin access). Sign-in sets an HMAC session cookie carrying your name and roles (12 h, or 7 days with "remember me"). Scripts can use `Authorization: Bearer $ZYNTRA_API_KEY`.
 
