@@ -15,6 +15,10 @@ imagePullSecrets: []
 # example a pack mounted through extraVolumes.
 pack: shop
 modelPath: ""
+# More packs from the image to serve beside the first (it stays the default;
+# the console gets a pack switcher). Each pack has its own state under
+# /var/lib/zyntra/<pack-id>. Not available with Keep approvals.
+extraPacks: []
 interval: 15s
 
 # dry-run records what would be sent and sends nothing; apply executes

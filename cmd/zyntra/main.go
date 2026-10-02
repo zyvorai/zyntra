@@ -92,7 +92,8 @@ Usage:
   zyntra version
 
 Common flags:
-  -f FILE|DIR       KPI model file or pack directory (default examples/kpis.yaml)
+  -f FILE|DIR       KPI model file or pack directory (default examples/kpis.yaml);
+                    serve accepts several, comma-separated, to serve more than one pack
   -o text|json      output format (default text)
   -prometheus URL   refresh prometheus-sourced KPIs before running
   -kubectl          refresh kubernetes-sourced KPIs via kubectl get nodes
@@ -374,27 +375,45 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 	return nil
 }
 
-func serve(ctx context.Context, c *common, addr string, interval time.Duration, policyFile string) error {
-	m, err := pack.Load(c.file)
+// packRun is one pack's server and the pieces serve needs to run it.
+type packRun struct {
+	id, title, industry string
+	m                   *graph.Model
+	srv                 *api.Server
+	ont                 api.OntologyOptions
+	opts                api.Options
+	mode                executor.Mode
+	engine              *ai.Engine
+	execAddr            string
+	execCert            tls.Certificate
+	execFiles           tlsutil.Files
+}
+
+// buildPack loads one pack and builds its server. Each pack has its own model,
+// ontology, approvals (and so its own audit chain), inputs and rollouts under
+// stateDir; the sign-in (authn) is shared. A nil authn is built from this
+// pack's policy.
+func buildPack(ctx context.Context, c *common, file, policyFile string, authn *auth.Auth, stateDir string, packs []api.PackInfo, interval time.Duration) (*packRun, *auth.Auth, error) {
+	m, err := pack.Load(file)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	pol, err := policy.Load(policyFile)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	pol.UseModel(m)
 	if err := pol.CheckModel(m); err != nil {
-		return err
+		return nil, nil, err
 	}
-	authn, err := buildAuth(ctx, pol)
-	if err != nil {
-		return err
+	if authn == nil {
+		if authn, err = buildAuth(ctx, pol); err != nil {
+			return nil, nil, err
+		}
 	}
-	stateDir := env("ZYNTRA_STATE_DIR", "state")
 	in, err := inputs.Open(filepath.Join(stateDir, "inputs.json"))
 	if err != nil {
-		return fmt.Errorf("inputs: %w", err)
+		return nil, nil, fmt.Errorf("inputs: %w", err)
 	}
 	var refresh api.RefreshFunc
 	if c.live() || adapters.Generic(m) {
@@ -407,22 +426,22 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 
 	store, err := approvals.Open(filepath.Join(stateDir, "approvals.json"))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if u := env("ZYNTRA_NOTIFY_URL", ""); u != "" {
 		on, err := notify.ParseStatuses(env("ZYNTRA_NOTIFY_ON", ""))
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		nt, err := notify.New(ctx, notify.Config{URL: u, Token: env("ZYNTRA_NOTIFY_TOKEN", ""), On: on, ConsoleURL: env("ZYNTRA_CONSOLE_URL", "")})
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		store.OnEvent(nt.Event)
 	}
 	mode, err := executor.ParseMode(env("ZYNTRA_EXECUTE", "dry-run"))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	engine := &ai.Engine{}
 	if u := env("ZYNTRA_AI_BASE_URL", ""); u != "" {
@@ -432,11 +451,11 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	execToken := env("ZYNTRA_EXEC_TOKEN", "")
 	rollouts, err := rollout.Open(filepath.Join(stateDir, "rollouts.json"))
 	if err != nil {
-		return fmt.Errorf("rollouts: %w", err)
+		return nil, nil, fmt.Errorf("rollouts: %w", err)
 	}
-	ont, err := buildOntology(c.file, m, pol, stateDir)
+	ont, err := buildOntology(file, m, pol, stateDir)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if ont.Store != nil {
 		ont.Store.Audit = func(subject, by, note string) { _ = store.Note(subject, by, note) }
@@ -446,6 +465,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 		Rollouts: rollouts,
 		Model:    m, Refresh: refresh, Interval: interval, Static: web.FS(),
 		Auth:    authn,
+		Packs:   packs,
 		Policy:  pol,
 		AI:      engine,
 		History: ai.NewHistory(0),
@@ -461,10 +481,10 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 		opts.Keep = keep.NewBridge(keep.New(u, env("ZYNTRA_KEEP_TOKEN", "")))
 	}
 	if opts.ApprovalMode != api.ModeLocal && opts.ApprovalMode != api.ModeKeep {
-		return fmt.Errorf("ZYNTRA_APPROVAL_MODE must be local or keep")
+		return nil, nil, fmt.Errorf("ZYNTRA_APPROVAL_MODE must be local or keep")
 	}
 	if opts.ApprovalMode == api.ModeKeep && (opts.Keep == nil || execToken == "") {
-		return fmt.Errorf("keep approvals need ZYNTRA_KEEP_URL and ZYNTRA_EXEC_TOKEN")
+		return nil, nil, fmt.Errorf("keep approvals need ZYNTRA_KEEP_URL and ZYNTRA_EXEC_TOKEN")
 	}
 	if !opts.Auth.Required() {
 		log.Printf("warning: no ZYNTRA_API_KEY, OIDC or local users configured; the console and API are open")
@@ -477,44 +497,146 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	)
 	if execAddr != "" && execToken != "" {
 		if execFiles, execCert, err = tlsutil.Ensure(filepath.Join(stateDir, "tls")); err != nil {
-			return fmt.Errorf("exec tls: %w", err)
+			return nil, nil, fmt.Errorf("exec tls: %w", err)
 		}
 		opts.ExecURL = "https://" + execAddr
 	}
 	opts.ExecURL = env("ZYNTRA_EXEC_URL", opts.ExecURL)
 	if opts.ApprovalMode == api.ModeKeep && opts.ExecURL == "" {
-		return fmt.Errorf("keep approvals need ZYNTRA_EXEC_TLS_ADDR or ZYNTRA_EXEC_URL")
+		return nil, nil, fmt.Errorf("keep approvals need ZYNTRA_EXEC_TLS_ADDR or ZYNTRA_EXEC_URL")
 	}
 
-	s := api.New(opts)
-	if ont.Store != nil {
-		if reps, err := s.RefreshOntology(ctx, "zyntra (startup)"); err != nil {
-			log.Printf("ontology: %v", err)
+	pr := &packRun{m: m, ont: ont, opts: opts, mode: mode, engine: engine, execAddr: execAddr, execCert: execCert, execFiles: execFiles}
+	if m.Pack != nil {
+		pr.id, pr.title, pr.industry = m.Pack.ID, m.Pack.Title, m.Pack.Industry
+	}
+	pr.srv = api.New(opts)
+	return pr, authn, nil
+}
+
+// start runs the pack's refresh loops.
+func (p *packRun) start(ctx context.Context) {
+	if p.ont.Store != nil {
+		if reps, err := p.srv.RefreshOntology(ctx, "zyntra (startup)"); err != nil {
+			log.Printf("ontology %s: %v", p.m.Name, err)
 		} else {
 			for _, r := range reps {
-				log.Printf("ontology: %s: %d objects, %d links, %d identity candidates", r.Source, r.Objects, r.Links, r.Candidates)
+				log.Printf("ontology %s: %s: %d objects, %d links, %d identity candidates", p.m.Name, r.Source, r.Objects, r.Links, r.Candidates)
 			}
 		}
 	}
-	go s.Run(ctx)
-	if ont.Scheduler != nil {
-		go ont.Scheduler.Run(ctx)
+	go p.srv.Run(ctx)
+	if p.ont.Scheduler != nil {
+		go p.ont.Scheduler.Run(ctx)
+	}
+}
+
+// packFiles splits -f into pack paths. Several packs may be served at once,
+// separated by commas.
+func packFiles(f string) []string {
+	var out []string
+	for _, x := range strings.Split(f, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func serve(ctx context.Context, c *common, addr string, interval time.Duration, policyFile string) error {
+	files := packFiles(c.file)
+	if len(files) == 0 {
+		return fmt.Errorf("no pack given (-f)")
+	}
+	baseState := env("ZYNTRA_STATE_DIR", "state")
+	multi := len(files) > 1
+	if multi && (env("ZYNTRA_APPROVAL_MODE", api.ModeLocal) != api.ModeLocal || env("ZYNTRA_EXEC_TLS_ADDR", "") != "") {
+		return fmt.Errorf("several packs cannot share Keep approvals or the exec listener; run one instance per pack")
+	}
+	// Pack ids come from the packs themselves, so read them first: they name
+	// each pack's state directory and fill the console's switcher.
+	var (
+		runs   []*packRun
+		authn  *auth.Auth
+		infos  []api.PackInfo
+		ids    []string
+		states []string
+		seen   = map[string]bool{}
+	)
+	for _, f := range files {
+		m, err := pack.Load(f)
+		if err != nil {
+			return err
+		}
+		pi := api.PackInfo{ID: filepath.Base(filepath.Clean(f)), Title: m.Name}
+		if m.Pack != nil {
+			if m.Pack.ID != "" {
+				pi.ID = m.Pack.ID
+			}
+			pi.Title, pi.Industry = m.Pack.Title, m.Pack.Industry
+		}
+		if seen[pi.ID] {
+			return fmt.Errorf("two packs have the id %q; ids must be unique", pi.ID)
+		}
+		seen[pi.ID] = true
+		infos = append(infos, pi)
+		ids = append(ids, pi.ID)
+		states = append(states, filepath.Join(baseState, pi.ID))
+	}
+	def := infos[0].ID
+	if d := env("ZYNTRA_DEFAULT_PACK", ""); d != "" {
+		if !seen[d] {
+			return fmt.Errorf("ZYNTRA_DEFAULT_PACK %q is not one of the served packs", d)
+		}
+		def = d
+	}
+	for i := range infos {
+		infos[i].Default = infos[i].ID == def
+	}
+	if !multi {
+		infos, states = nil, []string{baseState} // one pack: nothing to switch, state stays where it was
+	}
+	for i, f := range files {
+		pr, a, err := buildPack(ctx, c, f, policyFile, authn, states[i], infos, interval)
+		if err != nil {
+			return fmt.Errorf("%s: %w", f, err)
+		}
+		authn = a
+		pr.id = ids[i]
+		runs = append(runs, pr)
+	}
+	if !authn.Required() {
+		log.Printf("warning: no ZYNTRA_API_KEY, OIDC or local users configured; the console and API are open")
+	}
+	var handler http.Handler
+	first := runs[0]
+	if multi {
+		byID := map[string]*api.Server{}
+		for _, r := range runs {
+			byID[r.id] = r.srv
+		}
+		handler = api.PackMux(byID, def)
+	} else {
+		handler = first.srv.Handler()
+	}
+	for _, r := range runs {
+		r.start(ctx)
 	}
 
 	var servers []*http.Server
-	if execFiles.CA != "" {
-		es := &http.Server{Addr: execAddr, Handler: s.ExecHandler(), ReadHeaderTimeout: 10 * time.Second,
-			TLSConfig: &tls.Config{Certificates: []tls.Certificate{execCert}, MinVersion: tls.VersionTLS12}}
+	if first.execFiles.CA != "" {
+		es := &http.Server{Addr: first.execAddr, Handler: first.srv.ExecHandler(), ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig: &tls.Config{Certificates: []tls.Certificate{first.execCert}, MinVersion: tls.VersionTLS12}}
 		servers = append(servers, es)
 		go func() {
-			log.Printf("exec listener on https://%s (CA %s)", execAddr, execFiles.CA)
+			log.Printf("exec listener on https://%s (CA %s)", first.execAddr, first.execFiles.CA)
 			if err := es.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 				log.Printf("exec listener: %v", err)
 			}
 		}()
 	}
 
-	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	servers = append(servers, srv)
 	go func() {
 		<-ctx.Done()
@@ -524,12 +646,16 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 			_ = x.Shutdown(shutdown)
 		}
 	}()
-	log.Printf("zyntra %s serving %q on %s (approvals %s, execute %s, ai %s)", version, m.Name, addr,
-		opts.ApprovalMode, mode, engine.Status().Mode)
+	for _, r := range runs {
+		log.Printf("zyntra %s serving %q on %s (approvals %s, execute %s, ai %s)", version, r.m.Name, addr,
+			r.opts.ApprovalMode, r.mode, r.engine.Status().Mode)
+	}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
-	s.Wait()
+	for _, r := range runs {
+		r.srv.Wait()
+	}
 	return nil
 }
 

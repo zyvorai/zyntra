@@ -1,3 +1,4 @@
+import { getPack, setPack } from './pack';
 export type Direction = 'higher' | 'lower';
 export type Risk = 'low' | 'medium' | 'high';
 
@@ -416,6 +417,14 @@ export class ApiError extends Error {
   }
 }
 
+/** One pack served by this instance (GET /api/v1/packs). */
+export interface ServedPack {
+  id: string;
+  title: string;
+  industry?: string;
+  default?: boolean;
+}
+
 export const AUTH_EXPIRED = 'zyntra:auth-expired';
 
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -425,6 +434,8 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
     headers.set('Content-Type', 'application/json');
     body = JSON.stringify(init.json);
   }
+  const pack = getPack();
+  if (pack && !headers.has('X-Zyntra-Pack')) headers.set('X-Zyntra-Pack', pack);
   const res = await fetch(path, { ...init, headers, body, credentials: 'same-origin' });
   const text = await res.text();
   let data: unknown = null;
@@ -437,6 +448,11 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
   }
   if (!res.ok) {
     if (res.status === 401 && !path.endsWith('/session')) window.dispatchEvent(new Event(AUTH_EXPIRED));
+    if (res.status === 404 && pack && data && typeof data === 'object' && (data as { error?: string }).error === 'unknown pack') {
+      // The remembered pack is no longer served (the instance was reconfigured): fall back to the default.
+      setPack('');
+      window.location.reload();
+    }
     const msg = (data && typeof data === 'object' && 'error' in data ? String((data as { error: string }).error) : '') || res.statusText;
     throw new ApiError(res.status, msg);
   }

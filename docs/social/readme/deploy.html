@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra — Deploy</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<link rel="stylesheet" href="brand.css">
+<style>.cmd{margin:28px 0 0;background:var(--ink);color:#fff;border-radius:14px;padding:22px 28px;font-family:var(--mono);font-size:19px;border-left:8px solid var(--signal);white-space:nowrap}
+.tile{min-height:208px}.tile h3{font-size:33px}.tile p{font-size:19px}</style></head>
+<body>
+<div class="topbar"><img src="zyvor-mark.svg" alt=""><span class="name">Zyvor <b>Zyntra</b></span><span class="r">Deploy</span></div>
+<div class="main">
+<div class="eyebrow">Runs where you run</div>
+<h1>From laptop to cluster in <em>one command.</em></h1>
+<p class="lede">No SaaS dependency and no database to babysit. Air-gapped installs work, and a local model can sit behind Ask.</p>
+<div class="grid" style="grid-template-columns:repeat(5,1fr);margin-top:34px"><div class="tile"><h3>Binary</h3><p>One static Go binary with the console built in. Run it under systemd.</p></div><div class="tile"><h3>Container</h3><p>Signed multi-arch image on GHCR with SBOM and provenance, amd64 and arm64.</p></div><div class="tile"><h3>Compose</h3><p>A single file for a small team: Zyntra plus the test receiver.</p></div><div class="tile dark"><h3>Helm</h3><p>OCI chart. Non-root, read-only root filesystem, state on a PVC, keys generated once.</p></div><div class="tile"><h3>k3s or in-cluster</h3><p>One script for a k3s host. In-cluster mode reads through a read-only role, no kubectl.</p></div></div><pre class="cmd">helm upgrade --install zyntra oci://ghcr.io/zyvorai/charts/zyntra -n zyntra --create-namespace --set pack=shop</pre>
+</div>
+<div class="foot"><span><b>Zyvor</b> · decision intelligence</span><span class="r">github.com/zyvorai/zyntra</span></div>
+</body></html>

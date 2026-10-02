@@ -1,28 +1,16 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Zyntra capabilities</title>
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
-     1600x700. Rendered by ./build.sh to docs/ux/readme-capabilities.jpg. Every item is a feature named in the README. -->
-<link rel="stylesheet" href="card.css">
-<style>
-  body { height:700px; }
-  .grid { margin-top:24px; grid-template-columns:repeat(4,1fr); gap:24px; }
-  .grid .card { min-height:400px; }
-  .grid .card h3 { font-size:30px; }
-</style></head><body>
-<div class="bar"></div>
-<div class="wrap">
-  <div class="top"><img src="../../../web/public/zyvor-mark.svg" alt=""><b>Zyvor</b><span>&middot;</span><span>Zyntra</span><span class="r">Capabilities at a glance</span></div>
-  <h1>Know the gap. Test the fix. <em>Approve the action.</em></h1>
-  <div class="row grid">
-    <div class="card c"><span class="lane">SENSE</span><h3>One live KPI graph</h3><ul>
-      <li>Netra eBPF retransmits, drops, health</li><li>Gravia GPU queue, quota, cost</li><li>Fabric host load and Keep sessions</li><li>Prometheus, Kubernetes, CSV, HTTP, webhooks</li><li>Owners, units and calendars per KPI</li></ul></div>
-    <div class="card k"><span class="lane">DECIDE</span><h3>Ranked, explained</h3><ul>
-      <li>Gaps, worst first</li><li>What-if with ranges and full trace</li><li>Pairs, constraints and invariants</li><li>Plan: weighted gap closed minus risk</li><li>Preconditions fail closed</li></ul></div>
-    <div class="card o"><span class="lane">AI</span><h3>Grounded, read-only</h3><ul>
-      <li>Anomalies against each KPI's history</li><li>Forecasts with time to breach</li><li>Ops digest and Explain</li><li>Ask, with grounding facts listed</li><li>Optional OpenAI-compatible model</li></ul></div>
-    <div class="card or"><span class="lane">ACT</span><h3>Human in the loop</h3><ul>
-      <li>Quorum approvals, OIDC, windows</li><li>Gravia CRDs, webhooks, files</li><li>Fabric Keep signed executor</li><li>Signed, hash-chained decisions</li><li>Predicted vs actual, hit or miss</li></ul></div>
-  </div>
-  <div class="foot"><b>zyvor.dev/zyntra</b><span class="r">Single Go binary &middot; embedded React console</span></div>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra — Capabilities</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<link rel="stylesheet" href="brand.css">
+<style></style></head>
+<body>
+<div class="topbar"><img src="zyvor-mark.svg" alt=""><span class="name">Zyvor <b>Zyntra</b></span><span class="r">Capabilities</span></div>
+<div class="main">
+<div class="eyebrow">What is inside</div>
+<h1>One engine. Six things it does <em>well.</em></h1>
+<p class="lede">Packs are files, so a new industry is a directory, not a project. The same engine runs a shop from CSV exports and a GPU fleet from live signals.</p>
+<div class="grid" style="grid-template-columns:repeat(3,1fr);margin-top:34px"><div class="tile"><span class="tag">01</span><h3>Sense</h3><p><b>Your data, read-only</b></p><ul><li>CSV, JSON, Prometheus, SQL, REST, Kubernetes</li><li>Webhooks in, manual values audited</li><li>Stale inputs flagged and penalised</li></ul></div><div class="tile"><span class="tag">02</span><h3>Model</h3><p><b>A KPI graph you can read</b></p><ul><li>Targets, owners, criticality</li><li>Cause-and-effect edges you declare</li><li>Backtested against real outcomes</li></ul></div><div class="tile dark"><span class="tag o">03</span><h3>Decide</h3><p><b>Ranked, with the reasoning</b></p><ul><li>What-if with prediction ranges</li><li>Gap closed minus risk</li><li>Hard constraints refused, not buried</li></ul></div><div class="tile"><span class="tag">04</span><h3>Ask</h3><p><b>AI that explains, never decides</b></p><ul><li>Grounded answers that list their facts</li><li>Read-only. A local model works air-gapped</li><li>Heuristic mode needs no model at all</li></ul></div><div class="tile"><span class="tag">05</span><h3>Approve and act</h3><p><b>Control stays with you</b></p><ul><li>Roles, SSO, quorum, change windows</li><li>Re-checked right before it runs</li><li>kubectl, webhook, file or a person</li></ul></div><div class="tile"><span class="tag">06</span><h3>Prove</h3><p><b>Evidence you can hand an auditor</b></p><ul><li>Hash-chained audit trail</li><li>Ed25519-signed decision records</li><li>Verify an export offline</li></ul></div></div>
 </div>
+<div class="foot"><span><b>Zyvor</b> · decision intelligence</span><span class="r">github.com/zyvorai/zyntra</span></div>
 </body></html>

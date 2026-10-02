@@ -27,7 +27,7 @@ mappings:
 - **Change history** per object (`GET /api/v1/ontology/objects/{id}/history`): before and after values with provenance, filtered by your current access, so a property that is now restricted does not show in old entries.
 - **Push ingest.** `POST /api/v1/ontology/ingest/{tenant}` takes a bounded batch of normalized records from a connector with `ZYNTRA_INGEST_TOKEN`. It needs an explicit grant (`ingest_tenants` in a policy `access:` rule; admins always may), is all-or-nothing, and cannot touch another tenant's objects, even through an alias. `examples/ontology/connector.py` (stdlib only, dry-run by default, HTTPS required off localhost, no redirects) maps an upstream JSON export to records; `--jsonl` feeds an exec connector instead.
 - **Optional model-assisted object selection.** With `ZYNTRA_AI_BASE_URL` set, the model may narrow which already-permitted objects an answer covers. It sees only objects the asker can read, can only choose among them, and invalid or empty output is ignored. Text and citations always come from the records.
-- **Limits.** Objects and links are held in memory (about 1.4 KB each, capped by `ZYNTRA_ONTOLOGY_MAX_OBJECTS`). Entity resolution is deterministic aliases plus a human review queue, not ML. The rollout shape is exported in the signed decision and delivery stays in your deployment tooling. There is one KPI graph per deployment (tenants get their own KPIs, not their own simulator). See *Tenants and connector credentials* below for exactly what tenant isolation covers.
+- **Limits.** Objects and links are held in memory (about 1.4 KB each, capped by `ZYNTRA_ONTOLOGY_MAX_OBJECTS`). Entity resolution is deterministic aliases plus a human review queue, not ML. The rollout shape is exported in the signed decision and delivery stays in your deployment tooling. One instance can serve several packs, each with its own KPI graph (`serve -f packs/gpu,packs/shop`; see *Serving several packs*); within a pack, tenants get their own KPIs, not their own simulator. See *Tenants and connector credentials* below for exactly what tenant isolation covers.
 
 ## Storage, connectors, calibration and fleet handoff
 
@@ -140,3 +140,16 @@ It prints the token once and a policy snippet that holds only the token's SHA-25
 It prints the token once and a `service_tokens:` policy snippet with the token's SHA-256, its roles, an optional tenant and an expiry; rotate and revoke as for connector credentials. Only `viewer` and `proposer` are allowed, so a service can never approve, reject, execute or administer: its proposals wait for a named person like anyone else's. The identity is `service:<name>` in proposals and the audit chain, and a `tenant` confines it exactly as it does a tenant-bound user. Typed actions whose `permissions` name a higher role stay out of its reach.
 
 **Limits that remain.** An object id is global (`type:namespace:key`), so a connector gets a deliberately vague refusal if it picks an id another tenant already uses; give each tenant its own namespace. Tenant accounts that can approve a typed action cause the server to run it (dry-run by default) on shared infrastructure, so only define typed actions whose effect you are happy to delegate. The KPI graph is shared; tenants get their own KPIs (above) but not their own simulator. If tenants must not share an operator or the provider's graph at all, run separate deployments.
+
+## Serving several packs
+
+`zyntra serve -f packs/gpu,packs/shop` (Helm: `extraPacks`) serves several packs from one listener. Each pack is a complete server with its **own** KPI graph, ontology, approvals and audit chain, inputs and rollouts, kept under `$ZYNTRA_STATE_DIR/<pack-id>` (a single pack keeps using the state directory itself, so nothing moves). Sign-in, roles and the policy file are shared. Pack ids must be unique; the first pack is the default, or set `ZYNTRA_DEFAULT_PACK`.
+
+A request names its pack with the `X-Zyntra-Pack` header or a `pack` query parameter (the console's live-event stream cannot set headers); the header wins, and no choice means the default pack. An unknown pack is a 404. `GET /api/v1/packs` lists them, and the console shows a pack switcher when there are several (hidden for tenant accounts). External senders (webhook-in, ingest tokens) target a pack the same way.
+
+What it does not do, on purpose:
+
+- **No cross-pack view.** Nothing sums or links KPIs, objects or decisions across packs, and a proposal belongs to one pack and one audit chain.
+- **No Keep approvals and no exec listener** with several packs (the instance refuses to start): both bind to one approval store. Run one instance per pack for that.
+- **Tenant accounts** are enforced by each pack's own checks, so a tenant sees only its own objects in any pack. The switcher is hidden for them, but they can still tell whether a pack id exists by naming it.
+- Each pack's signer key and notification hooks are per pack; the notification webhook receives events from every pack, which carry the proposal id and action but not the pack name.
