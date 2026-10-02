@@ -9,6 +9,7 @@ package policy
 
 import (
 	"fmt"
+	"github.com/zyvorai/zyntra/internal/ontology"
 	"os"
 	"sort"
 	"strings"
@@ -101,6 +102,9 @@ type Policy struct {
 		MaxDrift *float64 `yaml:"maxDrift,omitempty" json:"max_drift,omitempty"`
 	} `yaml:"revalidation,omitempty" json:"revalidation"`
 	Users []User `yaml:"users,omitempty" json:"-"`
+	// Access limits which business objects, properties and typed actions
+	// each role may use. It is enforced on every read and on proposals.
+	Access []ontology.Rule `yaml:"access,omitempty" json:"access,omitempty"`
 }
 
 // Effective is the merged policy for one proposal.

@@ -268,3 +268,7 @@ func (s *Store) IngestMappings(d *Definition, dir, by string, load Loader, now t
 	rep, err := s.Ingest("pack:"+filepath.Base(dir), by, all, now)
 	return append(reps, rep), err
 }
+
+// Fingerprint identifies the current object and link content, ignoring
+// timestamps. Scenarios record it so a result names the data it ran on.
+func (s *Store) Fingerprint() string { return s.digest() }

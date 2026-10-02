@@ -1,0 +1,4 @@
+service_id,name,tier,asset_id
+svc-infer,Inference API,inference,A-100
+svc-batch,Batch training,batch,A-100
+svc-embed,Embedding service,inference,B-200

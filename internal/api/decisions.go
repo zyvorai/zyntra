@@ -19,6 +19,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/freshness"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/outcome"
 	"github.com/zyvorai/zyntra/internal/policy"
 	"github.com/zyvorai/zyntra/internal/sim"
@@ -133,6 +134,9 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action  string   `json:"action"`
 		Actions []string `json:"actions"`
+		// Inputs name the objects a typed action works on.
+		Inputs   map[string]string `json:"inputs"`
+		Scenario string            `json:"scenario"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -142,6 +146,27 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "unknown action: "+err.Error())
 		return
+	}
+	// Typed actions carry a contract: validated inputs, permissions and
+	// object preconditions, checked here before anything is proposed.
+	var refs []ontology.ObjectRef
+	if reg := s.opt.Ontology.Actions; reg != nil {
+		id := auth.FromContext(r.Context())
+		for _, a := range acts {
+			if _, typed := reg.Get(a.ID); !typed {
+				continue
+			}
+			if len(acts) > 1 {
+				writeErr(w, http.StatusUnprocessableEntity, "typed actions are proposed one at a time: "+a.ID)
+				return
+			}
+			var problems []string
+			refs, problems = reg.Validate(a.ID, req.Inputs, principal(r), func(role string) bool { return hasRole(id, role) })
+			if len(problems) > 0 {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "action contract not met", "blocked_reasons": problems})
+				return
+			}
+		}
 	}
 	st := s.freshness(m)
 	res, err := sim.ApplyPlan(m, acts, sim.Options{Unusable: freshness.Set(st)})
@@ -183,6 +208,10 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.Pack != nil {
 		p.PackID = m.Pack.ID
+	}
+	if len(refs) > 0 {
+		p.Objects, p.ActionInputs, p.ScenarioID = refs, req.Inputs, req.Scenario
+		p.Rollout = s.opt.Ontology.Def.Rollout
 	}
 	rd, rerr := s.render(r.Context(), m, acts)
 	p.Template, p.Kinds, p.Evidence = strings.Join(rd.templates, "+"), rd.kinds, rd.evidence
@@ -655,6 +684,7 @@ func (s *Server) observe(now time.Time) {
 			continue
 		}
 		p, _ = s.opt.Store.Record(id, "zyntra", fmt.Sprintf("outcome %s: %s", p.Outcome.State, strings.Join(p.Outcome.Reasons, "; ")), func(*approvals.Proposal) {})
+		s.checkObjectOutcome(id, p, m, now)
 		if verdictReady(p) {
 			s.explainVerdict(p)
 		}
@@ -748,4 +778,20 @@ func (s *Server) handlePolicy(w http.ResponseWriter, _ *http.Request) {
 		per[a.ID] = s.opt.Policy.For(a)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"policy": s.opt.Policy, "max_drift": s.opt.Policy.MaxDrift(), "actions": per})
+}
+
+// checkObjectOutcome records whether the business objects a typed action
+// targeted are safe once its outcome is decided.
+func (s *Server) checkObjectOutcome(id string, p approvals.Proposal, m *graph.Model, now time.Time) {
+	reg := s.opt.Ontology.Actions
+	if reg == nil || len(p.Objects) == 0 {
+		return
+	}
+	bad := reg.CheckOutcome(p.Action, p.Objects, failing(m))
+	oo := &approvals.ObjectOutcome{CheckedAt: now, Safe: len(bad) == 0, StillAtRisk: bad}
+	note := "objects safe after the change"
+	if !oo.Safe {
+		note = fmt.Sprintf("%d object(s) still failing a bound KPI", len(bad))
+	}
+	_, _ = s.opt.Store.Record(id, "zyntra", "object outcome: "+note, func(x *approvals.Proposal) { x.ObjectOutcome = oo })
 }

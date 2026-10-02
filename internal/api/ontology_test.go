@@ -1,0 +1,221 @@
+// Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+
+package api
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zyvorai/zyntra/internal/actions"
+	"github.com/zyvorai/zyntra/internal/ai"
+	"github.com/zyvorai/zyntra/internal/approvals"
+	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/ontology"
+	"github.com/zyvorai/zyntra/internal/scenario"
+)
+
+const ontModel = `
+name: ont
+kpis:
+  - {id: queue, value: 20, target: 10, direction: lower, owner: ops}
+  - {id: lat, value: 100, target: 200, direction: lower, owner: ops}
+edges:
+  - {from: queue, to: lat, weight: 0.1}
+actions:
+  - id: add_gpus
+    name: Add GPUs
+    effects: [{kpi: queue, change: -0.6}]
+  - id: free_action
+    name: Free action
+    effects: [{kpi: queue, change: -0.1}]
+`
+
+const ontDef = `
+objects:
+  - name: Cluster
+    kpis: [queue]
+    properties: [{name: name, type: string}, {name: status, type: string}]
+  - name: Customer
+    properties: [{name: name, type: string}, {name: contact, type: string, sensitive: true}]
+links:
+  - {name: serves, from: Customer, to: Cluster}
+actions:
+  - id: add_gpus
+    inputs: [{name: cluster, object_type: Cluster, required: true}]
+    requires: [{input: cluster, property: status, equals: active}]
+    permissions: [approver]
+    outcome: [{object_type: Cluster, must_be_safe: true}]
+rollout:
+  stages: [{name: canary, sites: [a]}]
+`
+
+func ontSetup(t *testing.T, rules []ontology.Rule) *fixture {
+	t.Helper()
+	def, err := ontology.ParseDefinition([]byte(ontDef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := ontology.Open("", def.Schema())
+	now := time.Now()
+	_, err = st.Ingest("crm", "t", []ontology.Record{
+		{Type: "Cluster", Namespace: "x", Key: "c1", Props: map[string]any{"name": "Cluster One", "status": "active"}},
+		{Type: "Cluster", Namespace: "x", Key: "c2", Props: map[string]any{"name": "Cluster Two", "status": "retired"}},
+		{Type: "Customer", Namespace: "x", Key: "k1", Props: map[string]any{"name": "Acme", "contact": "a@acme.example"},
+			Links: []ontology.RecordLink{{Type: "serves", ToType: "Cluster", ToNS: "x", ToKey: "c1"}}},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := &ontology.Access{Schema: def.Schema(), Rules: rules}
+	scn, _ := scenario.Open("")
+	return setupWith(t, ontModel, func(o *Options) {
+		o.Ontology = OntologyOptions{Def: def, Store: st, Access: ac, Actions: actions.New(def, st, ac), Scenarios: scn}
+	})
+}
+
+func TestOntologyObjectsRespectAccess(t *testing.T) {
+	f := ontSetup(t, []ontology.Rule{{Roles: []string{"viewer"}, Types: []string{"Cluster"}}})
+	var list struct{ Objects []ontology.Object }
+	if c := f.as(t, "GET", "/api/v1/ontology/objects", "v", viewer, "", &list); c != 200 || len(list.Objects) != 2 {
+		t.Fatalf("viewer saw %d objects (%d)", len(list.Objects), c)
+	}
+	if c := f.as(t, "GET", "/api/v1/ontology/objects/Customer:x:k1", "v", viewer, "", nil); c != 404 {
+		t.Fatalf("hidden object = %d, want 404", c)
+	}
+	var adm struct{ Objects []ontology.Object }
+	f.as(t, "GET", "/api/v1/ontology/objects?type=Customer", "root", []auth.Role{auth.RoleAdmin}, "", &adm)
+	if len(adm.Objects) != 1 || adm.Objects[0].Props["contact"].V != "a@acme.example" {
+		t.Fatalf("admin view wrong: %+v", adm.Objects)
+	}
+	var appr struct{ Objects []ontology.Object }
+	f.as(t, "GET", "/api/v1/ontology/objects?type=Customer", "boss", approver, "", &appr)
+	if len(appr.Objects) != 1 {
+		t.Fatal("approver should see customers (rule only limits viewers)")
+	}
+	if _, ok := appr.Objects[0].Props["contact"]; ok {
+		t.Error("sensitive property leaked to a non-admin")
+	}
+}
+
+func TestAskCitesObjectsAndHidesForbidden(t *testing.T) {
+	f := ontSetup(t, []ontology.Rule{{Roles: []string{"viewer"}, Types: []string{"Cluster"}}})
+	var a ai.Answer
+	f.as(t, "POST", "/api/v1/ai/ask", "boss", approver, `{"question":"Which customers are at risk and why?"}`, &a)
+	if !strings.Contains(a.Text, "Acme") || len(a.Citations) == 0 {
+		t.Fatalf("approver answer lacks the customer or citations: %+v", a)
+	}
+	for _, c := range a.Citations {
+		if c.Source == "" || c.ObservedAt.IsZero() {
+			t.Errorf("citation without provenance: %+v", c)
+		}
+	}
+	var v ai.Answer
+	f.as(t, "POST", "/api/v1/ai/ask", "v", viewer, `{"question":"Which customers are at risk and why?"}`, &v)
+	if strings.Contains(v.Text, "Acme") || strings.Contains(v.Text, "a@acme") {
+		t.Fatalf("viewer answer leaked a forbidden object: %s", v.Text)
+	}
+	for _, c := range v.Citations {
+		if strings.HasPrefix(c.Object, "Customer:") {
+			t.Errorf("viewer citation points at a hidden object: %+v", c)
+		}
+	}
+}
+
+func TestTypedActionContract(t *testing.T) {
+	f := ontSetup(t, nil)
+	post := func(user string, roles []auth.Role, body string, out any) int {
+		return f.as(t, "POST", "/api/v1/proposals", user, roles, body, out)
+	}
+	if c := post("p", proposer, `{"action":"add_gpus","inputs":{"cluster":"Cluster:x:c1"}}`, nil); c != 422 {
+		t.Errorf("proposer without the approver role = %d, want 422", c)
+	}
+	if c := post("boss", approver, `{"action":"add_gpus"}`, nil); c != 422 {
+		t.Errorf("missing required input = %d, want 422", c)
+	}
+	if c := post("boss", approver, `{"action":"add_gpus","inputs":{"cluster":"Cluster:x:nope"}}`, nil); c != 422 {
+		t.Errorf("unknown object = %d, want 422", c)
+	}
+	if c := post("boss", approver, `{"action":"add_gpus","inputs":{"cluster":"Customer:x:k1"}}`, nil); c != 422 {
+		t.Errorf("wrong object type = %d, want 422", c)
+	}
+	if c := post("boss", approver, `{"action":"add_gpus","inputs":{"cluster":"Cluster:x:c2"}}`, nil); c != 422 {
+		t.Errorf("object precondition (status must be active) = %d, want 422", c)
+	}
+	var p approvals.Proposal
+	if c := post("boss", approver, `{"action":"add_gpus","inputs":{"cluster":"Cluster:x:c1"}}`, &p); c != 201 {
+		t.Fatalf("valid typed proposal = %d", c)
+	}
+	if len(p.Objects) != 1 || p.Objects[0].ID != "Cluster:x:c1" || p.Rollout == nil || p.ActionInputs["cluster"] != "Cluster:x:c1" {
+		t.Fatalf("proposal lacks objects/rollout: %+v", p)
+	}
+	// An untyped action is not affected by the contract.
+	if c := post("p", proposer, `{"action":"free_action"}`, nil); c != 201 {
+		t.Errorf("untyped action = %d, want 201", c)
+	}
+}
+
+func TestAIProposeDraftsButCreatesNothing(t *testing.T) {
+	f := ontSetup(t, nil)
+	var d ai.Draft
+	f.as(t, "POST", "/api/v1/ai/propose", "boss", approver, `{"text":"please add gpus to Cluster One"}`, &d)
+	if d.Action != "add_gpus" || d.Inputs["cluster"] != "Cluster:x:c1" || !d.Valid {
+		t.Fatalf("draft = %+v", d)
+	}
+	var bad ai.Draft
+	f.as(t, "POST", "/api/v1/ai/propose", "boss", approver, `{"text":"add gpus to Cluster Two"}`, &bad)
+	if bad.Valid || len(bad.Problems) == 0 {
+		t.Fatalf("a retired cluster must not validate: %+v", bad)
+	}
+	if got := f.s.opt.Store.List(); len(got) != 0 {
+		t.Fatalf("drafting created %d proposals", len(got))
+	}
+}
+
+func TestScenarioRunAndCompare(t *testing.T) {
+	f := ontSetup(t, nil)
+	var a, b scenario.Scenario
+	if c := f.as(t, "POST", "/api/v1/scenarios", "p", proposer, `{"name":"big","actions":["add_gpus"]}`, &a); c != 201 {
+		t.Fatalf("create = %d", c)
+	}
+	f.as(t, "POST", "/api/v1/scenarios", "p", proposer, `{"name":"small","actions":["free_action"],"assumptions":{"queue":30}}`, &b)
+	if a.Result == nil || len(a.Result.AtRiskBefore) != 2 || len(a.Result.AtRiskAfter) != 0 {
+		t.Fatalf("add_gpus should clear both at-risk clusters (both are bound to the queue KPI): %+v", a.Result)
+	}
+	if len(a.Result.ExposedBefore) != 1 || a.ModelVersion == "" || a.DataVersion == "" {
+		t.Fatalf("missing exposure or version stamps: %+v", a)
+	}
+	if len(b.Result.AtRiskAfter) != 2 {
+		t.Fatalf("small plan with a worse assumption should leave the cluster at risk: %+v", b.Result)
+	}
+	var cmp scenario.Comparison
+	if c := f.as(t, "GET", "/api/v1/scenarios/compare?ids="+a.ID+","+b.ID, "v", viewer, "", &cmp); c != 200 || len(cmp.AtRisk) != 2 || cmp.AtRisk[0] != 0 || cmp.AtRisk[1] != 2 {
+		t.Fatalf("compare = %d %+v", c, cmp)
+	}
+	var again scenario.Scenario
+	f.as(t, "POST", "/api/v1/scenarios/"+a.ID+"/run", "p", proposer, "", &again)
+	if again.DataVersion != a.DataVersion || again.Result.WeightedAfter != a.Result.WeightedAfter {
+		t.Error("re-running the same scenario on the same data changed the result")
+	}
+	if c := f.as(t, "POST", "/api/v1/scenarios", "v", viewer, `{"name":"x","actions":["add_gpus"]}`, nil); c != 403 {
+		t.Errorf("viewer creating a scenario = %d", c)
+	}
+}
+
+func TestResolutionNeedsApprover(t *testing.T) {
+	f := ontSetup(t, nil)
+	if c := f.as(t, "POST", "/api/v1/ontology/resolution/x/accept", "v", viewer, "", nil); c != 403 {
+		t.Fatalf("viewer accept = %d", c)
+	}
+	if c := f.as(t, "POST", "/api/v1/ontology/resolution/none/accept", "boss", approver, "", nil); c != 409 {
+		t.Fatalf("unknown candidate = %d", c)
+	}
+}
+
+func TestNoOntologyRoutes404(t *testing.T) {
+	f := setup(t, nil)
+	if c := f.as(t, "GET", "/api/v1/ontology/objects", "v", viewer, "", nil); c != 404 {
+		t.Fatalf("pack without ontology = %d, want 404", c)
+	}
+}

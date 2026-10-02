@@ -5,6 +5,7 @@ package ontology
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,7 +13,7 @@ import (
 func testSchema() *Schema {
 	return &Schema{
 		Objects: []ObjectType{
-			{Name: "Cluster", Properties: []Property{{Name: "name", Type: "string", Required: true}, {Name: "gpus", Type: "number"}}},
+			{Name: "Cluster", Properties: []Property{{Name: "name", Type: "string", Required: true}, {Name: "gpus", Type: "number"}, {Name: "kpis", Type: "string"}}},
 			{Name: "Service", Properties: []Property{{Name: "name", Type: "string"}}},
 			{Name: "Customer", Properties: []Property{{Name: "name", Type: "string"}, {Name: "contact", Type: "string", Sensitive: true}}},
 		},
@@ -56,7 +57,7 @@ func TestSchemaValidate(t *testing.T) {
 			if c.want == "" && err != nil {
 				t.Fatalf("unexpected: %v", err)
 			}
-			if c.want != "" && (err == nil || !contains(err.Error(), c.want)) {
+			if c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
 				t.Fatalf("want %q, got %v", c.want, err)
 			}
 		})
@@ -67,7 +68,7 @@ func TestCheckKPIs(t *testing.T) {
 	s := testSchema()
 	s.Objects[0].KPIs = []string{"queue_wait", "ghost"}
 	err := s.CheckKPIs(func(id string) bool { return id == "queue_wait" })
-	if err == nil || !contains(err.Error(), "ghost") {
+	if err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("want ghost flagged, got %v", err)
 	}
 }
@@ -215,11 +216,123 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
+func TestAccessFiltering(t *testing.T) {
+	st := buildGraph(t)
+	_ = st.Upsert(Object{ID: MakeID("Customer", "lab", "k1"), Type: "Customer", Tenant: "acme",
+		Props: map[string]Value{"contact": {V: "a@b.c", Prov: prov()}}})
+	_ = st.Upsert(Object{ID: MakeID("Customer", "lab", "k3"), Type: "Customer", Tenant: "other",
+		Props: map[string]Value{"name": {V: "O", Prov: prov()}}})
+	ac := &Access{Schema: st.Schema(), Rules: []Rule{
+		{Roles: []string{"viewer"}, Tenant: "acme", Types: []string{"Customer", "Service"}},
+		{Roles: []string{"viewer"}, Deny: []string{"name"}},
+	}}
+	viewer := st.As(ac, Principal{Subject: "v", Roles: []string{"viewer"}})
+	admin := st.As(ac, Principal{Subject: "a", Roles: []string{"admin"}})
+	if _, ok := viewer.Get(MakeID("Cluster", "lab", "c1")); ok {
+		t.Error("viewer saw a type outside its rule")
+	}
+	if _, ok := viewer.Get(MakeID("Customer", "lab", "k3")); ok {
+		t.Error("viewer saw another tenant")
+	}
+	k1, _ := viewer.Get(MakeID("Customer", "lab", "k1"))
+	if _, ok := k1.Props["contact"]; ok {
+		t.Error("sensitive property leaked to viewer")
+	}
+	if a1, _ := admin.Get(MakeID("Customer", "lab", "k1")); a1.Props["contact"].V != "a@b.c" {
+		t.Error("admin lost sensitive property")
+	}
+	// The viewer must not learn about the cluster through impact either.
+	if got := viewer.Impact(MakeID("Cluster", "lab", "c1"), 0); got != nil {
+		t.Errorf("impact of a hidden root returned %d objects", len(got))
+	}
+	for _, i := range viewer.Impact(MakeID("Service", "lab", "s1"), 0) {
+		if i.Object.Type == "Cluster" {
+			t.Error("hidden type in impact")
 		}
 	}
-	return false
+	if viewer.Candidates() != nil {
+		t.Error("viewer can see candidates")
+	}
+	if !ac.CanAct(Principal{Roles: []string{"viewer"}}, "x") {
+		t.Error("no action limit set, should allow")
+	}
+}
+
+func TestResolutionQueueAndMerge(t *testing.T) {
+	s := testSchema()
+	s.Objects[0].Match = "name"
+	st, _ := Open("", s)
+	var notes []string
+	st.Audit = func(sub, by, note string) { notes = append(notes, sub+" "+note) }
+	now := time.Now()
+	rep, err := st.Ingest("erp", "t", []Record{
+		{Type: "Cluster", Namespace: "erp", Key: "A-1", Props: map[string]any{"name": "GPU Cluster A"}, Aliases: []Alias{{"erp", "A-1"}}},
+		{Type: "Service", Namespace: "erp", Key: "s", Props: map[string]any{"name": "svc"},
+			Links: []RecordLink{{Type: "runs_on", ToType: "Cluster", ToNS: "erp", ToKey: "A-1"}}},
+	}, now)
+	if err != nil || rep.Objects != 2 || rep.Links != 1 || len(notes) != 1 {
+		t.Fatalf("%+v %v %v", rep, err, notes)
+	}
+	// Same data again is not a change and is not audited.
+	rep, _ = st.Ingest("erp", "t", []Record{{Type: "Cluster", Namespace: "erp", Key: "A-1", Props: map[string]any{"name": "GPU Cluster A"}, Aliases: []Alias{{"erp", "A-1"}}}}, now.Add(time.Hour))
+	if rep.Changed || len(notes) != 1 {
+		t.Fatalf("unchanged ingest was audited: %+v %v", rep, notes)
+	}
+	// A monitoring system reports the same machine under another id.
+	rep, _ = st.Ingest("netra", "t", []Record{{Type: "Cluster", Namespace: "netra", Key: "dev-77", Props: map[string]any{"name": "gpu-cluster-a"}}}, now)
+	if rep.Candidates != 1 || len(st.List("Cluster")) != 2 {
+		t.Fatalf("want a queued candidate and no auto-merge: %+v", rep)
+	}
+	c := st.Candidates()[0]
+	if _, err := st.Decide(c.ID, true, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.List("Cluster")) != 1 {
+		t.Fatal("merge did not remove the duplicate")
+	}
+	if o, ok := st.Get(c.B); !ok || o.ID != c.A {
+		t.Fatal("old id does not redirect to the merged object")
+	}
+	if got := st.Impact(c.A, 0); len(got) != 1 {
+		t.Fatalf("links did not follow the merge: %d", len(got))
+	}
+	if _, err := st.Decide(c.ID, false, "bob"); err == nil {
+		t.Error("decided twice")
+	}
+	// An alias seen again lands on the surviving object.
+	rep, _ = st.Ingest("erp", "t", []Record{{Type: "Cluster", Namespace: "erp", Key: "A-1b", Props: map[string]any{"gpus": 8.0}, Aliases: []Alias{{"erp", "A-1"}}}}, now)
+	if len(st.List("Cluster")) != 1 {
+		t.Fatalf("alias did not pin identity: %+v", rep)
+	}
+}
+
+func TestIngestSkipsBadRowsKeepsRest(t *testing.T) {
+	st, _ := Open("", testSchema())
+	rep, _ := st.Ingest("x", "t", []Record{
+		{Type: "Cluster", Namespace: "n", Key: "ok", Props: map[string]any{"name": "a"}},
+		{Type: "Cluster", Namespace: "n", Key: "bad", Props: map[string]any{"gpus": "lots"}},
+		{Type: "Rack", Namespace: "n", Key: "r"},
+	}, time.Now())
+	if rep.Objects != 1 || len(rep.Skipped) != 2 {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestAtRiskAndExposed(t *testing.T) {
+	st := buildGraph(t)
+	st.schema.Objects[0].KPIs = []string{"queue_wait"}
+	rd := st.As(nil, Principal{})
+	risks := AtRisk(rd, func(k string) bool { return k == "queue_wait" })
+	if len(risks) != 1 || risks[0].Type != "Cluster" {
+		t.Fatalf("%+v", risks)
+	}
+	ex := Exposed(rd, risks)
+	if len(ex) != 4 || ex[0].KPIs[0] != "queue_wait" {
+		t.Fatalf("%+v", ex)
+	}
+	// A per-object override beats the type binding.
+	_ = st.Upsert(obj("Cluster", "c1", map[string]any{"kpis": "other"}))
+	if r := AtRisk(rd, func(k string) bool { return k == "queue_wait" }); len(r) != 0 {
+		t.Fatalf("override ignored: %+v", r)
+	}
 }

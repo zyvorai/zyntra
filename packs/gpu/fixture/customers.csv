@@ -1,0 +1,5 @@
+customer_id,name,plan,contact,tenant,service_id
+cust-acme,Acme Robotics,enterprise,ops@acme.example,acme,svc-infer
+cust-acme,Acme Robotics,enterprise,ops@acme.example,acme,svc-embed
+cust-globex,Globex Vision,standard,sre@globex.example,globex,svc-infer
+cust-initech,Initech Labs,standard,it@initech.example,initech,svc-batch

@@ -1,0 +1,3 @@
+device_id,hostname,gpus
+netra-77,gpu-cluster-a,32
+netra-91,edge-spare,4
