@@ -569,3 +569,11 @@ func (s *Server) handleConnectorRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "report": rep})
 	}
 }
+
+// handleOntStats says how much the ontology holds against its cap.
+func (s *Server) handleOntStats(w http.ResponseWriter, _ *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.opt.Ontology.Store.Stats())
+}

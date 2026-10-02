@@ -6,6 +6,11 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Added
 
+- **Memory bounds.** `ZYNTRA_ONTOLOGY_MAX_OBJECTS` (default 1,000,000) refuses an over-limit batch whole with a clear error; `GET /api/v1/ontology/stats` and a capacity line on the Objects page with a warning from 80%. Measured cost: about 1.4 KB per object.
+
+### Fixed
+
+- **Quadratic ingest on the memory and JSON stores.** The in-memory change log was trimmed by copying 20,000 entries on every change once full, so 100,000 objects took 98 s; it is now trimmed in chunks (2.2 s). The SQLite store was not affected. A regression test fails at 61 s against the old code.
 - **REST connector** (`kind: rest`): any paged JSON API (next-link or page-parameter paging, optional since parameter, bearer or basic auth from the environment) mapped like Kubernetes and SQL, with `prune` for full listings. Credentials go only to the configured host; cross-host next links and redirects are refused; secrets stay out of errors; pulls are bounded. Verified against the public Northwind OData service.
 - **Append-only audit file.** The hash-chained audit trail moves out of the rewritten state file into `approvals.json.audit.jsonl` (append and sync per save). Legacy inline trails migrate with the chain and head hash unchanged, a torn final line is trimmed, mid-file damage is refused, and an inline trail plus an audit file is refused as ambiguous. The tamper tests now edit the audit file.
 - **SQL snapshot prune.** A SQL connector whose query has no parameter is a full listing and may set `prune: true`.

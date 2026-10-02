@@ -78,6 +78,30 @@ describe('Objects page', () => {
     expect(screen.queryByRole('button', { name: 'Run now' })).toBeNull();
   });
 
+  it('shows how full the ontology is and warns near the cap', async () => {
+    mockApi({
+      ...base,
+      'GET /api/v1/ontology/connectors': { status: 403, body: { error: 'x' } },
+      'GET /api/v1/ontology/stats': { objects: 850000, links: 840000, pending_candidates: 0, by_type: {}, object_limit: 1000000 },
+    });
+    render(withWho(approverOnly(), <Objects />));
+    // Numbers are shown in the viewer's locale, so build the expectation the same way.
+    expect(await screen.findByText(new RegExp(`${(850000).toLocaleString()} objects`))).toBeTruthy();
+    expect(screen.getByText(new RegExp(`limit ${(1000000).toLocaleString()}`))).toBeTruthy();
+    expect(screen.getByText(/near the object limit/)).toBeTruthy();
+  });
+
+  it('shows no capacity line, and no warning, well under the cap', async () => {
+    mockApi({
+      ...base,
+      'GET /api/v1/ontology/connectors': { status: 403, body: { error: 'x' } },
+      'GET /api/v1/ontology/stats': { objects: 2000, links: 1900, pending_candidates: 0, by_type: {}, object_limit: 1000000 },
+    });
+    render(withWho(approverOnly(), <Objects />));
+    expect(await screen.findByText(new RegExp(`${(2000).toLocaleString()} objects`))).toBeTruthy();
+    expect(screen.queryByText(/near the object limit/)).toBeNull();
+  });
+
   it('lets an approver decide an identity match', async () => {
     const calls = mockApi({
       ...base,

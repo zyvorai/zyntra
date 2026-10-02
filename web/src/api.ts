@@ -663,3 +663,11 @@ export interface TenantKPI {
   met: boolean;
   stale?: boolean;
 }
+
+export interface OntStats {
+  objects: number;
+  links: number;
+  pending_candidates: number;
+  by_type: Record<string, number>;
+  object_limit?: number;
+}

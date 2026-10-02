@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ago, type Candidate, type ConnectorStatus, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
+import { api, ago, type Candidate, type ConnectorStatus, type OntStats, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
 import { useApi } from '../hooks';
 import { objectFromHash, openObject } from '../nav';
 import { useWho } from '../session';
@@ -167,6 +167,21 @@ function Resolution() {
   );
 }
 
+/** How much the ontology holds against its cap; hidden for roles that cannot read it. */
+function Capacity() {
+  const { data } = useApi<OntStats>('/api/v1/ontology/stats', 30000);
+  if (!data) return null;
+  const limit = data.object_limit ?? 0;
+  const near = limit > 0 && data.objects >= limit * 0.8;
+  return (
+    <p className="muted small">
+      {data.objects.toLocaleString()} objects · {data.links.toLocaleString()} links
+      {limit > 0 ? ` · limit ${limit.toLocaleString()}` : ''}{' '}
+      {near ? <Pill tone="warn">near the object limit: new objects will be refused</Pill> : null}
+    </p>
+  );
+}
+
 /** Health of the scheduled sources; hidden for roles that cannot read it. */
 function Connectors() {
   const { data, error, reload } = useApi<{ connectors: ConnectorStatus[] }>('/api/v1/ontology/connectors', 15000);
@@ -254,6 +269,7 @@ export default function Objects() {
         lede="The business objects Zyntra knows about, how they link, and where each fact came from. Links show what depends on what; they never feed the simulator."
       />
       <ErrorNote message={schema.error} />
+      <Capacity />
       <Resolution />
       <Connectors />
       <div className="segmented" role="tablist">
