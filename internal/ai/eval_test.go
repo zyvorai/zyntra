@@ -225,3 +225,28 @@ func TestEvalSelectorCannotInventOrLeak(t *testing.T) {
 		}
 	}
 }
+
+// An object that several others depend on is mentioned several times but is
+// one fact: it must be cited once.
+func TestEvalCitationsAreUnique(t *testing.T) {
+	w := newWorld(t, nil)
+	a := w.ask("admin", "Which customers are at risk and why?")
+	seen := map[string]bool{}
+	for _, c := range a.Citations {
+		key := c.Object + "|" + c.Property
+		if seen[key] {
+			t.Errorf("%s is cited more than once", key)
+		}
+		seen[key] = true
+	}
+	if len(a.Citations) == 0 {
+		t.Fatal("no citations")
+	}
+	g := map[string]bool{}
+	for _, x := range a.Grounding {
+		if g[x] {
+			t.Errorf("grounding %q repeats", x)
+		}
+		g[x] = true
+	}
+}

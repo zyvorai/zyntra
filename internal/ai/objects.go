@@ -99,6 +99,13 @@ func cite(o ontology.Object, prop string) (Citation, bool) {
 }
 
 func (a *Answer) addCite(o ontology.Object, prop string) {
+	// One citation per fact: an object that several others depend on is
+	// mentioned more than once but is the same fact.
+	for _, have := range a.Citations {
+		if have.Object == o.ID && have.Property == prop {
+			return
+		}
+	}
 	if c, ok := cite(o, prop); ok {
 		a.Citations = append(a.Citations, c)
 		a.Grounding = append(a.Grounding, "object:"+o.ID+"."+prop)
