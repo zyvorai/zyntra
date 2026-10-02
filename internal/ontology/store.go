@@ -579,3 +579,33 @@ func (s *Store) Page(typ, after string, limit int, keep func(Object) (Object, bo
 	}
 	return items, ""
 }
+
+// Bound returns the objects measured by at least one KPI, in id order.
+func (s *Store) Bound() []Object {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.ix.bound))
+	for id := range s.ix.bound {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]Object, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, s.s.Objects[id])
+	}
+	return out
+}
+
+// RebuildBindings recomputes which objects are measured by a KPI. The schema is
+// fixed once the store is open, so this is only needed if a type's KPI
+// bindings are changed afterwards (a future definition reload, or a test).
+func (s *Store) RebuildBindings() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ix.bound = map[string]struct{}{}
+	for _, o := range s.s.Objects {
+		if len(BoundKPIs(s.schema, o)) > 0 {
+			s.ix.bound[o.ID] = struct{}{}
+		}
+	}
+}

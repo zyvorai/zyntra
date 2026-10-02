@@ -100,10 +100,14 @@ type index struct {
 	adj   map[string]map[string]struct{} // object id -> ids of links touching it
 	alias map[string]string              // tenant|system|external id -> object id
 	match map[string]map[string]struct{} // type|tenant|normalised match value -> object ids
+	// bound holds the ids of objects measured by at least one KPI (through
+	// their type or their own "kpis" property): the only objects that can be
+	// at risk, so the risk summary reads these instead of every object.
+	bound map[string]struct{}
 }
 
 func newIndex() index {
-	return index{adj: map[string]map[string]struct{}{}, alias: map[string]string{}, match: map[string]map[string]struct{}{}}
+	return index{adj: map[string]map[string]struct{}{}, alias: map[string]string{}, match: map[string]map[string]struct{}{}, bound: map[string]struct{}{}}
 }
 
 func aliasKey(tenant string, a Alias) string {
@@ -123,6 +127,9 @@ func (s *Store) matchKey(o Object) (string, bool) {
 }
 
 func (s *Store) indexObject(o Object) {
+	if len(BoundKPIs(s.schema, o)) > 0 {
+		s.ix.bound[o.ID] = struct{}{}
+	}
 	for _, a := range o.Aliases {
 		s.ix.alias[aliasKey(o.Tenant, a)] = o.ID
 	}
@@ -137,6 +144,7 @@ func (s *Store) indexObject(o Object) {
 }
 
 func (s *Store) unindexObject(o Object) {
+	delete(s.ix.bound, o.ID)
 	for _, a := range o.Aliases {
 		if s.ix.alias[aliasKey(o.Tenant, a)] == o.ID {
 			delete(s.ix.alias, aliasKey(o.Tenant, a))

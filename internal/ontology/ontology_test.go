@@ -321,6 +321,7 @@ func TestIngestSkipsBadRowsKeepsRest(t *testing.T) {
 func TestAtRiskAndExposed(t *testing.T) {
 	st := buildGraph(t)
 	st.schema.Objects[0].KPIs = []string{"queue_wait"}
+	st.RebuildBindings()
 	rd := st.As(nil, Principal{})
 	risks := AtRisk(rd, func(k string) bool { return k == "queue_wait" })
 	if len(risks) != 1 || risks[0].Type != "Cluster" {

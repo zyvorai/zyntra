@@ -279,3 +279,35 @@ func (r Reader) Page(typ, after string, limit int, match func(Object) bool) ([]O
 		return f, true
 	})
 }
+
+// Bound returns the visible objects that are measured by a KPI, in id order.
+// Only these can be at risk, so the risk summary starts here rather than from
+// every object in the store.
+func (r Reader) Bound() []Object {
+	var out []Object
+	for _, o := range r.st.Bound() {
+		if f, ok := r.ac.Filter(r.p, o); ok {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// Scan calls fn for each visible object of a type ("" for all) in id order
+// until fn returns false. It reads a page at a time and holds no lock while fn
+// runs, so fn may call back into the store and may stop early.
+func (r Reader) Scan(typ string, fn func(Object) bool) {
+	cursor := ""
+	for {
+		items, next := r.Page(typ, cursor, 500, nil)
+		for _, o := range items {
+			if !fn(o) {
+				return
+			}
+		}
+		if next == "" {
+			return
+		}
+		cursor = next
+	}
+}

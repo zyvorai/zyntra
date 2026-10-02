@@ -124,10 +124,7 @@ func answerObjects(ql string, s Snapshot) (Answer, bool) {
 
 func answerObjectsQ(q, ql string, s Snapshot) (Answer, bool) {
 	oc := s.Objects
-	all := oc.Reader.List("")
-	if len(all) == 0 {
-		return Answer{}, false
-	}
+	anyVisible := false
 	var wantTypes []string
 	for _, ot := range oc.Schema.Objects {
 		n := strings.ToLower(ot.Name)
@@ -135,12 +132,21 @@ func answerObjectsQ(q, ql string, s Snapshot) (Answer, bool) {
 			wantTypes = append(wantTypes, ot.Name)
 		}
 	}
+	// Find the objects the question names. Scan reads a page at a time in id
+	// order and stops after a handful of matches, so a large store is not
+	// listed and sorted for every question.
+	const maxMentioned = 50
 	var mentioned []ontology.Object
-	for _, o := range all {
+	oc.Reader.Scan("", func(o ontology.Object) bool {
+		anyVisible = true
 		n := strings.ToLower(name(o))
 		if n != "" && strings.Contains(ql, n) || strings.Contains(ql, strings.ToLower(o.ID)) {
 			mentioned = append(mentioned, o)
 		}
+		return len(mentioned) < maxMentioned
+	})
+	if !anyVisible {
+		return Answer{}, false
 	}
 	risky := hasAny(ql, riskWords)
 	switch {

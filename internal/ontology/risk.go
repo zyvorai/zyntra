@@ -50,7 +50,7 @@ type Exposure struct {
 // KPI currently misses its target. This is a lookup, not a prediction.
 func AtRisk(r Reader, failing func(kpi string) bool) []Risk {
 	var out []Risk
-	for _, o := range r.List("") {
+	for _, o := range r.Bound() {
 		var bad []string
 		for _, k := range BoundKPIs(r.st.schema, o) {
 			if failing(k) {
