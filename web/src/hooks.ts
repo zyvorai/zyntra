@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Pulse } from './api';
+import { packQuery } from './pack';
 
 export function useApi<T>(path: string | null, refreshMs = 0) {
   const [data, setData] = useState<T | null>(null);
@@ -37,7 +38,7 @@ export function usePulse(enabled = true) {
   const [pulse, setPulse] = useState<Pulse | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    const es = new EventSource('/api/v1/events', { withCredentials: true });
+    const es = new EventSource(`/api/v1/events${packQuery()}`, { withCredentials: true });
     es.addEventListener('pulse', (e) => {
       try {
         setPulse(JSON.parse((e as MessageEvent).data));

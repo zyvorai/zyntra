@@ -67,7 +67,9 @@ type KeepBridge interface {
 }
 
 type Options struct {
-	Model    *graph.Model
+	Model *graph.Model
+	// Packs lists every pack this instance serves; nil for a single pack.
+	Packs    []PackInfo
 	Refresh  RefreshFunc
 	Interval time.Duration
 	Static   fs.FS
@@ -308,6 +310,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/v1/meta", s.handleMeta)
+	mux.Handle("GET /api/v1/packs", read(s.handlePacks))
 	s.opt.Auth.Routes(mux)
 
 	mux.Handle("GET /api/v1/graph", read(s.handleGraph))

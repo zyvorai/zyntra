@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Theme } from '../theme';
 import { visibleGroups, type Page } from '../nav';
-import type { Pulse } from '../api';
+import type { Pulse, ServedPack } from '../api';
+import { getPack, setPack } from '../pack';
 
 const OPEN_DELAY_MS = 120;
 const CLOSE_DELAY_MS = 450;
@@ -16,6 +17,7 @@ export default function Nav({
   operator,
   ontology,
   tenant,
+  packs,
 }: {
   page: Page;
   setPage: (p: Page) => void;
@@ -26,6 +28,8 @@ export default function Nav({
   operator: string;
   ontology?: boolean;
   tenant?: string;
+  /** Every pack this instance serves; the switcher shows only when there are several. */
+  packs?: ServedPack[];
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,6 +152,25 @@ export default function Nav({
           )}
         </div>
         <div className="nav-actions">
+          {packs && packs.length > 1 ? (
+            <select
+              className="pack-select"
+              aria-label="Pack"
+              value={packs.some((p) => p.id === getPack()) ? getPack() : (packs.find((p) => p.default) ?? packs[0]).id}
+              onChange={(e) => {
+                // Every cached answer belongs to the old pack, so start the console afresh.
+                setPack(e.target.value);
+                window.location.hash = '/overview';
+                window.location.reload();
+              }}
+            >
+              {packs.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title || p.id}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {pulse ? (
             <button
               type="button"

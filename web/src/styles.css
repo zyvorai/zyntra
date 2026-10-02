@@ -1099,3 +1099,11 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .table td button + button { margin-left: 8px; }
 .check { margin-right: 18px; }
 .chips { gap: 8px; }
+
+/* Pack switcher, shown only when one instance serves several packs. */
+.pack-select {
+  max-width: 11rem;
+  margin-right: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}

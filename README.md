@@ -436,6 +436,7 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `ZYNTRA_FABRIC_URL` / `_USER` / `_PASSWORD` or `_TOKEN` | Fabric host metrics (logs in for a token) |
 | `ZYNTRA_ENDPOINT_INSECURE=1` | Accept self-signed certificates on the endpoints above (lab) |
 | `ZYNTRA_EXECUTE` | `dry-run` (default) or `apply` |
+| `ZYNTRA_DEFAULT_PACK` | With `serve -f a,b` (several packs), which pack requests without `X-Zyntra-Pack` use (default: the first) |
 | `ZYNTRA_OUTPUT_DIR` | Where `file` actions write (default `$ZYNTRA_STATE_DIR/out`) |
 | `ZYNTRA_INGEST_TOKEN` | Token that may only POST to `/api/v1/ingest/<channel>` |
 | `ZYNTRA_KUBECONFIG` | kubeconfig for execution and the `-kubectl` adapter |
