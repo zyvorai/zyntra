@@ -268,6 +268,7 @@ type Store struct {
 	now  func() time.Time
 	// flushed is how many audit events are already in the audit file.
 	flushed int
+	onEvent func(Event)
 }
 
 // auditPath is the append-only audit file: one JSON event per line, never
@@ -507,6 +508,18 @@ func (s *Store) auditHashes(p *Proposal, from, to Status, by, note, payload, res
 	}
 	e.Hash = e.digest()
 	s.s.Audit = append(s.s.Audit, e)
+	if s.onEvent != nil {
+		s.onEvent(e)
+	}
+}
+
+// OnEvent registers a function called with every audit event, under the
+// store's lock: it must return at once and must not call back into the store.
+// Set it once at start-up.
+func (s *Store) OnEvent(f func(Event)) {
+	s.mu.Lock()
+	s.onEvent = f
+	s.mu.Unlock()
 }
 
 // Note appends an audit entry that is not tied to a proposal, such as an
