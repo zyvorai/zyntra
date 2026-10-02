@@ -167,3 +167,33 @@ connectors:
 		}
 	}
 }
+
+func TestServiceTokensInPolicy(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	p, err := Parse(`
+service_tokens:
+  - {name: agent, token_sha256: ` + hash + `, roles: [viewer, proposer]}
+  - {name: alpha-agent, token_sha256: ` + strings.Repeat("b", 64) + `, roles: [viewer], tenant: alpha, not_after: 2027-01-01T00:00:00Z}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.ServiceCredentials()
+	if len(got) != 2 || len(got[0].Roles) != 2 || got[1].Tenant != "alpha" || got[1].NotAfter.Year() != 2027 {
+		t.Fatalf("service credentials = %+v", got)
+	}
+	bad := map[string]string{
+		"approver role": "service_tokens:\n  - {name: a, token_sha256: " + hash + ", roles: [approver]}\n",
+		"admin role":    "service_tokens:\n  - {name: a, token_sha256: " + hash + ", roles: [admin]}\n",
+		"unknown role":  "service_tokens:\n  - {name: a, token_sha256: " + hash + ", roles: [boss]}\n",
+		"no roles":      "service_tokens:\n  - {name: a, token_sha256: " + hash + "}\n",
+		"short hash":    "service_tokens:\n  - {name: a, token_sha256: abc, roles: [viewer]}\n",
+		"bad tenant":    "service_tokens:\n  - {name: a, token_sha256: " + hash + ", roles: [viewer], tenant: A.B}\n",
+		"plain token":   "service_tokens:\n  - {name: a, token: plaintext, token_sha256: " + hash + ", roles: [viewer]}\n",
+	}
+	for name, text := range bad {
+		if _, err := Parse(text); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

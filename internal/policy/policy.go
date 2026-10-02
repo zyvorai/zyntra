@@ -110,6 +110,19 @@ type Connector struct {
 	Revoked     bool       `yaml:"revoked,omitempty" json:"revoked,omitempty"`
 }
 
+// ServiceToken is one machine caller's credential (an agent, a script): a
+// token (kept as its SHA-256), viewer and/or proposer roles, an optional
+// tenant and validity window. Create one with `zyntra service-token`.
+type ServiceToken struct {
+	Name        string     `yaml:"name" json:"name"`
+	TokenSHA256 string     `yaml:"token_sha256" json:"-"`
+	Roles       []string   `yaml:"roles" json:"roles"`
+	Tenant      string     `yaml:"tenant,omitempty" json:"tenant,omitempty"`
+	NotBefore   *time.Time `yaml:"not_before,omitempty" json:"not_before,omitempty"`
+	NotAfter    *time.Time `yaml:"not_after,omitempty" json:"not_after,omitempty"`
+	Revoked     bool       `yaml:"revoked,omitempty" json:"revoked,omitempty"`
+}
+
 type Policy struct {
 	Rules        []Rule       `yaml:"rules,omitempty" json:"rules,omitempty"`
 	Windows      calendar.Set `yaml:"maintenanceWindows,omitempty" json:"maintenance_windows,omitempty"`
@@ -124,6 +137,8 @@ type Policy struct {
 	Access []ontology.Rule `yaml:"access,omitempty" json:"access,omitempty"`
 	// Connectors are per-connector ingest credentials.
 	Connectors []Connector `yaml:"connectors,omitempty" json:"connectors,omitempty"`
+	// ServiceTokens are read and propose credentials for machine callers.
+	ServiceTokens []ServiceToken `yaml:"service_tokens,omitempty" json:"service_tokens,omitempty"`
 }
 
 // Effective is the merged policy for one proposal.
@@ -220,7 +235,45 @@ func (p *Policy) validate() error {
 			return err
 		}
 	}
+	for _, s := range p.ServiceTokens {
+		c, err := serviceCredential(s)
+		if err != nil {
+			return err
+		}
+		if err := c.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func serviceCredential(s ServiceToken) (auth.ServiceCredential, error) {
+	c := auth.ServiceCredential{Name: s.Name, TokenHash: s.TokenSHA256, Tenant: s.Tenant, Revoked: s.Revoked}
+	for _, r := range s.Roles {
+		role, err := auth.ParseRole(r)
+		if err != nil {
+			return c, fmt.Errorf("service %s: %w", s.Name, err)
+		}
+		c.Roles = append(c.Roles, role)
+	}
+	if s.NotBefore != nil {
+		c.NotBefore = *s.NotBefore
+	}
+	if s.NotAfter != nil {
+		c.NotAfter = *s.NotAfter
+	}
+	return c, nil
+}
+
+// ServiceCredentials returns the service tokens for the auth layer. The
+// policy was validated on load, so conversion errors cannot occur here.
+func (p *Policy) ServiceCredentials() []auth.ServiceCredential {
+	out := make([]auth.ServiceCredential, 0, len(p.ServiceTokens))
+	for _, s := range p.ServiceTokens {
+		c, _ := serviceCredential(s)
+		out = append(out, c)
+	}
+	return out
 }
 
 func (p *Policy) credential(c Connector) auth.IngestCredential {
