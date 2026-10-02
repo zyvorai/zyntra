@@ -208,3 +208,106 @@ func TestDetectionAndFalsePositiveRates(t *testing.T) {
 		t.Errorf("the correct edge was changed %d times", wrongEdge)
 	}
 }
+
+const actionModel = `
+name: t
+kpis:
+  - {id: wait, value: 100, target: 60, direction: lower}
+edges: []
+actions:
+  - id: restart
+    name: Restart
+    effects: [{kpi: wait, change: -0.2}]
+  - id: absolute
+    name: Absolute
+    effects: [{kpi: wait, change: -5, mode: absolute}]
+`
+
+// single builds a finished decision that ran one action, whose declared
+// direct effect was -0.2 but whose real effect was trueScale times that.
+func single(i int, action string, trueScale, noise float64) approvals.Proposal {
+	const base = 100.0
+	predRel, actualRel := -0.2, -0.2*trueScale+noise
+	return approvals.Proposal{
+		ID: string(rune('a' + i)), Status: approvals.Executed,
+		Baseline:  map[string]float64{"wait": base},
+		Predicted: approvals.Prediction{KPIs: map[string]float64{"wait": base * (1 + predRel)}},
+		Actual:    map[string]float64{"wait": base * (1 + actualRel)},
+		Outcome:   &outcome.Record{State: outcome.Verified},
+		Simulation: &sim.Result{Actions: []string{action}, Trace: []sim.Step{
+			{To: "wait", Delta: predRel, Text: action + " changes wait by -20% (direct effect)"},
+		}},
+	}
+}
+
+func singles(n int, action string, trueScale, noise float64) []approvals.Proposal {
+	rng := rand.New(rand.NewPCG(3, 4))
+	var ps []approvals.Proposal
+	for i := 0; i < n; i++ {
+		ps = append(ps, single(i, action, trueScale, noise*(rng.Float64()-0.5)))
+	}
+	return ps
+}
+
+func TestRecoversAWrongActionEffect(t *testing.T) {
+	m, err := graph.Parse([]byte(actionModel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := Analyze(m, singles(12, "restart", 1.5, 0.004), Options{})
+	if len(rep.ActionSuggestions) != 1 {
+		t.Fatalf("%+v", rep)
+	}
+	s := rep.ActionSuggestions[0]
+	if s.Action != "restart" || s.KPI != "wait" || s.Declared != -0.2 || s.Scale < 1.3 || s.Scale > 1.6 || math.Abs(s.Suggested+0.2*s.Scale) > 0.01 {
+		t.Fatalf("suggestion = %+v", s)
+	}
+	if !strings.Contains(s.YAML, "kpi: wait, change:") || !strings.Contains(s.YAML, "was -0.2") {
+		t.Errorf("yaml = %q", s.YAML)
+	}
+}
+
+func TestCorrectActionEffectAndNoiseGetNoSuggestion(t *testing.T) {
+	m, _ := graph.Parse([]byte(actionModel))
+	if rep := Analyze(m, singles(12, "restart", 1, 0.01), Options{}); len(rep.ActionSuggestions) != 0 {
+		t.Fatalf("a correct effect was 'fixed': %+v", rep.ActionSuggestions)
+	}
+	rng := rand.New(rand.NewPCG(5, 6))
+	var ps []approvals.Proposal
+	for i := 0; i < 20; i++ {
+		ps = append(ps, single(i, "restart", 1, (rng.Float64()-0.5)*0.3))
+	}
+	if rep := Analyze(m, ps, Options{}); len(rep.ActionSuggestions) != 0 {
+		t.Fatalf("noise produced a suggestion: %+v", rep.ActionSuggestions[0])
+	}
+}
+
+func TestBundlesAndAbsoluteEffectsAreNotUsedForActionEffects(t *testing.T) {
+	m, _ := graph.Parse([]byte(actionModel))
+	bundle := singles(12, "restart", 1.5, 0.004)
+	for i := range bundle {
+		bundle[i].Simulation.Actions = []string{"restart", "absolute"}
+	}
+	rep := Analyze(m, bundle, Options{})
+	if len(rep.ActionSuggestions) != 0 {
+		t.Fatalf("a bundle was used to correct one action: %+v", rep.ActionSuggestions)
+	}
+	if !strings.Contains(strings.Join(rep.Notes, " "), "several actions") {
+		t.Errorf("the report should say bundles were set aside: %v", rep.Notes)
+	}
+	abs := singles(12, "absolute", 1.5, 0.004)
+	for i := range abs {
+		abs[i].Simulation.Trace[0].Text = "absolute changes wait by -5 (direct effect, absolute)"
+	}
+	if rep := Analyze(m, abs, Options{}); len(rep.ActionSuggestions) != 0 {
+		t.Fatalf("an absolute effect was fitted as relative: %+v", rep.ActionSuggestions)
+	}
+}
+
+func TestActionEffectNeedsEnoughSingleDecisions(t *testing.T) {
+	m, _ := graph.Parse([]byte(actionModel))
+	rep := Analyze(m, singles(3, "restart", 1.5, 0), Options{})
+	if len(rep.ActionSuggestions) != 0 || !strings.Contains(strings.Join(rep.Notes, " "), "single-action") {
+		t.Fatalf("%+v", rep)
+	}
+}

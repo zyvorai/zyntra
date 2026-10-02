@@ -104,6 +104,10 @@ type Report struct {
 	Decisions   int          `json:"decisions"`
 	KPIs        []KPIFit     `json:"kpis"`
 	Suggestions []Suggestion `json:"suggestions"`
+	// ActionSuggestions correct an action's declared direct effect. They are
+	// learned only from decisions that ran a single action, because a bundle
+	// cannot say which of its actions moved a KPI.
+	ActionSuggestions []ActionSuggestion `json:"action_suggestions"`
 	// Notes say why nothing was suggested for a KPI that was examined.
 	Notes []string `json:"notes,omitempty"`
 	Note  string   `json:"note,omitempty"`
@@ -118,13 +122,19 @@ type sample struct {
 // Analyze backtests the model against finished, applied decisions.
 func Analyze(m *graph.Model, proposals []approvals.Proposal, opt Options) Report {
 	opt = opt.withDefaults()
-	rep := Report{GeneratedAt: time.Now().UTC(), KPIs: []KPIFit{}, Suggestions: []Suggestion{}}
+	rep := Report{GeneratedAt: time.Now().UTC(), KPIs: []KPIFit{}, Suggestions: []Suggestion{}, ActionSuggestions: []ActionSuggestion{}}
 	byKPI := map[string][]sample{}
+	byAction := map[[2]string][]actionSample{}
+	bundled := 0
 	for _, p := range proposals {
 		if !usable(p) {
 			continue
 		}
 		rep.Decisions++
+		single := len(p.Simulation.Actions) == 1
+		if len(p.Simulation.Actions) > 1 {
+			bundled++
+		}
 		for kpi, pred := range p.Predicted.KPIs {
 			base, hasBase := p.Baseline[kpi]
 			act, hasAct := p.Actual[kpi]
@@ -138,6 +148,12 @@ func Analyze(m *graph.Model, proposals []approvals.Proposal, opt Options) Report
 				}
 			}
 			byKPI[kpi] = append(byKPI[kpi], s)
+			if single {
+				if d, ok := directRelative(p.Simulation, kpi); ok {
+					key := [2]string{p.Simulation.Actions[0], kpi}
+					byAction[key] = append(byAction[key], actionSample{actualRel: s.actualRel, predRel: s.predRel, direct: d})
+				}
+			}
 		}
 	}
 	if rep.Decisions == 0 {
@@ -158,6 +174,27 @@ func Analyze(m *graph.Model, proposals []approvals.Proposal, opt Options) Report
 		} else if note != "" {
 			rep.Notes = append(rep.Notes, kpi+": "+note)
 		}
+	}
+	keys := make([][2]string, 0, len(byAction))
+	for k := range byAction {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i][0] != keys[j][0] {
+			return keys[i][0] < keys[j][0]
+		}
+		return keys[i][1] < keys[j][1]
+	})
+	for _, k := range keys {
+		sug, note := suggestAction(m, k[0], k[1], byAction[k], opt)
+		if sug != nil {
+			rep.ActionSuggestions = append(rep.ActionSuggestions, *sug)
+		} else if note != "" {
+			rep.Notes = append(rep.Notes, "action "+k[0]+" on "+k[1]+": "+note)
+		}
+	}
+	if bundled > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("%d decision(s) ran several actions together and are not used to correct an action's own effect; they still inform edge weights", bundled))
 	}
 	return rep
 }
