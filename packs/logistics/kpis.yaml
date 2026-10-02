@@ -1,0 +1,108 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Delivery performance against fleet capacity and dock congestion. The fixture/
+# files are a sample day; point the file sources at your TMS and yard exports
+# (see sources.example.yaml). Weights are starting points, not truth: edit them
+# as you learn, or run `zyntra calibrate` once changes have actually run.
+name: logistics-operations
+
+kpis:
+  - id: on_time_rate
+    name: On-time delivery rate
+    unitClass: ratio
+    owner: dispatch
+    value: 0
+    target: 0.95
+    direction: higher
+    criticality: critical
+    min: 0
+    max: 1
+    source: {kind: file, file: fixture/shipments.csv, field: "#(on_time=yes)", denominator: "#"}
+
+  - id: dock_wait_min
+    name: Dock wait
+    unit: min
+    unitClass: duration
+    owner: warehouse
+    value: 0
+    target: 30
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/docks.csv, field: "*.wait_min", agg: avg}
+
+  - id: vehicles_available
+    name: Vehicles available
+    unit: vehicles
+    owner: fleet
+    value: 0
+    target: 8
+    direction: higher
+    min: 0
+    source: {kind: file, file: fixture/vehicles.csv, field: "#(status=available)"}
+
+  - id: fleet_load
+    name: Peak vehicle load
+    unitClass: ratio
+    owner: fleet
+    value: 0
+    target: 0.8
+    direction: lower
+    min: 0
+    max: 1
+    source: {kind: file, file: fixture/vehicles.csv, field: "*.load_pct", agg: max}
+
+  - id: cost_per_shipment
+    name: Cost per shipment
+    currency: USD
+    owner: finance
+    value: 0
+    target: 42
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/shipments.csv, field: "*.cost", agg: avg}
+
+edges:
+  - {from: vehicles_available, to: on_time_rate, weight: 0.2, confidence: 0.4, why: more free vehicles means fewer late departures}
+  - {from: dock_wait_min, to: on_time_rate, weight: -0.15, confidence: 0.4, why: time lost at the dock is time lost on the route}
+  - {from: vehicles_available, to: cost_per_shipment, weight: 0.08, confidence: 0.5, why: spot vehicles cost more per trip}
+  - {from: vehicles_available, to: fleet_load, weight: -0.25, confidence: 0.5, why: spreading load over more vehicles lowers the peak}
+
+actions:
+  - id: add_spot_vehicles
+    title: Hire spot vehicles
+    description: Lease two spot vehicles for the day to clear the late-shipment backlog.
+    adapter: noop
+    risk: medium
+    invariants:
+      - {kpi: cost_per_shipment, max_worsen: 0.10, why: spot capacity must not blow the cost target}
+    effects:
+      - {kpi: vehicles_available, change: 0.4, uncertainty: 0.2}
+
+  - id: rebalance_docks
+    title: Rebalance dock assignments
+    description: Move inbound trucks from the congested east docks to the west hub.
+    adapter: noop
+    risk: low
+    effects:
+      - {kpi: dock_wait_min, change: -0.25, uncertainty: 0.3}
+
+  - id: reroute_late_shipments
+    title: Write a re-dispatch sheet for late shipments
+    description: Produce a dispatch sheet a planner works through; nothing is sent automatically.
+    adapter: file
+    risk: low
+    effects:
+      - {kpi: on_time_rate, change: 0.04, uncertainty: 0.4}
+    file:
+      path: "dispatch/{{.Stamp}}-redispatch.md"
+      content: |
+        # Re-dispatch late shipments
+
+        Raised by Zyntra on {{.Date}} at {{.Time}} after approval.
+
+        - On-time rate: {{pct (index .KPIs "on_time_rate").Value}} (target {{pct (index .KPIs "on_time_rate").Target}})
+        - Vehicles available: {{(index .KPIs "vehicles_available").Value}}
+        - Dock wait: {{(index .KPIs "dock_wait_min").Value}} min
+
+        Work the late shipments first, gold-tier customers before silver.

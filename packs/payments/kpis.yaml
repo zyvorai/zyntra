@@ -1,0 +1,87 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Approval rate, authorisation latency, settlement backlog and fraud-review load
+# for a payments processor. The fixture/ files are a sample hour; point the
+# file sources at your gateway and case-tool exports. Weights are starting
+# points, not truth.
+name: payments-operations
+
+kpis:
+  - id: approval_rate
+    name: Approval rate
+    unitClass: ratio
+    owner: ops
+    value: 0
+    target: 0.95
+    direction: higher
+    criticality: critical
+    min: 0
+    max: 1
+    source: {kind: file, file: fixture/transactions.csv, field: "#(status=approved)", denominator: "#"}
+
+  - id: auth_latency_ms
+    name: Authorisation latency
+    unit: ms
+    unitClass: duration
+    owner: platform
+    value: 0
+    target: 700
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/transactions.csv, field: "*.latency_ms", agg: avg}
+
+  - id: settlement_backlog
+    name: Settlement backlog
+    unit: txns
+    unitClass: count
+    owner: ops
+    value: 0
+    target: 600
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/settlement.csv, field: "*.queued", agg: sum}
+
+  - id: review_backlog
+    name: Open fraud reviews
+    unit: cases
+    unitClass: count
+    owner: risk
+    value: 0
+    target: 30
+    direction: lower
+    criticality: high
+    min: 0
+    source: {kind: file, file: fixture/reviews.csv, field: "#(state=open)"}
+
+edges:
+  - {from: auth_latency_ms, to: approval_rate, weight: -0.1, confidence: 0.4, why: slow authorisations time out and decline}
+  - {from: review_backlog, to: approval_rate, weight: -0.02, confidence: 0.6, why: held transactions are not approved}
+  - {from: settlement_backlog, to: auth_latency_ms, weight: 0.05, confidence: 0.6, why: a deep settlement queue shares the database with authorisation}
+
+actions:
+  - id: failover_to_backup_acquirer
+    title: Route a share of traffic to the backup acquirer
+    description: Shift 30 percent of authorisations to the standby acquirer to relieve latency.
+    adapter: noop
+    risk: high
+    invariants:
+      - {kpi: approval_rate, max_worsen: 0.02, why: a failover must not cost approvals}
+    effects:
+      - {kpi: auth_latency_ms, change: -0.3, uncertainty: 0.3}
+
+  - id: scale_settlement_workers
+    title: Scale out settlement workers
+    description: Add settlement workers to drain the queue.
+    adapter: noop
+    risk: low
+    effects:
+      - {kpi: settlement_backlog, change: -0.35, uncertainty: 0.25}
+
+  - id: add_review_capacity
+    title: Add fraud-review analysts for the shift
+    description: Bring in two analysts to clear the review queue.
+    adapter: noop
+    risk: low
+    effects:
+      - {kpi: review_backlog, change: -0.4, uncertainty: 0.3}

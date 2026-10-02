@@ -1,0 +1,79 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Which customers sit behind a late shipment and which vehicle or warehouse is
+# the constraint. Links say what depends on what; only kpis.yaml predicts.
+name: logistics-operations
+
+objects:
+  - name: Warehouse
+    kpis: [dock_wait_min]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: region, type: string}
+  - name: Vehicle
+    kpis: [vehicles_available]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: status, type: string}
+  - name: Shipment
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: status, type: string}
+  - name: Customer
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: tier, type: string}
+      - {name: contact, type: string, sensitive: true}
+
+links:
+  - {name: dispatched_from, from: Shipment, to: Warehouse}
+  - {name: carried_by, from: Shipment, to: Vehicle}
+  - {name: receives, from: Customer, to: Shipment, cardinality: many-to-many}
+
+mappings:
+  - {source: fixture/warehouses.csv, type: Warehouse, namespace: tms, key: warehouse_id, props: {name: name, region: region}}
+  - {source: fixture/vehicles.csv, type: Vehicle, namespace: tms, key: vehicle_id, props: {name: vehicle_id, status: status}}
+  - source: fixture/shipments.csv
+    type: Shipment
+    namespace: tms
+    key: shipment_id
+    props: {name: shipment_id, status: status}
+    links:
+      - {type: dispatched_from, column: warehouse_id, to: Warehouse}
+      - {type: carried_by, column: vehicle_id, to: Vehicle}
+  - source: fixture/customers.csv
+    type: Customer
+    namespace: crm
+    key: customer_id
+    props: {name: name, tier: tier, contact: contact}
+  - source: fixture/shipments.csv
+    type: Customer
+    namespace: crm
+    key: customer_id
+    props: {}
+    links: [{type: receives, column: shipment_id, to: Shipment, namespace: tms}]
+
+actions:
+  - id: add_spot_vehicles
+    inputs: [{name: warehouse, object_type: Warehouse, required: true}]
+    affects: [Shipment, Customer]
+    permissions: [approver]
+    outcome: [{object_type: Warehouse, must_be_safe: true}]
+  - id: rebalance_docks
+    inputs: [{name: warehouse, object_type: Warehouse, required: true}]
+    affects: [Warehouse]
+    outcome: [{object_type: Warehouse, must_be_safe: true}]
+
+views:
+  - {id: customers, title: Customers and delivery exposure, type: Customer, columns: [name, tier], exposed: true}
+  - {id: warehouses, title: Warehouses, type: Warehouse, columns: [name, region], actions: [add_spot_vehicles, rebalance_docks]}
+
+rollout:
+  stages:
+    - name: east-hub
+      sites: [wh-east]
+      gates:
+        - {kpi: dock_wait_min, max: 60}
+    - name: west-hub
+      sites: [wh-west]

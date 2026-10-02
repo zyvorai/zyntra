@@ -1,0 +1,5 @@
+customer_id,name,tier,contact
+c-1,Northwind Grocers,gold,dispatch@northwind.example
+c-2,Contoso Pharma,gold,ops@contoso.example
+c-3,Fabrikam Retail,silver,logistics@fabrikam.example
+c-4,Tailspin Foods,silver,ship@tailspin.example

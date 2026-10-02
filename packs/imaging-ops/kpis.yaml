@@ -1,0 +1,87 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Operational throughput of an imaging department: how long reports take and
+# how many exams are waiting. This is capacity and flow, not clinical decision
+# support: it never looks at findings, patients or diagnoses. The fixture/
+# files are a sample shift with no patient data; point the file sources at your
+# RIS and scanner-status exports. Weights are starting points, not truth.
+name: imaging-operations
+
+kpis:
+  - id: report_turnaround_h
+    name: Report turnaround
+    unit: h
+    unitClass: duration
+    owner: radiology-ops
+    value: 0
+    target: 24
+    direction: lower
+    criticality: high
+    min: 0
+    source: {kind: file, file: fixture/studies.csv, field: "*.turnaround_h", agg: avg}
+
+  - id: exams_waiting
+    name: Exams waiting for a report
+    unit: exams
+    unitClass: count
+    owner: radiology-ops
+    value: 0
+    target: 12
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/studies.csv, field: "#(state=waiting)"}
+
+  - id: scanners_down
+    name: Scanners out of service
+    unit: scanners
+    unitClass: count
+    owner: biomed
+    value: 0
+    target: 0
+    direction: lower
+    criticality: high
+    min: 0
+    source: {kind: file, file: fixture/scanners.csv, field: "#(status=down)"}
+
+  - id: stat_waiting
+    name: STAT exams waiting
+    unit: exams
+    unitClass: count
+    owner: radiology-ops
+    value: 0
+    target: 2
+    direction: lower
+    criticality: critical
+    min: 0
+    source: {kind: file, file: fixture/studies.csv, field: "#(priority=stat)", where: {state: waiting}}
+
+edges:
+  - {from: scanners_down, to: exams_waiting, weight: 0.5, confidence: 0.5, why: an idle scanner backs exams up behind the others}
+  - {from: exams_waiting, to: report_turnaround_h, weight: 0.4, confidence: 0.5, why: a longer worklist means a longer wait for each report}
+  - {from: exams_waiting, to: stat_waiting, weight: 0.3, confidence: 0.5, why: urgent exams queue with the rest unless prioritised}
+
+actions:
+  - id: add_reporting_shift
+    title: Add a reporting session
+    description: Schedule an extra reporting session for the backlog.
+    adapter: noop
+    risk: low
+    effects:
+      - {kpi: exams_waiting, change: -0.3, uncertainty: 0.3}
+
+  - id: prioritise_stat_worklist
+    title: Pin STAT exams to the top of the worklist
+    description: Ask the reporting system to sort STAT exams first.
+    adapter: noop
+    risk: low
+    effects:
+      - {kpi: stat_waiting, change: -0.5, uncertainty: 0.3}
+
+  - id: reroute_to_working_scanner
+    title: Divert new bookings from the scanner that is down
+    description: Move routine bookings to the working scanners until it is repaired.
+    adapter: noop
+    risk: medium
+    effects:
+      - {kpi: exams_waiting, change: -0.1, uncertainty: 0.4}

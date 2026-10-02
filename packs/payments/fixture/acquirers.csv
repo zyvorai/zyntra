@@ -1,0 +1,3 @@
+acquirer_id,name,region,status
+acq-a,Primary acquirer,eu,active
+acq-b,Backup acquirer,eu,standby

@@ -1,0 +1,13 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Replace the fixture files with your own exports (same columns). Dry-run never
+# needs any variable. Keep cardholder data out of these files: only ids,
+# statuses and timings are read.
+variables: []
+files:
+  - {path: fixture/transactions.csv, description: "Gateway export: txn_id, merchant_id, acquirer_id, status (approved|declined|error), latency_ms"}
+  - {path: fixture/settlement.csv, description: "Settlement queue: batch_id, acquirer_id, merchant_id, queued, age_min"}
+  - {path: fixture/reviews.csv, description: "Case tool: case_id, merchant_id, state (open|closed), age_min"}
+  - {path: fixture/acquirers.csv, description: "Acquirers: acquirer_id, name, region, status"}
+  - {path: fixture/merchants.csv, description: "Merchants: merchant_id, name, segment, contact"}
