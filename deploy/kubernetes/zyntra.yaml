@@ -122,6 +122,10 @@ spec:
               value: "local"
             - name: ZYNTRA_ADMIN_USER
               value: "admin"
+            - name: ZYNTRA_ONTOLOGY_STORE
+              value: "json"
+            - name: ZYNTRA_ONTOLOGY_MAX_OBJECTS
+              value: "1000000"
             - name: ZYNTRA_HOST
               valueFrom:
                 fieldRef:

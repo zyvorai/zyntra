@@ -32,7 +32,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "zyntra.serviceAccountName" . }}
-      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      automountServiceAccountToken: {{ or .Values.serviceAccount.automount .Values.kubernetes.inCluster }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -65,6 +65,14 @@ spec:
               value: {{ .Values.approvalMode | quote }}
             - name: ZYNTRA_ADMIN_USER
               value: {{ .Values.auth.adminUser | default "admin" | quote }}
+            - name: ZYNTRA_ONTOLOGY_STORE
+              value: {{ .Values.ontology.store | default "json" | quote }}
+            - name: ZYNTRA_ONTOLOGY_MAX_OBJECTS
+              value: {{ printf "%d" (int64 (.Values.ontology.maxObjects | default 0)) | quote }}
+            {{- if .Values.connectors.exec }}
+            - name: ZYNTRA_CONNECTOR_EXEC
+              value: "1"
+            {{- end }}
             - name: ZYNTRA_HOST
               valueFrom:
                 fieldRef:

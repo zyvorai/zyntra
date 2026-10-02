@@ -25,6 +25,10 @@ services:
       ZYNTRA_SESSION_SECRET: ${ZYNTRA_SESSION_SECRET:-}
       ZYNTRA_ADMIN_PASSWORD: ${ZYNTRA_ADMIN_PASSWORD:-}
       ZYNTRA_INGEST_TOKEN: ${ZYNTRA_INGEST_TOKEN:-}
+      ZYNTRA_DEPLOY_TOKEN: ${ZYNTRA_DEPLOY_TOKEN:-}
+      # json (default) or sqlite; objects live in memory (~1.4 KB each), capped here.
+      ZYNTRA_ONTOLOGY_STORE: ${ZYNTRA_ONTOLOGY_STORE:-json}
+      ZYNTRA_ONTOLOGY_MAX_OBJECTS: ${ZYNTRA_ONTOLOGY_MAX_OBJECTS:-1000000}
       ZYNTRA_EXECUTE: ${ZYNTRA_EXECUTE:-dry-run}
       ZYNTRA_POS_URL: http://receiver:9099/pos
       ZYNTRA_ERP_URL: http://receiver:9099/erp

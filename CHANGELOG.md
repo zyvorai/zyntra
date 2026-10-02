@@ -6,6 +6,12 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 
 ### Added
 
+- **In-cluster Kubernetes client.** Kubernetes connectors read the pod's own cluster through its service account with no `kubectl` (the image has none); a fixed resource table, never secrets (refused in every mode, including kubectl). Helm `kubernetes.inCluster=true` adds a read-only ClusterRole (get/list on the listed resources only) and mounts the token; off by default. Verified on a real k3s cluster with a nodes-only service account.
+- **Deploy artifacts.** Helm values and compose pass `ZYNTRA_ONTOLOGY_STORE`, `ZYNTRA_ONTOLOGY_MAX_OBJECTS`, `ZYNTRA_DEPLOY_TOKEN` and the exec-connector switch; the plain manifest is regenerated.
+
+### Fixed
+
+- The Helm default for the object cap rendered as `1e+06`, which the server would have rejected at start (Helm numbers are floats); the template now formats an integer and the server also accepts an integral value in scientific notation.
 - **Indexed risk summary.** An index of objects measured by a KPI (by type or by a per-object `kpis` property) means the risk summary, workflow exposure and the assistant's exposure answers no longer list the whole store: 150,000 objects with 20 bound take about 20 microseconds. Verified equal to a full scan across tenants, overrides, deletions, reopen and identity merges. The assistant's object-name lookup now pages and stops early instead of listing and sorting everything.
 - **Paged object listing.** `GET /api/v1/ontology/objects` takes `limit` (default 200, max 1,000) and `after` (cursor) and returns `next`; the sorted-id order is cached until objects are added or removed, access filtering is applied per page, and the console pages with Load more. Workflow views are capped at 500 rows with flagged rows first and a total.
 - **Memory bounds.** `ZYNTRA_ONTOLOGY_MAX_OBJECTS` (default 1,000,000) refuses an over-limit batch whole with a clear error; `GET /api/v1/ontology/stats` and a capacity line on the Objects page with a warning from 80%. Measured cost: about 1.4 KB per object.

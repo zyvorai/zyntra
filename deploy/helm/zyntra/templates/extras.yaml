@@ -10,7 +10,7 @@ metadata:
   name: {{ include "zyntra.serviceAccountName" . }}
   labels:
     {{- include "zyntra.labels" . | nindent 4 }}
-automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+automountServiceAccountToken: {{ or .Values.serviceAccount.automount .Values.kubernetes.inCluster }}
 {{- end }}
 {{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
 ---
@@ -95,4 +95,45 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}
+
+{{- if .Values.kubernetes.inCluster }}
+---
+# Read-only access for Kubernetes connectors: get and list only, on exactly
+# the resources listed in kubernetes.resources. Secrets are never granted.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-reader
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+rules:
+  {{- $core := list "nodes" "pods" "namespaces" "services" "endpoints" "configmaps" "persistentvolumeclaims" "persistentvolumes" "serviceaccounts" "events" }}
+  {{- $apps := list "deployments" "statefulsets" "daemonsets" "replicasets" }}
+  {{- $batch := list "jobs" "cronjobs" }}
+  {{- $net := list "ingresses" "networkpolicies" }}
+  {{- range $group, $names := dict "" $core "apps" $apps "batch" $batch "networking.k8s.io" $net }}
+  {{- $want := list }}
+  {{- range $n := $names }}{{ if has $n $.Values.kubernetes.resources }}{{ $want = append $want $n }}{{ end }}{{ end }}
+  {{- if $want }}
+  - apiGroups: [{{ $group | quote }}]
+    resources: [{{ join ", " $want }}]
+    verbs: [get, list]
+  {{- end }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-reader
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "zyntra.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 {{- end }}

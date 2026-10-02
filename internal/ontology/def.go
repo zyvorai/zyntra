@@ -327,6 +327,9 @@ func (d *Definition) Validate() error {
 			if len(c.Fields) == 0 || c.Mapping == nil {
 				errs = append(errs, fmt.Errorf("%s: kubernetes needs fields and a mapping", label))
 			}
+			if strings.EqualFold(c.Resource, "secrets") {
+				errs = append(errs, fmt.Errorf("%s: a connector may not read secrets", label))
+			}
 			for _, sel := range []string{c.K8sSelector, c.K8sFieldSelector} {
 				if !selectorText.MatchString(sel) {
 					errs = append(errs, fmt.Errorf("%s: selector %q has characters a kubernetes selector never uses", label, sel))
