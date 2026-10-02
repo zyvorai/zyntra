@@ -471,7 +471,7 @@ type simulateRequest struct {
 func resolveActions(m *graph.Model, ids ...string) ([]graph.Action, error) {
 	var out []graph.Action
 	for _, id := range ids {
-		for _, part := range strings.Split(id, "+") {
+		for part := range strings.SplitSeq(id, "+") {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
@@ -654,11 +654,9 @@ func (s *Server) mirror(id string) {
 	if s.opt.Keep == nil {
 		return
 	}
-	s.bg.Add(1)
-	go func() {
-		defer s.bg.Done()
+	s.bg.Go(func() {
 		s.mirrorNow(id)
-	}()
+	})
 }
 
 func (s *Server) mirrorNow(id string) {

@@ -240,7 +240,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 			return err
 		}
 		var acts []graph.Action
-		for _, id := range strings.Split(*action, "+") {
+		for id := range strings.SplitSeq(*action, "+") {
 			a, ok := m.Action(strings.TrimSpace(id))
 			if !ok {
 				return fmt.Errorf("unknown action %q", id)
@@ -663,7 +663,7 @@ func printDryRun(w io.Writer, m *graph.Model, acts []graph.Action) {
 			fmt.Fprintf(w, "  cannot render: %v\n", err)
 			continue
 		}
-		for _, line := range strings.Split(strings.TrimRight(rd.Display, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(rd.Display, "\n"), "\n") {
 			fmt.Fprintln(w, "  "+line)
 		}
 		if a.Compensate != "" {

@@ -55,7 +55,7 @@ func ParseRoleMap(s string) (map[string][]Role, error) {
 		if !ok || strings.TrimSpace(g) == "" {
 			return nil, fmt.Errorf("role map entry %q must be group=role", item)
 		}
-		for _, r := range strings.Split(rs, "+") {
+		for r := range strings.SplitSeq(rs, "+") {
 			role, err := ParseRole(r)
 			if err != nil {
 				return nil, err

@@ -384,8 +384,7 @@ func (r *run) fetch(ctx context.Context, u string, s graph.Source) (any, error) 
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		var ue *url.Error
-		if errors.As(err, &ue) {
+		if ue, ok := errors.AsType[*url.Error](err); ok {
 			err = ue.Err
 		}
 		return nil, fmt.Errorf("GET %s: %w", req.URL.Host, err)

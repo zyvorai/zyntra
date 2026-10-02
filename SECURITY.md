@@ -1,6 +1,6 @@
 # Security policy
 
-Zyntra reads infrastructure metrics and cluster inventory, and with approval it changes Gravia scheduling objects. KPI models, decision records and snapshots describe the capacity, cost and weak points of your environment, so treat them as confidential infrastructure data.
+Zyntra reads infrastructure metrics, cluster inventory and, through packs, business exports and APIs. With approval it changes Gravia scheduling objects, sends webhooks or writes files. KPI models, decision records and snapshots describe the capacity, cost and weak points of your environment, so treat them as confidential infrastructure data.
 
 ## Safe deployment defaults
 
@@ -14,6 +14,9 @@ Zyntra reads infrastructure metrics and cluster inventory, and with approval it 
 - **Re-checks before execution.** An approved proposal is re-simulated on fresh data right before it runs. Stale required inputs, constraint breaches, drift past `maxDrift`, a changed model, an expired approval or a closed maintenance window block it, and the reason is recorded.
 - **Tamper evidence.** The audit log in `$ZYNTRA_STATE_DIR/approvals.json` is hash-chained; `GET /api/v1/audit/verify` reports the first altered or missing entry. Exports are signed with an Ed25519 key in `$ZYNTRA_STATE_DIR/decision-signing.key` (0600). Back up the state directory and protect it with file permissions; the chain detects edits but does not prevent someone with write access from deleting the whole file.
 - **Least privilege for adapters and execution.** Give the Prometheus and Kubernetes adapters read-only credentials; the Kubernetes adapter only runs `kubectl get nodes`. The execution kubeconfig needs only the Gravia CRDs Zyntra manages (`gryviapriorities`, `gryviagpusharingpolicies`, and `patch` on `gryviaaijobs`). Rollbacks delete only objects labelled `app.kubernetes.io/managed-by=zyntra`.
+- **Packs are code-adjacent.** A pack decides which URLs Zyntra calls and which files it writes, so review packs like configuration with production access. Only `${ZYNTRA_*}` variables are expanded in source and webhook URLs and headers, Zyntra's own credentials (`ZYNTRA_API_KEY`, `ZYNTRA_SESSION_SECRET`, exec, ingest, Keep, OIDC and AI secrets) never are, and rendered proposals show the `${...}` reference rather than its value. Error messages omit URLs so tokens in query strings do not leak.
+- **Webhook and file actions.** Webhooks are sent only on apply, with an `Idempotency-Key` equal to the proposal id; the status code and a sha256 of the response are recorded. File actions write only inside `ZYNTRA_OUTPUT_DIR` (default `$ZYNTRA_STATE_DIR/out`), refuse absolute paths and `..`, and never overwrite an existing file.
+- **Ingest token.** `ZYNTRA_INGEST_TOKEN` can only POST to `/api/v1/ingest/<channel>` for channels a KPI reads. Give each gateway this token, never the access key. Manual KPI values need the proposer role and are written to the audit chain.
 - Terminate TLS at a trusted ingress or reverse proxy. The Keep exec listener uses its own loopback TLS certificate and a separate exec token that can only call the execution endpoint.
 - The server limits request bodies to 1 MiB.
 

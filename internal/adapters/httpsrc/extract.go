@@ -326,7 +326,7 @@ func Values(v any, path string) ([]float64, error) {
 }
 
 func descend(v any, path string) (any, error) {
-	for _, p := range strings.Split(path, ".") {
+	for p := range strings.SplitSeq(path, ".") {
 		switch t := v.(type) {
 		case map[string]any:
 			next, ok := t[p]

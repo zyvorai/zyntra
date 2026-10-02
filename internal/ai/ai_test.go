@@ -51,7 +51,7 @@ func TestAnomaly(t *testing.T) {
 	m := load(t)
 	h := NewHistory(100)
 	t0 := time.Unix(0, 0)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		m.KPIs[2].Value = 100 + float64(i%2)
 		h.Record(m, t0.Add(time.Duration(i)*time.Minute))
 	}
@@ -70,7 +70,7 @@ func TestForecast(t *testing.T) {
 	m := load(t)
 	h := NewHistory(100)
 	t0 := time.Unix(0, 0)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		m.KPIs[2].Value = 90 + float64(i)*10 // +10 per hour, ends at 140 toward 150
 		h.Record(m, t0.Add(time.Duration(i)*time.Hour))
 	}

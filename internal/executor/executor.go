@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -102,9 +103,7 @@ func Rollback(a graph.Action) (*graph.Execute, bool) {
 		return nil, false
 	}
 	p := map[string]string{}
-	for k, v := range a.Execute.Params {
-		p[k] = v
-	}
+	maps.Copy(p, a.Execute.Params)
 	switch a.Execute.Template {
 	case "gravia.priority":
 		return &graph.Execute{Template: "gravia.priority-delete", Params: map[string]string{"name": p["name"]}}, true

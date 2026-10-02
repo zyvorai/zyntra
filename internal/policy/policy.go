@@ -69,7 +69,7 @@ func in(list []string, v string) bool {
 // values alone; later rules override earlier ones.
 type Rule struct {
 	Name  string `yaml:"name,omitempty" json:"name,omitempty"`
-	Match Match  `yaml:"match,omitempty" json:"match,omitempty"`
+	Match Match  `yaml:"match,omitempty" json:"match"`
 	// Approvals is how many distinct approvers are needed.
 	Approvals int `yaml:"approvals,omitempty" json:"approvals,omitempty"`
 	// DistinctFromProposer forbids the proposer from approving.

@@ -13,7 +13,7 @@ This plan removes that ceiling. Infrastructure stays pack zero because its signa
 - Dry-run by default. Predicted versus actual is recorded on every execution.
 - Single binary, on-prem, air-gap friendly. Packs are files. No SaaS dependency to get a plan.
 
-Status markers below: **v0.3** shipped in the decision engine release, **A** shipped in Phase A (this branch, v0.4.0 unreleased), **open** not built yet.
+Status markers below: **v0.3** shipped in the decision engine release, **A** shipped in Phase A (v0.4.0-dev, deployed to the lab host on 2026-10-02), **open** not built yet.
 
 ## 1. What already exists
 
@@ -57,11 +57,11 @@ Open: move the lab GPU model to `packs/gpu` (Phase C).
 | --- | --- | --- |
 | `file` | CSV, JSON, YAML or Prometheus text on disk; reloads when mtime or size changes | Tally export, meter dump, lab file |
 | `http` | GET JSON or Prometheus text; field paths as before | POS, billing, any REST API |
-| `webhook-in` | JSON POSTed to `/api/v1/ingest/<channel>` with the ingest token; last document wins; stale after `stale_after` | UPI callback, SCADA gateway, alert |
+| `webhook-in` | JSON POSTed to `/api/v1/ingest/<channel>` with the ingest token; last document wins; stale after `staleAfter` | UPI callback, SCADA gateway, alert |
 | `sheet` | CSV over HTTP, same parser as `file` | Published Google Sheet, ERP export |
 | `manual` | A value an operator enters in the console; every entry is audited | A count you cannot instrument yet |
 
-Rows can be filtered (`where`), aggregated (`sum`, `avg`, `min`, `max`, `count`, `first`, `last`) and divided by a second aggregate (`denominator`), so "share of SKUs at zero stock" is one source line. Only `${ZYNTRA_*}` variables are expanded in URLs and headers, and URLs are stripped from error messages so tokens do not leak.
+Rows can be filtered (`where`), aggregated (`sum`, `avg`, `min`, `max`, `count`, `first`, `last`) and divided by a second aggregate (`denominator`), so "share of SKUs at zero stock" is one source line. Only `${ZYNTRA_*}` variables are expanded in URLs and headers, Zyntra's own credentials (access key, session secret, exec, ingest, Keep, OIDC and AI secrets) never are, and URLs are stripped from error messages so tokens do not leak.
 
 Existing kinds stay: prometheus, kubernetes, metrics, json, netra, gravia, fabric, keep.
 
@@ -223,6 +223,10 @@ Pricing stays the existing production license, by clusters and KPI graphs (see [
 - [ ] The shop fixture and the GPU lab fixture both pass CI. (Shop passes; GPU waits on the move to `packs/gpu`.)
 - [x] Someone who has never read the infra README can point `-f` at a CSV and get a ranked action with a why-trace.
 - [x] Apply does nothing until that person approves.
+
+## Status on the lab host
+
+v0.4.0-dev runs on the reference lab (212.8.248.187) with the GPU lab model and live Netra, Gravia, Fabric and Keep sources; the remote smoke test proposes, approves and dry-runs a Gravia change end to end. The deploy script does not ship `packs/` yet.
 
 ## Known limits
 

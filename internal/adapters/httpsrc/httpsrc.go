@@ -100,7 +100,7 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, co
 		}
 		payload = b
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		var tok string
 		if withAuth {
 			var err error

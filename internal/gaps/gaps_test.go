@@ -10,7 +10,8 @@ import (
 	"github.com/zyvorai/zyntra/internal/graph"
 )
 
-func f(v float64) *float64 { return &v }
+//go:fix inline
+func f(v float64) *float64 { return new(v) }
 
 func TestSeverity(t *testing.T) {
 	cases := []struct {
