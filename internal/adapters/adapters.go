@@ -77,32 +77,55 @@ type Status struct {
 	CheckedAt time.Time `json:"checked_at"`
 }
 
+// KPIUpdate is what happened to one live KPI during a refresh.
+type KPIUpdate struct {
+	// OK means the value was updated from its source.
+	OK bool `json:"ok"`
+	// Warming means the source answered but a rate needs a second sample.
+	Warming bool   `json:"warming,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// Report is the outcome of one refresh.
+type Report struct {
+	Sources []Status             `json:"sources"`
+	KPIs    map[string]KPIUpdate `json:"kpis"`
+}
+
 // Refresh updates every KPI that has a source the config can serve. KPIs with
-// unavailable sources keep their previous value. It returns per-source health
-// (sorted by name) and the joined errors.
-func Refresh(ctx context.Context, m *graph.Model, cfg Config) ([]Status, error) {
+// unavailable sources keep their previous value; Report.KPIs says which ones
+// were actually updated so callers can track freshness. Sources are sorted
+// by name; the error joins per-KPI failures.
+func Refresh(ctx context.Context, m *graph.Model, cfg Config) (Report, error) {
 	r := &run{cfg: cfg, status: map[string]*Status{}, scrapes: map[string]scrape{}, docs: map[string]doc{}}
+	rep := Report{KPIs: map[string]KPIUpdate{}}
 	var errs []error
+	fail := func(id string, err error) {
+		errs = append(errs, fmt.Errorf("kpi %s: %w", id, err))
+		rep.KPIs[id] = KPIUpdate{Error: err.Error()}
+	}
 	for i := range m.KPIs {
 		k := &m.KPIs[i]
-		if k.Source == nil || k.Source.Kind == "" {
+		if !k.Live() {
 			continue
 		}
 		v, served, err := r.value(ctx, *k.Source)
 		if !served {
+			rep.KPIs[k.ID] = KPIUpdate{Error: "source " + sourceName(*k.Source) + " is not configured"}
 			continue
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("kpi %s: %w", k.ID, err))
+			fail(k.ID, err)
 			continue
 		}
 		if k.Source.Rate {
 			if cfg.Rates == nil {
-				errs = append(errs, fmt.Errorf("kpi %s: rate source without a rate tracker", k.ID))
+				fail(k.ID, errors.New("rate source without a rate tracker"))
 				continue
 			}
 			rate, ok := cfg.Rates.Observe(k.ID, v)
 			if !ok {
+				rep.KPIs[k.ID] = KPIUpdate{Warming: true}
 				continue
 			}
 			v = rate
@@ -111,6 +134,7 @@ func Refresh(ctx context.Context, m *graph.Model, cfg Config) ([]Status, error) 
 			v *= k.Source.Scale
 		}
 		k.Value = v
+		rep.KPIs[k.ID] = KPIUpdate{OK: true}
 	}
 	for i := range m.KPIs {
 		k := m.KPIs[i]
@@ -126,7 +150,8 @@ func Refresh(ctx context.Context, m *graph.Model, cfg Config) ([]Status, error) 
 		out = append(out, *s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, errors.Join(errs...)
+	rep.Sources = out
+	return rep, errors.Join(errs...)
 }
 
 type scrape struct {

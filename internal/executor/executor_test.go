@@ -88,3 +88,32 @@ func TestExecuteModes(t *testing.T) {
 		t.Fatal("ParseMode accepted junk")
 	}
 }
+
+func TestRollback(t *testing.T) {
+	cases := map[string]struct {
+		a    graph.Action
+		want string
+	}{
+		"priority": {act("gravia.priority", map[string]string{"name": "inference-high", "value": "1000"}), "delete gryviapriorities.gryvia.io inference-high -l app.kubernetes.io/managed-by=zyntra --ignore-not-found"},
+		"sharing":  {act("gravia.gpu-sharing", map[string]string{"name": "mig-a100", "profile": "all-1g.10gb"}), "delete gryviagpusharingpolicies.gryvia.io mig-a100"},
+		"suspend":  {act("gravia.job-suspend", map[string]string{"job": "train", "namespace": "ml"}), `{"spec":{"suspend":false}}`},
+		"resume":   {act("gravia.job-suspend", map[string]string{"job": "train", "namespace": "ml", "suspend": "false"}), `{"spec":{"suspend":true}}`},
+	}
+	for n, c := range cases {
+		r, err := RenderRollback(c.a)
+		if err != nil {
+			t.Fatalf("%s: %v", n, err)
+		}
+		if got := strings.Join(r.Args, " "); !strings.Contains(got, c.want) {
+			t.Errorf("%s: args %q want %q", n, got, c.want)
+		}
+	}
+	explicit := act("gravia.priority", map[string]string{"name": "x", "value": "1"})
+	explicit.Rollback = &graph.Execute{Template: "gravia.priority", Params: map[string]string{"name": "x", "value": "0"}}
+	if r, err := RenderRollback(explicit); err != nil || !strings.Contains(r.Stdin, "value: 0") {
+		t.Fatalf("explicit rollback %v %+v", err, r)
+	}
+	if _, err := RenderRollback(graph.Action{ID: "advisory"}); err == nil {
+		t.Fatal("advisory action has no rollback")
+	}
+}

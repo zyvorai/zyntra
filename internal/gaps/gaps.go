@@ -78,3 +78,17 @@ func Total(m *graph.Model, values map[string]float64) float64 {
 	}
 	return sum
 }
+
+// WeightedTotal is Total with each KPI's severity multiplied by its
+// criticality weight (critical 4, high 2, normal 1, low 0.5).
+func WeightedTotal(m *graph.Model, values map[string]float64) float64 {
+	var sum float64
+	for _, k := range m.KPIs {
+		v, ok := values[k.ID]
+		if !ok {
+			v = k.Value
+		}
+		sum += Severity(k, v) * k.Weight()
+	}
+	return sum
+}

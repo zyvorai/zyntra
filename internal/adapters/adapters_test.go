@@ -65,11 +65,41 @@ kpis:
 		t.Fatal(err)
 	}
 	cfg := Config{Kubernetes: func(context.Context) ([]byte, error) { return []byte(nodesJSON), nil }}
-	if _, err := Refresh(context.Background(), m, cfg); err == nil {
+	rep, err := Refresh(context.Background(), m, cfg)
+	if err == nil {
 		t.Fatal("expected error for missing metric")
 	}
 	if k, _ := m.KPI("x"); k.Value != 3 {
 		t.Fatal("value should be unchanged on error")
+	}
+	if u := rep.KPIs["x"]; u.OK || u.Error == "" {
+		t.Fatalf("kpi report %+v", u)
+	}
+}
+
+func TestRefreshReportsPerKPI(t *testing.T) {
+	m, err := graph.Parse([]byte(`
+kpis:
+  - {id: ready, value: 1, source: {kind: kubernetes, metric: nodes_ready}}
+  - {id: lat, value: 1, source: {kind: prometheus, query: q}}
+  - {id: static, value: 7}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Kubernetes: func(context.Context) ([]byte, error) { return []byte(nodesJSON), nil }}
+	rep, err := Refresh(context.Background(), m, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.KPIs["ready"].OK {
+		t.Fatalf("ready %+v", rep.KPIs["ready"])
+	}
+	if u := rep.KPIs["lat"]; u.OK || u.Error == "" {
+		t.Fatalf("unconfigured prometheus should be reported: %+v", u)
+	}
+	if _, ok := rep.KPIs["static"]; ok {
+		t.Fatal("static kpi should not be reported")
 	}
 }
 
@@ -143,10 +173,11 @@ kpis:
 		"netra":  httpsrc.New("netra", netra.URL, false).WithBearer("nk"),
 		"fabric": fc,
 	}}
-	status, err := Refresh(context.Background(), m, cfg)
+	rep, err := Refresh(context.Background(), m, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	status := rep.Sources
 	want := map[string]float64{"dns": 5, "stale": 0, "attached": 1, "vms_running": 2, "pct": 30, "gone": 4}
 	for id, v := range want {
 		if k, _ := m.KPI(id); k.Value != v {
@@ -164,7 +195,8 @@ kpis:
 	}
 
 	cfg.Endpoints["netra"] = httpsrc.New("netra", netra.URL, false).WithBearer("wrong")
-	status, err = Refresh(context.Background(), m, cfg)
+	rep, err = Refresh(context.Background(), m, cfg)
+	status = rep.Sources
 	if err == nil || status[1].OK || status[1].Error == "" {
 		t.Fatalf("expected netra failure, status=%+v err=%v", status, err)
 	}

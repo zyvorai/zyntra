@@ -74,7 +74,51 @@ const managedBy = `    app.kubernetes.io/managed-by: zyntra
 `
 
 // Templates lists supported template names.
-var Templates = []string{"gravia.priority", "gravia.gpu-sharing", "gravia.job-suspend"}
+var Templates = []string{"gravia.priority", "gravia.gpu-sharing", "gravia.job-suspend", "gravia.priority-delete", "gravia.gpu-sharing-delete"}
+
+// Rollback returns the execute block that undoes a: the action's own
+// rollback block when it has one, otherwise the inverse of its template.
+func Rollback(a graph.Action) (*graph.Execute, bool) {
+	if a.Rollback != nil {
+		r := *a.Rollback
+		return &r, true
+	}
+	if a.Execute == nil {
+		return nil, false
+	}
+	p := map[string]string{}
+	for k, v := range a.Execute.Params {
+		p[k] = v
+	}
+	switch a.Execute.Template {
+	case "gravia.priority":
+		return &graph.Execute{Template: "gravia.priority-delete", Params: map[string]string{"name": p["name"]}}, true
+	case "gravia.gpu-sharing":
+		return &graph.Execute{Template: "gravia.gpu-sharing-delete", Params: map[string]string{"name": p["name"]}}, true
+	case "gravia.job-suspend":
+		p["suspend"] = map[bool]string{true: "true", false: "false"}[p["suspend"] == "false"]
+		return &graph.Execute{Template: "gravia.job-suspend", Params: p}, true
+	}
+	return nil, false
+}
+
+// RollbackAction returns a synthetic action that undoes a.
+func RollbackAction(a graph.Action) (graph.Action, bool) {
+	ex, ok := Rollback(a)
+	if !ok {
+		return graph.Action{}, false
+	}
+	return graph.Action{ID: a.ID + ".rollback", Name: "Roll back: " + a.Name, Risk: a.Risk, Adapter: a.Adapter, Execute: ex}, true
+}
+
+// RenderRollback renders the command that undoes a.
+func RenderRollback(a graph.Action) (Rendered, error) {
+	ra, ok := RollbackAction(a)
+	if !ok {
+		return Rendered{}, fmt.Errorf("action %q has no rollback", a.ID)
+	}
+	return Render(ra)
+}
 
 // Render turns an action into a kubectl invocation.
 func Render(a graph.Action) (Rendered, error) {
@@ -161,6 +205,17 @@ func Render(a graph.Action) (Rendered, error) {
 		patch := fmt.Sprintf(`{"spec":{"suspend":%t}}`, suspend)
 		r.Args = []string{"patch", "gryviaaijobs.gryvia.io", job, "-n", ns, "--type", "merge", "-p", patch}
 		r.Display = fmt.Sprintf("# kubectl patch gryviaaijob %s -n %s --type merge\n%s\n", job, ns, patch)
+	case "gravia.priority-delete", "gravia.gpu-sharing-delete":
+		if err := need(p, "name"); err != nil {
+			return r, err
+		}
+		n, err := name(p, "name")
+		if err != nil {
+			return r, err
+		}
+		kind := map[string]string{"gravia.priority-delete": "gryviapriorities.gryvia.io", "gravia.gpu-sharing-delete": "gryviagpusharingpolicies.gryvia.io"}[a.Execute.Template]
+		r.Args = []string{"delete", kind, n, "-l", "app.kubernetes.io/managed-by=zyntra", "--ignore-not-found"}
+		r.Display = fmt.Sprintf("# kubectl delete %s %s (only if managed by zyntra)\n", kind, n)
 	default:
 		return r, fmt.Errorf("unknown execute template %q (supported: %s)", a.Execute.Template, strings.Join(Templates, ", "))
 	}

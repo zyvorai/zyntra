@@ -20,6 +20,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
 	"github.com/zyvorai/zyntra/internal/executor"
+	"github.com/zyvorai/zyntra/internal/freshness"
 	"github.com/zyvorai/zyntra/internal/graph"
 )
 
@@ -404,9 +405,9 @@ func TestEventsStream(t *testing.T) {
 
 func TestRefreshUpdatesModelAndSources(t *testing.T) {
 	m, _ := graph.Parse([]byte(`kpis: [{id: a, value: 1}]`))
-	s := New(Options{Model: m, Interval: time.Hour, Refresh: func(_ context.Context, m *graph.Model) ([]adapters.Status, error) {
+	s := New(Options{Model: m, Interval: time.Hour, Refresh: func(_ context.Context, m *graph.Model) (adapters.Report, error) {
 		m.KPIs[0].Value = 42
-		return []adapters.Status{{Name: "netra", Kind: "metrics", OK: true, KPIs: []string{"a"}}}, nil
+		return adapters.Report{Sources: []adapters.Status{{Name: "netra", Kind: "metrics", OK: true, KPIs: []string{"a"}}}}, nil
 	}})
 	s.RefreshOnce(context.Background())
 	got, _ := s.snapshot()
@@ -415,5 +416,34 @@ func TestRefreshUpdatesModelAndSources(t *testing.T) {
 	}
 	if src := s.sourceStatus(); len(src) != 1 || src[0].Name != "netra" {
 		t.Fatalf("sources %+v", src)
+	}
+}
+
+func TestFreshnessEndpoint(t *testing.T) {
+	m, _ := graph.Parse([]byte(`
+kpis:
+  - {id: a, value: 1, source: {kind: prometheus, query: q}}
+  - {id: b, value: 1, source: {kind: prometheus, query: q}}
+  - {id: c, value: 1}
+`))
+	s := New(Options{Model: m, Interval: time.Hour, Refresh: func(_ context.Context, m *graph.Model) (adapters.Report, error) {
+		return adapters.Report{KPIs: map[string]adapters.KPIUpdate{"a": {OK: true}, "b": {Error: "down"}}}, nil
+	}})
+	s.RefreshOnce(context.Background())
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/freshness", nil))
+	var out struct {
+		KPIs     []freshness.State `json:"kpis"`
+		Unusable []string          `json:"unusable"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	idx := freshness.Index(out.KPIs)
+	if idx["a"].Status != freshness.Fresh || idx["b"].Status != freshness.Missing || idx["b"].LastError != "down" || idx["c"].Status != freshness.Static {
+		t.Fatalf("freshness %+v", out.KPIs)
+	}
+	if len(out.Unusable) != 1 || out.Unusable[0] != "b" {
+		t.Fatalf("unusable %v", out.Unusable)
 	}
 }

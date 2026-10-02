@@ -222,7 +222,15 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		r, err := sim.Simulate(m, *action)
+		var acts []graph.Action
+		for _, id := range strings.Split(*action, "+") {
+			a, ok := m.Action(strings.TrimSpace(id))
+			if !ok {
+				return fmt.Errorf("unknown action %q", id)
+			}
+			acts = append(acts, *a)
+		}
+		r, err := sim.ApplyPlan(m, acts, sim.Options{})
 		if err != nil {
 			return err
 		}
@@ -238,14 +246,14 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		recs, err := planner.Plan(m)
+		res, err := planner.PlanWith(m, planner.Options{})
 		if err != nil {
 			return err
 		}
 		if c.output == "json" {
-			return emit(out, recs)
+			return emit(out, res)
 		}
-		printPlan(out, recs)
+		printPlan(out, res)
 	case "serve":
 		addr := fs.String("addr", env("ZYNTRA_LISTEN", ":8080"), "listen address")
 		interval := fs.Duration("interval", 15*time.Second, "refresh and pulse interval")
@@ -286,7 +294,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration) 
 	var refresh api.RefreshFunc
 	if c.live() {
 		cfg := c.adapterConfig()
-		refresh = func(ctx context.Context, m *graph.Model) ([]adapters.Status, error) {
+		refresh = func(ctx context.Context, m *graph.Model) (adapters.Report, error) {
 			return adapters.Refresh(ctx, m, cfg)
 		}
 	}
@@ -492,7 +500,7 @@ func printGaps(w io.Writer, g []gaps.Gap, total float64) {
 func printSim(w io.Writer, r sim.Result) {
 	fmt.Fprintf(w, "What if: %s (%s)\n\n", r.ActionName, r.Action)
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "KPI\tBEFORE\tAFTER\tCHANGE\tTARGET")
+	fmt.Fprintln(tw, "KPI\tBEFORE\tAFTER\tRANGE\tCHANGE\tTARGET")
 	for _, k := range r.KPIs {
 		if k.Change == 0 {
 			continue
@@ -504,7 +512,11 @@ func printSim(w io.Writer, r sim.Result) {
 				status += map[bool]string{true: " (closed)", false: " (opened)"}[k.MetAfter]
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", k.KPI, num(k.Before), num(k.After), sim.Pct(k.Change), status)
+		rng := "-"
+		if k.Low != k.High {
+			rng = num(k.Low) + ".." + num(k.High)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", k.KPI, num(k.Before), num(k.After), rng, sim.Pct(k.Change), status)
 	}
 	tw.Flush()
 	fmt.Fprintln(w, "\nWhy:")
@@ -512,6 +524,15 @@ func printSim(w io.Writer, r sim.Result) {
 		fmt.Fprintln(w, "  "+s.Text)
 	}
 	fmt.Fprintf(w, "\nGap severity: %.3f -> %.3f (%+.3f)\n", r.SeverityBefore, r.SeverityAfter, -r.Improvement())
+	if r.WeightedBefore != r.SeverityBefore || r.WeightedAfter != r.SeverityAfter {
+		fmt.Fprintf(w, "Weighted by criticality: %.3f -> %.3f\n", r.WeightedBefore, r.WeightedAfter)
+	}
+	if r.SettlesAfter > 0 {
+		fmt.Fprintf(w, "Settles after: %s\n", r.SettlesAfter.D())
+	}
+	for _, v := range r.Violations {
+		fmt.Fprintf(w, "Constraint breached: %s\n", v.Text)
+	}
 	if len(r.GapsClosed) > 0 {
 		fmt.Fprintf(w, "Closes: %s\n", strings.Join(r.GapsClosed, ", "))
 	}
@@ -520,18 +541,25 @@ func printSim(w io.Writer, r sim.Result) {
 	}
 }
 
-func printPlan(w io.Writer, recs []planner.Recommendation) {
+func printPlan(w io.Writer, res planner.Result) {
+	recs := res.Recommendations
 	if len(recs) == 0 {
-		fmt.Fprintln(w, "No action reduces total gap severity.")
-		return
+		fmt.Fprintln(w, "No action reduces total gap severity without breaking a constraint.")
+	} else {
+		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "RANK\tACTION\tRISK\tGAIN\tSCORE\tCONFIDENCE\tCLOSES\tOPENS\tSTATUS")
+		for _, r := range recs {
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%.3f\t%.3f\t%s\t%s\t%s\t%s\n", r.Rank, r.Action, orDefault(string(r.Risk), "low"),
+				r.WeightedImprovement, r.Score, r.Confidence, list(r.Result.GapsClosed), list(r.Result.GapsOpened), r.Status)
+		}
+		tw.Flush()
 	}
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "RANK\tACTION\tRISK\tGAIN\tSCORE\tCLOSES\tOPENS\tSTATUS")
-	for _, r := range recs {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%.3f\t%.3f\t%s\t%s\t%s\n", r.Rank, r.Action, orDefault(string(r.Risk), "low"),
-			r.Improvement, r.Score, list(r.Result.GapsClosed), list(r.Result.GapsOpened), r.Status)
+	if len(res.Blocked) > 0 {
+		fmt.Fprintln(w, "\nBlocked (hard constraints):")
+		for _, r := range res.Blocked {
+			fmt.Fprintf(w, "  %s: %s\n", r.Action, strings.Join(r.BlockedReasons, "; "))
+		}
 	}
-	tw.Flush()
 }
 
 func num(v float64) string {

@@ -26,6 +26,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
 	"github.com/zyvorai/zyntra/internal/executor"
+	"github.com/zyvorai/zyntra/internal/freshness"
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
 	"github.com/zyvorai/zyntra/internal/planner"
@@ -35,7 +36,7 @@ import (
 const maxBody = 1 << 20
 
 // RefreshFunc updates a model copy in place from live sources.
-type RefreshFunc func(ctx context.Context, m *graph.Model) ([]adapters.Status, error)
+type RefreshFunc func(ctx context.Context, m *graph.Model) (adapters.Report, error)
 
 // Approval modes.
 const (
@@ -92,9 +93,13 @@ type Server struct {
 	model     *graph.Model
 	sources   []adapters.Status
 	refreshed time.Time
+	fresh     *freshness.Tracker
 
 	bg sync.WaitGroup
 }
+
+// freshness returns the current freshness of every KPI in m.
+func (s *Server) freshness(m *graph.Model) []freshness.State { return s.fresh.States(m) }
 
 func New(o Options) *Server {
 	if o.Interval <= 0 {
@@ -118,7 +123,7 @@ func New(o Options) *Server {
 	if o.ApprovalMode == "" {
 		o.ApprovalMode = ModeLocal
 	}
-	s := &Server{opt: o, model: o.Model, refreshed: time.Now()}
+	s := &Server{opt: o, model: o.Model, refreshed: time.Now(), fresh: freshness.New(3 * o.Interval)}
 	s.loadHistory()
 	if o.Refresh == nil {
 		o.History.Record(o.Model, time.Now())
@@ -140,9 +145,9 @@ func (s *Server) sourceStatus() []adapters.Status {
 
 func (s *Server) aiSnapshot() ai.Snapshot {
 	m, _ := s.snapshot()
-	plan, _ := planner.Plan(m)
+	plan, _, _ := s.plan(m)
 	return ai.Snapshot{
-		Model: m, Gaps: gaps.Detect(m), Severity: gaps.Total(m, nil), Plan: plan,
+		Model: m, Gaps: gaps.Detect(m), Severity: gaps.Total(m, nil), Plan: plan.Recommendations,
 		Anomalies: ai.Anomalies(m, s.opt.History), Forecasts: ai.Forecasts(m, s.opt.History),
 		Sources: s.sourceStatus(),
 	}
@@ -174,14 +179,24 @@ func (s *Server) Wait() { s.bg.Wait() }
 func (s *Server) RefreshOnce(ctx context.Context) {
 	m, _ := s.snapshot()
 	var st []adapters.Status
+	now := time.Now()
 	if s.opt.Refresh != nil {
-		var err error
-		st, err = s.opt.Refresh(ctx, m)
+		rep, err := s.opt.Refresh(ctx, m)
 		if err != nil {
 			log.Printf("refresh: %v", err)
 		}
+		st = rep.Sources
+		for id, u := range rep.KPIs {
+			switch {
+			case u.OK:
+				s.fresh.Success(id, now)
+			case u.Warming:
+				s.fresh.Warming(id)
+			default:
+				s.fresh.Failure(id, u.Error, now)
+			}
+		}
 	}
-	now := time.Now()
 	s.mu.Lock()
 	s.model, s.refreshed = m, now
 	if s.opt.Refresh != nil {
@@ -243,6 +258,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/plan", admin(s.handlePlan))
 	mux.Handle("POST /api/v1/simulate", admin(s.handleSimulate))
 	mux.Handle("GET /api/v1/sources", admin(s.handleSources))
+	mux.Handle("GET /api/v1/freshness", admin(s.handleFreshness))
 	mux.Handle("GET /api/v1/events", admin(s.handleEvents))
 	mux.Handle("GET /api/v1/kpis/{id}/history", admin(s.handleKPIHistory))
 
@@ -339,7 +355,20 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleGraph(w http.ResponseWriter, _ *http.Request) {
 	m, at := s.snapshot()
-	writeJSON(w, http.StatusOK, map[string]any{"model": m, "refreshed_at": at})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"model": m, "refreshed_at": at, "version": m.Version(),
+		"constraints": m.AllConstraints(), "freshness": s.freshness(m),
+	})
+}
+
+func (s *Server) handleFreshness(w http.ResponseWriter, _ *http.Request) {
+	m, at := s.snapshot()
+	st := s.freshness(m)
+	unusable := freshness.Unusable(st)
+	if unusable == nil {
+		unusable = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"kpis": st, "unusable": unusable, "refreshed_at": at})
 }
 
 func (s *Server) handleGaps(w http.ResponseWriter, _ *http.Request) {
@@ -351,22 +380,56 @@ func (s *Server) handleGaps(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"gaps": g, "severity_total": gaps.Total(m, nil)})
 }
 
+// plan ranks actions for m using the current freshness.
+func (s *Server) plan(m *graph.Model) (planner.Result, []freshness.State, error) {
+	st := s.freshness(m)
+	r, err := planner.PlanWith(m, planner.Options{Unusable: freshness.Set(st)})
+	return r, st, err
+}
+
 func (s *Server) handlePlan(w http.ResponseWriter, _ *http.Request) {
 	m, _ := s.snapshot()
-	recs, err := planner.Plan(m)
+	r, st, err := s.plan(m)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if recs == nil {
-		recs = []planner.Recommendation{}
+	unusable := freshness.Unusable(st)
+	if unusable == nil {
+		unusable = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"recommendations": recs})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"recommendations": r.Recommendations, "blocked": r.Blocked,
+		"unusable_inputs": unusable, "model_version": m.Version(),
+	})
 }
 
 type simulateRequest struct {
-	Action string        `json:"action"`
-	Custom *graph.Action `json:"custom,omitempty"`
+	Action  string        `json:"action"`
+	Actions []string      `json:"actions,omitempty"`
+	Custom  *graph.Action `json:"custom,omitempty"`
+}
+
+// resolveActions looks up action ids, which may be joined with "+".
+func resolveActions(m *graph.Model, ids ...string) ([]graph.Action, error) {
+	var out []graph.Action
+	for _, id := range ids {
+		for _, part := range strings.Split(id, "+") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			a, ok := m.Action(part)
+			if !ok {
+				return nil, fmt.Errorf("unknown action %q", part)
+			}
+			out = append(out, *a)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no actions given")
+	}
+	return out, nil
 }
 
 func (s *Server) handleSimulate(w http.ResponseWriter, r *http.Request) {
@@ -375,17 +438,21 @@ func (s *Server) handleSimulate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, _ := s.snapshot()
+	opt := sim.Options{Unusable: freshness.Set(s.freshness(m))}
 	var (
 		res sim.Result
 		err error
 	)
 	switch {
 	case req.Custom != nil:
-		res, err = sim.Apply(m, *req.Custom)
-	case req.Action != "":
-		res, err = sim.Simulate(m, req.Action)
+		res, err = sim.ApplyPlan(m, []graph.Action{*req.Custom}, opt)
+	case req.Action != "" || len(req.Actions) > 0:
+		var acts []graph.Action
+		if acts, err = resolveActions(m, append([]string{req.Action}, req.Actions...)...); err == nil {
+			res, err = sim.ApplyPlan(m, acts, opt)
+		}
 	default:
-		err = fmt.Errorf("provide action or custom")
+		err = fmt.Errorf("provide action, actions or custom")
 	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
