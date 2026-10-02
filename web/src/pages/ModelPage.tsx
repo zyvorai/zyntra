@@ -1,4 +1,5 @@
-import { fmt, type Model } from '../api';
+import { fmt, type Contradiction, type EdgeProposal, type Model } from '../api';
+import PackDraftCard from '../components/PackDraft';
 import { useApi } from '../hooks';
 import { Card, ErrorNote, KpiValue, PageHero, Pill, kpiMet, riskTone } from '../components/ui';
 
@@ -6,6 +7,8 @@ export default function ModelPage() {
   const { data, error } = useApi<{ model: Model; refreshed_at: string }>('/api/v1/graph', 30000);
   const m = data?.model;
   const name = (id: string) => m?.kpis.find((k) => k.id === id)?.name ?? id;
+  const edges = useApi<{ edges: EdgeProposal[]; note: string }>('/api/v1/ai/edges', 60000);
+  const rules = useApi<{ rules: number; mode: string; contradictions: Contradiction[]; llm_error?: string }>('/api/v1/ai/contradictions', 60000);
 
   return (
     <>
@@ -93,6 +96,58 @@ export default function ModelPage() {
               </ul>
             </Card>
           </div>
+          <div className="grid-2">
+            <Card title="Proposed edges" aside={<Pill tone="warn">not in the model</Pill>}>
+              {edges.data?.edges.length ? (
+                <ul className="list">
+                  {edges.data.edges.map((e) => (
+                    <li key={`${e.from}-${e.to}`}>
+                      <div className="list-main">
+                        <strong>
+                          {name(e.from)} → {name(e.to)}
+                        </strong>
+                        <span className="muted small">{e.why}</span>
+                        <pre className="code small">{e.yaml}</pre>
+                      </div>
+                      <div className="pills">
+                        <Pill tone="info">r {e.r.toFixed(2)}</Pill>
+                        <Pill>{e.direction === 'leads' ? 'leads by one sample' : 'direction unknown'}</Pill>
+                        <Pill tone="warn">{e.status}</Pill>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="small muted">
+                  No KPI pair moves together without an edge yet. Needs at least 8 paired changes in the history (correlation 0.7 or more).
+                </p>
+              )}
+            </Card>
+            <Card title="Pack rules check" aside={rules.data ? <Pill tone={rules.data.mode === 'llm' ? 'purple' : 'neutral'}>{rules.data.rules} rule lines</Pill> : null}>
+              {rules.data?.contradictions.length ? (
+                <ul className="list">
+                  {rules.data.contradictions.map((c, i) => (
+                    <li key={i}>
+                      <div className="list-main">
+                        <strong>{c.action}</strong>
+                        <span className="small">{c.why}</span>
+                        <span className="muted small">
+                          README line {c.rule.line}: {c.rule.text}
+                        </span>
+                      </div>
+                      <div className="pills">
+                        <Pill tone={c.by === 'model' ? 'purple' : 'bad'}>{c.by === 'model' ? 'read by model' : 'rule check'}</Pill>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="small muted">No scored action breaks a rule stated in the pack README.</p>
+              )}
+              {rules.data?.llm_error ? <p className="small down">model: {rules.data.llm_error}</p> : null}
+            </Card>
+          </div>
+          <PackDraftCard />
         </>
       ) : null}
     </>

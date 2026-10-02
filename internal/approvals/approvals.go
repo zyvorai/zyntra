@@ -142,6 +142,9 @@ type Proposal struct {
 	// Compensate lists the actions that undo this one; they are linked, not
 	// run automatically.
 	Compensate []string `json:"compensate,omitempty"`
+	// Evidence holds, per action, the source rows and fills its payload
+	// was built from; execution renders from it.
+	Evidence map[string]*executor.Evidence `json:"evidence,omitempty"`
 
 	PackID       string             `json:"pack,omitempty"`
 	ModelVersion string             `json:"model_version,omitempty"`
@@ -173,7 +176,9 @@ type Proposal struct {
 	Execution        *executor.Result `json:"execution,omitempty"`
 	ExecutedAt       *time.Time       `json:"executed_at,omitempty"`
 	Outcome          *outcome.Record  `json:"outcome,omitempty"`
-	Keep             *KeepRef         `json:"keep,omitempty"`
+	// Explanation says why the outcome matched the prediction or not.
+	Explanation *outcome.Explanation `json:"explanation,omitempty"`
+	Keep        *KeepRef             `json:"keep,omitempty"`
 
 	// RollbackOf links a rollback proposal to the decision it undoes;
 	// RollbackID links the other way.
@@ -198,8 +203,11 @@ type Event struct {
 	// webhook's response body. Both are covered by Hash.
 	Payload  string `json:"payload_sha256,omitempty"`
 	Response string `json:"response_sha256,omitempty"`
-	PrevHash string `json:"prev_hash"`
-	Hash     string `json:"hash"`
+	// Explanation is the SHA-256 of the miss explanation stored next to an
+	// outcome verdict.
+	Explanation string `json:"explanation_sha256,omitempty"`
+	PrevHash    string `json:"prev_hash"`
+	Hash        string `json:"hash"`
 }
 
 func (e Event) digest() string {
@@ -687,6 +695,29 @@ func (s *Store) Complete(id string, res executor.Result, by string) (Proposal, e
 		payload = renderHash(p.Render)
 	}
 	s.auditHashes(p, Approved, to, by, note, payload, res.ResponseHash)
+	return clone(p), s.save()
+}
+
+// Explain stores the explanation of an outcome verdict and audits its hash.
+func (s *Store) Explain(id, by string, ex outcome.Explanation) (Proposal, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.find(id)
+	if err != nil {
+		return Proposal{}, err
+	}
+	p.Explanation = &ex
+	note := "outcome explained"
+	if len(ex.Findings) > 0 {
+		note += ": " + ex.Findings[0].Text
+	}
+	if len(note) > 300 {
+		note = note[:300]
+	}
+	s.auditHashes(p, p.Status, p.Status, by, note, "", "")
+	s.s.Audit[len(s.s.Audit)-1].Explanation = ex.Hash
+	last := &s.s.Audit[len(s.s.Audit)-1]
+	last.Hash = last.digest()
 	return clone(p), s.save()
 }
 

@@ -313,9 +313,24 @@ With OIDC, `ZYNTRA_OIDC_ROLE_MAP` maps identity-provider groups to roles, for ex
 
 ## AI (grounded, read-only)
 
+The model drafts and explains. Deterministic code calculates every number, and only a named person approves a run. Every feature below returns YAML to review, a citation into the outcome store, or a payload that still waits in the inbox. With no model configured, each one returns its deterministic answer.
+
 - **Anomalies:** z-score of each KPI against its own history.
 - **Forecasts:** least-squares trend with time to breach. A forecast needs at least 6 samples spanning 10 minutes.
-- **Digest, Ask and Explain:** built from gaps, plan, anomalies and source health, with the grounding facts listed. Set `ZYNTRA_AI_BASE_URL` (an OpenAI-compatible endpoint such as the Fabric AI gateway) and the model rewrites the grounded answer. Without it, the heuristic answer is returned.
+- **Digest, Ask and Explain:** built from gaps, plan, anomalies and source health, with the grounding facts listed. The model only rewrites the wording.
+- **Shift digest:** `/ai/digest?owner=floor&window=evening` is the note for one owner at the close of a calendar window. It lists that owner's open gaps, the one action that closes the most of them, what the last approved run got wrong, and which inputs go stale before the window opens again.
+- **Pack draft:** `zyntra pack draft -industry "kirana counter" -sample stock.csv -out packs/kirana` (or the form on the Model page) profiles the sample and writes `pack.yaml`, `kpis.yaml`, `sources.example.yaml`, a README and the fixture, then runs `pack validate`. The model proposes KPIs, edges and webhook or file actions as JSON; Go code checks each one and writes the YAML. An action is refused if an effect cites no column in the sample, if the URL variable is not an allowed `ZYNTRA_*_URL`, if the body references an unknown KPI, or if it decides credit, hiring, a diagnosis or anything else about a person. Drafted edges carry low confidence and a `draft:` reason until someone edits them. Without a model you get the KPIs only.
+- **Payload fill:** a webhook body can use `rows:KPI` (the source rows behind a KPI) and `fill:NAME` (one column of those rows, such as `skus: "fill:sku"`). File templates get `{{range rows "stockout_rate"}}…{{end}}` and `{{fill "sku"}}`. The rows are captured when the proposal is made, shown under "Source rows behind the payload", covered by the payload hash, and reused at execution, so the approved payload is the one that runs. The dry-run prints `# rows used for stockout_rate: fixture/stock.csv rows 12, 48, 84`. When a placeholder has no column of the same name, the model may pick one from the row columns; the pick is validated, marked `model`, and the values still come from the rows.
+- **Miss explainer:** once an approved run has a verdict, `/proposals/{id}/explanation` says why it landed or missed: which edge overshot (with the weight one run suggests, not applied), which effect went the wrong way, which input was stale or on a fallback source, which precondition was failing. Facts come from the outcome record only. The explanation hash is written into the audit event next to the verdict, so `audit/verify` covers it.
+- **Similar past decisions:** `/proposals/{id}/similar` and `/similar?action=` find earlier proposals by KPI overlap, same action and keywords. The inbox and decision page show them as precedents ("last 2 times markdown_dead_stock regressed"). The ranking does not change.
+- **Proposed edges:** `/ai/edges` looks for KPI pairs whose history moves together (at least 8 paired changes, correlation 0.7 or more) with no edge between them, and proposes one with a weight band and a YAML snippet. The edges are marked "proposed, not in the model" until you add them to `kpis.yaml`.
+- **Pack rules check:** `/ai/contradictions` reads a `## Rules` section in the pack README ("never approve X", "only in window Y", "X needs two approvers", "X must be undone by Y") and checks the live plan, preconditions and policy against it. The model may read rules the parser cannot; its reading names a line and an action that both must exist.
+
+### Air-gapped model
+
+Set `ZYNTRA_AI_BASE_URL` to an OpenAI-compatible endpoint on your own network: the Fabric AI gateway, or Ollama (`http://ollama:11434/v1`). `ZYNTRA_AI_MODEL` defaults to `qwen2.5:7b-instruct`, and `ZYNTRA_AI_API_KEY` is only sent when set. Zyntra never picks a cloud endpoint by itself, and no plan, approval or execution needs a model. Compose has an `ai` profile with Ollama, and the Helm chart takes `ai.baseURL`, `ai.model` and `ai.apiKeySecret`.
+
+The model does not pick, rank or run an action, does not adjust a score, cannot turn on auto-approve, and does not produce a forecast number. There is no chat box that acts.
 
 ## Approvals and execution
 
@@ -401,6 +416,7 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `zyntra simulate -action ID[+ID]` | Predicted KPI changes with ranges, constraint breaches and the propagation trace |
 | `zyntra plan [-owner NAME]` | Actions and pairs ranked with confidence, then those waiting on a precondition and those blocked by constraints or invariants |
 | `zyntra pack list\|validate [DIR]` | List packs under `packs/`, or check one against its fixture |
+| `zyntra pack draft -industry TEXT -sample FILE [-out DIR]` | Draft a pack from CSV or JSON samples, then validate it |
 | `zyntra serve [-policy FILE]` | Console, REST API and SSE pulse |
 | `zyntra verify-decision FILE` | Check a signed decision export offline |
 | `zyntra hash-password < pw` | bcrypt hash for a local account in the policy file |
@@ -426,7 +442,10 @@ All routes except `/healthz`, `/api/v1/meta`, sign-in and the OIDC redirects nee
 | `POST` | `/api/v1/kpis/{id}/value` | proposer | Enter a value for a `manual` KPI (`{"value":2,"reason":"..."}`), audited |
 | `GET` | `/api/v1/inputs` | viewer | Manual KPIs and webhook-in channels with their last entry |
 | `POST` | `/api/v1/ingest/{channel}` | ingest | JSON document for a `webhook-in` channel (ingest token or admin) |
-| `GET`/`POST` | `/api/v1/ai/status`, `/digest`, `/insights`, `/ask`, `/explain` | viewer | Grounded AI (`/digest?owner=` for one owner) |
+| `GET`/`POST` | `/api/v1/ai/status`, `/digest`, `/insights`, `/ask`, `/explain` | viewer | Grounded AI (`/digest?owner=&window=` for one owner's shift note) |
+| `GET` | `/api/v1/ai/edges`, `/ai/contradictions` | viewer | Proposed edges (not in the model) and pack README rules the plan breaks |
+| `POST` | `/api/v1/ai/pack-draft` | proposer | `{"industry":"…","samples":[{"name":"stock.csv","content":"…"}]}` returns drafted files, refusals and validation; nothing is written |
+| `GET` | `/api/v1/proposals/{id}/explanation`, `/proposals/{id}/similar`, `/similar?action=` | viewer | Why a run landed or missed (409 before a verdict), and precedents |
 | `GET` | `/api/v1/proposals`, `/proposals/{id}` | viewer | Approval inbox |
 | `POST` | `/api/v1/proposals` | proposer | Propose `{"action":"a"}` or `{"actions":["a","b"]}` |
 | `POST` | `/api/v1/proposals/{id}/approve`, `/reject` | approver | Record an approval (202 until the quorum is met) or reject |

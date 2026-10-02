@@ -37,6 +37,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
 	"github.com/zyvorai/zyntra/internal/decisions"
+	"github.com/zyvorai/zyntra/internal/draft"
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
@@ -62,6 +63,9 @@ Usage:
   zyntra plan     -f kpis.yaml [-owner O] rank actions and pairs; list blocked ones
   zyntra pack list [-dir packs]           packs found under a directory
   zyntra pack validate [DIR...]           check packs (default: every pack in packs/)
+  zyntra pack draft -industry TEXT -sample FILE [-sample FILE] [-id ID] [-out DIR]
+                                          draft a pack from sample exports (uses the
+                                          ZYNTRA_AI_* model when set; prints otherwise)
   zyntra serve    -f kpis.yaml [-policy policy.yaml]
                                           web console, REST API and SSE pulse
   zyntra verify-decision FILE             check a signed decision export offline
@@ -569,9 +573,83 @@ func keepCmd(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+func packDraft(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("pack draft", flag.ContinueOnError)
+	industry := fs.String("industry", "", "one line naming the site, e.g. \"kirana counter\"")
+	id := fs.String("id", "", "pack id (default: from the industry)")
+	dir := fs.String("out", "", "write the draft here (must not exist); default prints it")
+	var samples multiFlag
+	fs.Var(&samples, "sample", "sample export (CSV, JSON or YAML rows); repeat for more")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *industry == "" || len(samples) == 0 {
+		return fmt.Errorf("pack draft: -industry and at least one -sample are required")
+	}
+	req := draft.Request{Industry: *industry, ID: *id}
+	for _, f := range samples {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return err
+		}
+		req.Samples = append(req.Samples, draft.Sample{Name: filepath.Base(f), Data: b})
+	}
+	var llm *ai.Provider
+	if u := env("ZYNTRA_AI_BASE_URL", ""); u != "" {
+		llm = ai.NewProvider(u, env("ZYNTRA_AI_API_KEY", ""), env("ZYNTRA_AI_MODEL", ""), env("ZYNTRA_AI_LABEL", "AI gateway"), envBool("ZYNTRA_AI_INSECURE"))
+	}
+	res, err := draft.Draft(ctx, llm, req)
+	if err != nil {
+		return err
+	}
+	rep, verr := draft.Validate(ctx, res.Files)
+	fmt.Fprintf(out, "draft (%s", res.Mode)
+	if res.Model != "" {
+		fmt.Fprintf(out, ", %s", res.Model)
+	}
+	fmt.Fprintln(out, ")")
+	for _, n := range res.Notes {
+		fmt.Fprintf(out, "  note     %s\n", n)
+	}
+	if res.LLMError != "" {
+		fmt.Fprintf(out, "  llm      %s\n", res.LLMError)
+	}
+	for _, r := range res.Refused {
+		fmt.Fprintf(out, "  refused  %s\n", r)
+	}
+	if verr == nil {
+		for _, x := range rep.OK {
+			fmt.Fprintf(out, "  ok       %s\n", x)
+		}
+		for _, x := range rep.Errors {
+			fmt.Fprintf(out, "  invalid  %s\n", x)
+		}
+	}
+	if *dir == "" {
+		for _, name := range []string{pack.Manifest, pack.ModelFile, pack.SourcesExample} {
+			fmt.Fprintf(out, "\n--- %s\n%s", name, res.Files[name])
+		}
+		fmt.Fprintln(out, "\n(use -out DIR to write the pack with its README and fixture)")
+		return nil
+	}
+	if err := draft.Write(*dir, res.Files); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "wrote %s: edit targets and weights, then run zyntra pack validate %s\n", *dir, *dir)
+	return nil
+}
+
 func packCmd(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("pack: want list or validate")
+		return fmt.Errorf("pack: want list, validate or draft")
+	}
+	if args[0] == "draft" {
+		return packDraft(ctx, args[1:], out)
 	}
 	fs := flag.NewFlagSet("pack "+args[0], flag.ContinueOnError)
 	dir := fs.String("dir", "packs", "directory holding packs")

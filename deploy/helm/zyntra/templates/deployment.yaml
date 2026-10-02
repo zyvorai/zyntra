@@ -71,6 +71,23 @@ spec:
             - name: ZYNTRA_POLICY
               value: /etc/zyntra/policy.yaml
             {{- end }}
+            {{- with .Values.ai }}
+            {{- if .baseURL }}
+            - name: ZYNTRA_AI_BASE_URL
+              value: {{ .baseURL | quote }}
+            {{- if .model }}
+            - name: ZYNTRA_AI_MODEL
+              value: {{ .model | quote }}
+            {{- end }}
+            {{- if .apiKeySecret }}
+            - name: ZYNTRA_AI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .apiKeySecret | quote }}
+                  key: {{ .apiKeySecretKey | default "ZYNTRA_AI_API_KEY" | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

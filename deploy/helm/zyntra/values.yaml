@@ -31,6 +31,16 @@ auth:
 # Approval policy (quorum, expiry, windows, local users) as inline YAML.
 policy: ""
 
+# Optional OpenAI-compatible model for wording, pack drafts and rule reading.
+# Leave baseURL empty for the deterministic answers. For air-gapped sites point
+# it at the Fabric AI gateway or an in-cluster Ollama; no key is required.
+# The model never picks, ranks or runs an action.
+ai:
+  baseURL: ""                     # e.g. http://ollama.ai.svc:11434/v1
+  model: ""                       # empty uses qwen2.5:7b-instruct
+  apiKeySecret: ""                # Secret holding the key, if the endpoint needs one
+  apiKeySecretKey: ZYNTRA_AI_API_KEY
+
 # Plain environment, e.g. ZYNTRA_POS_URL. Only ${ZYNTRA_*} variables are
 # expanded inside packs, and secrets are never expanded.
 env: {}

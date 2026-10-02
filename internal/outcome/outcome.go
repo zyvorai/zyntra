@@ -355,3 +355,31 @@ func join(s []string) string {
 	}
 	return out.String()
 }
+
+// Finding is one reason a prediction missed (or landed), drawn only from
+// the outcome record, the proposal's simulation and its inputs.
+type Finding struct {
+	KPI  string `json:"kpi"`
+	Kind string `json:"kind"` // effect-overshot, effect-undershot, edge-overshot, edge-undershot, inherited, wrong-direction, stale-input, stale-precondition, fallback-source, hit
+	// Edge is "from->to" when an edge carried the change.
+	Edge            string  `json:"edge,omitempty"`
+	Weight          float64 `json:"weight,omitempty"`
+	PredictedChange float64 `json:"predicted_change"`
+	ActualChange    float64 `json:"actual_change"`
+	// SuggestedWeight is the weight that would have matched this one run.
+	// It is shown, never written to the model.
+	SuggestedWeight *float64 `json:"suggested_weight,omitempty"`
+	Text            string   `json:"text"`
+}
+
+// Explanation ties a verdict to its findings. Hash covers the proposal id,
+// verdict, findings and text, and is written to the audit chain.
+type Explanation struct {
+	Proposal  string    `json:"proposal"`
+	Verdict   State     `json:"verdict"`
+	HitRate   *float64  `json:"hit_rate,omitempty"`
+	Findings  []Finding `json:"findings"`
+	Text      string    `json:"text"`
+	Grounding []string  `json:"grounding"`
+	Hash      string    `json:"hash"`
+}

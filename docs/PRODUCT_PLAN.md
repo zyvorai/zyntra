@@ -190,13 +190,19 @@ Ship files, not claims.
 - [x] Ship packs everywhere: the deploy script takes `--pack`; the container image, compose file and Helm chart carry `packs/`.
 - [ ] Write plant, pharma, energy, payments and campus packs, each with a fixture and a README showing one simulate trace.
 - [x] Webhook receiver example in `examples/receiver` so a pilot can see the PO land.
-- [ ] Owner digest page (the digest already filters by owner).
+- [x] Owner shift digest: `?owner=&window=` on the digest, with selectors on the Overview.
+- [x] `zyntra pack draft`: a sample CSV or JSON plus an industry line gives a pack that validates; actions without a cited column are refused.
 
 Exit: six packs validate in CI, and two have run against a real export (shop CSV, plant CSV or the GPU lab).
 
 ### Phase D: learning, still explainable
 
 - Learned weights with confidence, editable, missed edges flagged.
+- [x] Miss explainer: per verdict, which edge overshot, which input was stale or on fallback, which precondition failed; the explanation hash sits in the audit event next to the verdict.
+- [x] Proposed edges from correlated history, shown as "proposed, not in the model" with a weight band and YAML.
+- [x] Similar past decisions as precedents in the inbox; the ranking is unchanged.
+- [x] Pack README rules checked against the plan, preconditions and policy.
+- [x] Payload fill from cited source rows, frozen on the proposal and covered by the payload hash.
 - Auto-approve policy, default off, only where Phase B gates pass and the hit rate is real.
 - Clamp edges for packs that saturate.
 
@@ -204,7 +210,7 @@ Exit: a weight changes only when history supports it, and the console shows the 
 
 ### Explicitly not in this plan
 
-- An LLM that chooses the action.
+- An LLM that chooses the action, adjusts a score, turns on auto-approve, or produces a forecast number. No chat box that acts.
 - A marketplace, billing SaaS or mobile app before Phase A is done.
 - A pack that recommends a clinical, legal or credit decision about a person. Capacity, queue, price list and route only.
 - Hiding the Keep fallback.

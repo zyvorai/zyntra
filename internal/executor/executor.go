@@ -61,6 +61,8 @@ type Rendered struct {
 	Content  string            `json:"-"`
 	// Key is an idempotency key (the proposal id) sent with webhooks.
 	Key string `json:"-"`
+	// Evidence is the source rows and fills the payload was built from.
+	Evidence *Evidence `json:"evidence,omitempty"`
 }
 
 var dns1123 = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -140,26 +142,81 @@ func RenderRollback(a graph.Action) (Rendered, error) {
 // references and file templates that need KPIs are left unresolved.
 func Render(a graph.Action) (Rendered, error) { return RenderIn(nil, a) }
 
-// RenderIn renders an action against the current model.
-func RenderIn(m *graph.Model, a graph.Action) (Rendered, error) {
+// RenderIn renders an action against the current model, reading the
+// source rows it cites now.
+func RenderIn(m *graph.Model, a graph.Action) (Rendered, error) { return RenderWith(m, a, nil) }
+
+// RenderWith renders an action from stored evidence (the rows and fills
+// captured when it was proposed). With nil evidence the rows are read now.
+func RenderWith(m *graph.Model, a graph.Action, ev *Evidence) (Rendered, error) {
 	var (
 		r   Rendered
 		err error
 	)
+	if ev == nil && m != nil {
+		if ev, err = Collect(m, a, nil); err != nil {
+			return Rendered{Kind: a.Kind()}, err
+		}
+	}
 	switch k := a.Kind(); k {
 	case graph.KindKubectl:
-		r, err = renderKubectl(a)
+		if a, err = fillParams(a, ev); err == nil {
+			r, err = renderKubectl(a)
+		}
 	case graph.KindWebhook:
-		r, err = renderWebhook(m, a)
+		r, err = renderWebhook(m, a, ev)
 	case graph.KindFile:
-		r, err = renderFile(m, a)
+		r, err = renderFile(m, a, ev)
 	case graph.KindNoop:
 		r = Rendered{Template: graph.KindNoop, Display: noopDisplay(a)}
 	default:
 		return Rendered{}, fmt.Errorf("action %q has nothing to run", a.ID)
 	}
 	r.Kind = a.Kind()
+	if err == nil && ev != nil {
+		r.Evidence = ev
+		if c := ev.cited(); c != "" {
+			r.Display += c
+		}
+	}
 	return r, err
+}
+
+// fillParams resolves fill:NAME kubectl params (a CRD field the template
+// left blank) from the evidence.
+func fillParams(a graph.Action, ev *Evidence) (graph.Action, error) {
+	if a.Execute == nil {
+		return a, nil
+	}
+	var out map[string]string
+	for k, v := range a.Execute.Params {
+		n, ok := strings.CutPrefix(v, "fill:")
+		if !ok {
+			continue
+		}
+		f, err := ev.fill(n)
+		if err != nil {
+			return a, err
+		}
+		if out == nil {
+			out = maps.Clone(a.Execute.Params)
+		}
+		out[k] = joinValues(f.Values)
+	}
+	if out != nil {
+		ex := *a.Execute
+		ex.Params = out
+		a.Execute = &ex
+	}
+	return a, nil
+}
+
+func joinValues(vs []any) string {
+	parts := make([]string, len(vs))
+	for i, v := range vs {
+		parts[i] = fmt.Sprint(v)
+	}
+	return strings.Join(parts, ",")
 }
 
 // Template is the name recorded on a proposal for an action: the kubectl

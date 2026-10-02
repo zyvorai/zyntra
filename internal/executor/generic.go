@@ -54,38 +54,55 @@ func viewOf(k graph.KPI) gapView {
 	return g
 }
 
-// resolve replaces "kpi:ID" and "gap:ID" strings in a webhook body.
-func resolve(m *graph.Model, v any) any {
+// resolve replaces "kpi:ID", "gap:ID", "rows:ID" and "fill:NAME" strings
+// in a webhook body.
+func resolve(m *graph.Model, ev *Evidence, v any) (any, error) {
 	switch t := v.(type) {
 	case string:
 		if m == nil {
-			return t
+			return t, nil
 		}
 		if id, ok := strings.CutPrefix(t, "kpi:"); ok {
 			if k, found := m.KPI(id); found {
-				return k.Value
+				return k.Value, nil
 			}
 		}
 		if id, ok := strings.CutPrefix(t, "gap:"); ok {
 			if k, found := m.KPI(id); found {
-				return viewOf(*k)
+				return viewOf(*k), nil
 			}
 		}
-		return t
+		if id, ok := strings.CutPrefix(t, "rows:"); ok {
+			rs, err := ev.rows(id)
+			return rs, err
+		}
+		if n, ok := strings.CutPrefix(t, "fill:"); ok {
+			f, err := ev.fill(n)
+			return f.Values, err
+		}
+		return t, nil
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, x := range t {
-			out[k] = resolve(m, x)
+			r, err := resolve(m, ev, x)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = r
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]any, len(t))
 		for i, x := range t {
-			out[i] = resolve(m, x)
+			r, err := resolve(m, ev, x)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = r
 		}
-		return out
+		return out, nil
 	}
-	return v
+	return v, nil
 }
 
 func sortedKeys(h map[string]string) []string {
@@ -97,7 +114,7 @@ func sortedKeys(h map[string]string) []string {
 	return keys
 }
 
-func renderWebhook(m *graph.Model, a graph.Action) (Rendered, error) {
+func renderWebhook(m *graph.Model, a graph.Action, ev *Evidence) (Rendered, error) {
 	w := a.Webhook
 	method := strings.ToUpper(w.Method)
 	if method == "" {
@@ -108,7 +125,11 @@ func renderWebhook(m *graph.Model, a graph.Action) (Rendered, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s\n", method, w.URL)
 	if w.Body != nil && method != http.MethodGet {
-		body, err := json.MarshalIndent(resolve(m, w.Body), "", "  ")
+		resolved, err := resolve(m, ev, w.Body)
+		if err != nil {
+			return r, fmt.Errorf("webhook body: %w", err)
+		}
+		body, err := json.MarshalIndent(resolved, "", "  ")
 		if err != nil {
 			return r, fmt.Errorf("webhook body: %w", err)
 		}
@@ -162,8 +183,14 @@ var funcs = template.FuncMap{
 	"num": func(v float64) string { return fmt.Sprintf("%.4g", v) },
 }
 
-func execTemplate(name, text string, data any) (string, error) {
-	t, err := template.New(name).Funcs(funcs).Option("missingkey=error").Parse(text)
+func execTemplate(name, text string, data any, ev *Evidence) (string, error) {
+	t, err := template.New(name).Funcs(funcs).Funcs(template.FuncMap{
+		"rows": ev.rows,
+		"fill": func(n string) (string, error) {
+			f, err := ev.fill(n)
+			return joinValues(f.Values), err
+		},
+	}).Option("missingkey=error").Parse(text)
 	if err != nil {
 		return "", err
 	}
@@ -174,7 +201,7 @@ func execTemplate(name, text string, data any) (string, error) {
 	return b.String(), nil
 }
 
-func renderFile(m *graph.Model, a graph.Action) (Rendered, error) {
+func renderFile(m *graph.Model, a graph.Action, ev *Evidence) (Rendered, error) {
 	t := now()
 	ctx := fileContext{Action: a, KPIs: map[string]gapView{}, Date: t.Format("2006-01-02"), Time: t.Format("15:04"), Stamp: t.Format("20060102-150405")}
 	if m != nil {
@@ -184,14 +211,14 @@ func renderFile(m *graph.Model, a graph.Action) (Rendered, error) {
 		ctx.Gaps = gaps.Detect(m)
 	}
 	r := Rendered{Template: graph.KindFile}
-	path, err := execTemplate("path", a.File.Path, ctx)
+	path, err := execTemplate("path", a.File.Path, ctx, ev)
 	if err != nil {
 		return r, fmt.Errorf("file path: %w", err)
 	}
 	if err := safeRel(path); err != nil {
 		return r, err
 	}
-	content, err := execTemplate("content", a.File.Content, ctx)
+	content, err := execTemplate("content", a.File.Content, ctx, ev)
 	if err != nil {
 		return r, fmt.Errorf("file content: %w", err)
 	}

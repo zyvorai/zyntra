@@ -5,9 +5,11 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zyvorai/zyntra/internal/adapters"
 	"github.com/zyvorai/zyntra/internal/gaps"
@@ -441,4 +443,29 @@ func orID(name, id string) string {
 		return name
 	}
 	return id
+}
+
+const columnPrompt = `You map a placeholder in an action payload to one column of the source rows behind the action.
+Answer with JSON {"column": "<one of COLUMNS>"} or {"column": ""} if none fits. Never invent a column or a value.`
+
+// ChooseColumn asks the model which column holds the values for a fill
+// placeholder. The caller checks the answer is one of cols and reads the
+// values from the rows itself.
+func (e *Engine) ChooseColumn(ctx context.Context, a graph.Action, name string, cols []string) (string, error) {
+	if e.LLM == nil {
+		return "", fmt.Errorf("no model configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	text, err := e.LLM.Chat(ctx, columnPrompt, fmt.Sprintf("ACTION: %s (%s)\nPLACEHOLDER: %s\nCOLUMNS: %s", a.ID, a.Name, name, strings.Join(cols, ", ")), true)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Column string `json:"column"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return "", err
+	}
+	return out.Column, nil
 }
