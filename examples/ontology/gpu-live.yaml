@@ -44,10 +44,11 @@ connectors:
     kind: kubernetes
     resource: nodes
     interval: 1m
+    prune: true                 # a node removed from the cluster leaves the ontology
     fields:
       name: metadata.name
       gpus: 'status.capacity.nvidia\.com/gpu'
-      ready: status.conditions.3.status
+      ready: status.conditions.[type=Ready].status
     mapping:
       type: Node
       namespace: k8s

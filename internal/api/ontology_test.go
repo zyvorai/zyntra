@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -338,8 +339,8 @@ func TestScheduledRefreshUnblocksStaleEvidence(t *testing.T) {
 		Props: map[string]any{"name": "infer", "tier": "inference"}, ObservedAt: hourAgo}}, hourAgo); err != nil {
 		t.Fatal(err)
 	}
-	kube := func(context.Context, string, string) ([]byte, error) {
-		return []byte(`{"items":[{"metadata":{"name":"infer","labels":{"tier":"inference"}}}]}`), nil
+	kube := func(context.Context, connector.KubeQuery) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(`{"items":[{"metadata":{"name":"infer","labels":{"tier":"inference"}}}]}`)), nil
 	}
 	opt := connector.Options{Kubectl: kube}
 	sched, err := connector.NewScheduler(st, def, t.TempDir(), nil, opt, "")

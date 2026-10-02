@@ -7,7 +7,7 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 ### Added
 
 - **Storage and scale.** SQLite backend for the ontology store (`ZYNTRA_ONTOLOGY_STORE=sqlite`), indexed alias/link/match lookups, one write per ingest batch (5,000 objects: 35 s to under 0.1 s), `zyntra ontology migrate`.
-- **Live data.** Kubernetes and SQL (postgres, sqlite) connectors, a scheduler with per-connector intervals, timeouts, backoff and persisted cursors, health on the Objects page, run-now for admins. File facts are dated by modification time. SQL is read-only, single-statement, with the DSN kept out of errors.
+- **Live data.** Kubernetes (streamed, selectors, keyed array paths, opt-in `prune`; run against a real 12.6k-pod k3s cluster) and SQL (postgres, sqlite) connectors, a scheduler with per-connector intervals, timeouts, backoff and persisted cursors, health on the Objects page, run-now for admins. File facts are dated by modification time. SQL is read-only, single-statement, with the DSN kept out of errors.
 - **Calibration.** `zyntra calibrate` and an Insights card backtest edge weights against finished decisions and suggest corrections, validated leave-one-out; never applied automatically.
 - **Fleet handoff.** Rollouts with a `deploy` machine credential, per-site reports, KPI health gates that fail closed, halt/recheck/abort, audit entries on the decision; `examples/rollout/report.sh`.
 - **Tenant service levels.** KPIs may carry a tenant; tenant accounts get their own KPIs and gaps and a generic label for provider KPIs; new Service levels page.

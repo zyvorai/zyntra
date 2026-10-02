@@ -616,6 +616,7 @@ export interface ConnectorStatus {
   failures: number;
   streak: number;
   running: boolean;
+  slow?: boolean;
   healthy: boolean;
 }
 

@@ -54,9 +54,14 @@ type ConnectorSpec struct {
 	// kubernetes: kubectl get Resource -o json, each item flattened to a row
 	// by Fields (column -> dotted path, "\\." escapes a dot), then mapped by
 	// Mapping. K8sNamespace "" reads all namespaces.
-	Resource     string            `yaml:"resource,omitempty" json:"resource,omitempty"`
-	K8sNamespace string            `yaml:"k8s_namespace,omitempty" json:"k8s_namespace,omitempty"`
-	Fields       map[string]string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Resource     string `yaml:"resource,omitempty" json:"resource,omitempty"`
+	K8sNamespace string `yaml:"k8s_namespace,omitempty" json:"k8s_namespace,omitempty"`
+	// K8sSelector and K8sFieldSelector narrow the list server-side (kubectl
+	// -l / --field-selector). On a large cluster this is the difference
+	// between a few kilobytes and a hundred megabytes per pull.
+	K8sSelector      string            `yaml:"k8s_selector,omitempty" json:"k8s_selector,omitempty"`
+	K8sFieldSelector string            `yaml:"k8s_field_selector,omitempty" json:"k8s_field_selector,omitempty"`
+	Fields           map[string]string `yaml:"fields,omitempty" json:"fields,omitempty"`
 
 	// sql: Query runs read-only with one argument, the time of the last
 	// successful run (RFC 3339; 1970 on the first), so it can select changes
@@ -65,6 +70,11 @@ type ConnectorSpec struct {
 	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
 	DSNEnv string `yaml:"dsn_env,omitempty" json:"dsn_env,omitempty"`
 	Query  string `yaml:"query,omitempty" json:"query,omitempty"`
+
+	// Prune (kubernetes only) removes objects this connector created that a
+	// later full listing no longer contains, so a deleted pod disappears from
+	// the ontology instead of lingering. Off by default.
+	Prune bool `yaml:"prune,omitempty" json:"prune,omitempty"`
 
 	// Mapping turns rows (kubernetes, sql) into objects; its Source is unused.
 	Mapping *Mapping `yaml:"mapping,omitempty" json:"mapping,omitempty"`
@@ -294,6 +304,11 @@ func (d *Definition) Validate() error {
 			if len(c.Fields) == 0 || c.Mapping == nil {
 				errs = append(errs, fmt.Errorf("%s: kubernetes needs fields and a mapping", label))
 			}
+			for _, sel := range []string{c.K8sSelector, c.K8sFieldSelector} {
+				if !selectorText.MatchString(sel) {
+					errs = append(errs, fmt.Errorf("%s: selector %q has characters a kubernetes selector never uses", label, sel))
+				}
+			}
 		case "sql":
 			if c.Driver != "postgres" && c.Driver != "sqlite" {
 				errs = append(errs, fmt.Errorf("%s: driver must be postgres or sqlite", label))
@@ -306,6 +321,9 @@ func (d *Definition) Validate() error {
 			}
 		default:
 			errs = append(errs, fmt.Errorf("%s: unknown kind %q", label, c.Kind))
+		}
+		if c.Prune && c.Kind != "kubernetes" {
+			errs = append(errs, fmt.Errorf("%s: prune is only meaningful for a full listing (kubernetes)", label))
 		}
 		if c.Mapping != nil {
 			errs = append(errs, validateMapping(sc, *c.Mapping, label+" mapping", false)...)
@@ -365,6 +383,7 @@ type ObjectRef struct {
 // mappings; connectors may not use it.
 const PackFilesJob = "pack-files"
 
+var selectorText = regexp.MustCompile(`^[A-Za-z0-9_./=!, ()-]{0,200}$`)
 var kubeName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,62}$`)
 
 // CheckReadOnlyQuery refuses anything but a single SELECT or WITH statement.

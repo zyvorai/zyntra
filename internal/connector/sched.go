@@ -48,6 +48,9 @@ type Status struct {
 	// Streak counts consecutive failures; it stretches the interval.
 	Streak  int  `json:"streak"`
 	Running bool `json:"running"`
+	// Slow is set when a run takes more than half its interval: the source
+	// is too big for that schedule, or needs a selector.
+	Slow bool `json:"slow,omitempty"`
 	// Healthy is true when the last run succeeded and is recent enough
 	// (within three intervals).
 	Healthy bool `json:"healthy"`
@@ -111,9 +114,12 @@ func NewScheduler(st *ontology.Store, def *ontology.Definition, dir string, load
 		if spec.Timeout != "" {
 			to, _ = time.ParseDuration(spec.Timeout)
 		}
-		conn := c
+		conn, prune := c, spec.Prune
 		s.add(&job{name: spec.Name, kind: spec.Kind, interval: iv, timeout: to,
 			run: func(ctx context.Context, since time.Time) (ontology.IngestReport, error) {
+				if prune {
+					return RunSnapshot(ctx, st, conn, since, s.by, s.now().UTC())
+				}
 				return Run(ctx, st, conn, since, s.by, s.now().UTC())
 			}})
 	}
@@ -195,7 +201,10 @@ func (s *Scheduler) execute(ctx context.Context, j *job) (ontology.IngestReport,
 		j.st.LastSuccess = s.now()
 		j.st.LastStart = start
 	}
-	j.st.NextRun = start.Add(j.delay())
+	// The wait counts from the end of the run, so a run that takes most of an
+	// interval does not start again straight away.
+	j.st.NextRun = s.now().Add(j.delay())
+	j.st.Slow = time.Duration(j.st.DurationMS)*time.Millisecond > j.interval/2
 	j.mu.Unlock()
 	s.persist()
 	return rep, err

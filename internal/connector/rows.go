@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -20,32 +21,94 @@ import (
 	"github.com/zyvorai/zyntra/internal/ontology"
 )
 
-// KubectlGet runs "kubectl get <resource> -o json" and returns its output.
-type KubectlGet func(ctx context.Context, resource, namespace string) ([]byte, error)
+// KubeQuery is what a Kubernetes connector asks kubectl for. Resource and
+// Namespace are validated as plain names; the selectors are passed as the
+// values of -l and --field-selector, never as separate arguments.
+type KubeQuery struct {
+	Resource, Namespace, Selector, FieldSelector string
+}
 
-// Kubectl returns the real runner. resource and namespace have already been
-// validated against a plain-name pattern, so neither can smuggle in a flag.
+// KubectlGet runs "kubectl get <resource> -o json" and returns its output as a
+// stream; the caller closes it.
+type KubectlGet func(ctx context.Context, q KubeQuery) (io.ReadCloser, error)
+
+// maxKubeOutput bounds one listing. A cluster that needs more should be
+// narrowed with a selector.
+const maxKubeOutput = 512 << 20
+
+// Kubectl returns the real runner.
 func Kubectl(kubeconfig string) KubectlGet {
-	return func(ctx context.Context, resource, namespace string) ([]byte, error) {
-		args := []string{"get", resource, "-o", "json"}
-		if namespace == "" {
+	return func(ctx context.Context, q KubeQuery) (io.ReadCloser, error) {
+		args := []string{"get", q.Resource, "-o", "json"}
+		if q.Namespace == "" {
 			args = append(args, "--all-namespaces")
 		} else {
-			args = append(args, "-n", namespace)
+			args = append(args, "-n", q.Namespace)
+		}
+		if q.Selector != "" {
+			args = append(args, "-l", q.Selector)
+		}
+		if q.FieldSelector != "" {
+			args = append(args, "--field-selector", q.FieldSelector)
 		}
 		if kubeconfig != "" {
 			args = append([]string{"--kubeconfig", kubeconfig}, args...)
 		}
-		out, err := exec.CommandContext(ctx, "kubectl", args...).Output()
+		cmd := exec.CommandContext(ctx, "kubectl", args...)
+		var stderr strings.Builder
+		cmd.Stderr = &limitedWriter{w: &stderr, n: 2048}
+		out, err := cmd.StdoutPipe()
 		if err != nil {
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				return nil, fmt.Errorf("kubectl: %w: %.200s", err, strings.TrimSpace(string(ee.Stderr)))
-			}
+			return nil, err
+		}
+		if err := cmd.Start(); err != nil {
 			return nil, fmt.Errorf("kubectl: %w", err)
 		}
-		return out, nil
+		return &cmdReader{r: io.LimitReader(out, maxKubeOutput+1), cmd: cmd, stderr: &stderr}, nil
 	}
+}
+
+type limitedWriter struct {
+	w *strings.Builder
+	n int
+}
+
+func (l *limitedWriter) Write(p []byte) (int, error) {
+	if room := l.n - l.w.Len(); room > 0 {
+		l.w.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+// cmdReader streams a command's stdout and reports its failure on Close.
+type cmdReader struct {
+	r      io.Reader
+	cmd    *exec.Cmd
+	stderr *strings.Builder
+	read   int64
+}
+
+func (c *cmdReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += int64(n)
+	if c.read > maxKubeOutput {
+		return n, fmt.Errorf("kubectl output is larger than %d MiB; narrow the listing with k8s_selector, k8s_field_selector or k8s_namespace", maxKubeOutput>>20)
+	}
+	return n, err
+}
+
+func (c *cmdReader) Close() error {
+	// Drain nothing: closing early (an error mid-stream) kills the command.
+	if c.cmd.ProcessState == nil {
+		_ = c.cmd.Process.Kill()
+	}
+	if err := c.cmd.Wait(); err != nil && c.read <= maxKubeOutput {
+		if msg := strings.TrimSpace(c.stderr.String()); msg != "" {
+			return fmt.Errorf("kubectl: %w: %.200s", err, msg)
+		}
+		return fmt.Errorf("kubectl: %w", err)
+	}
+	return nil
 }
 
 // Kubernetes lists one resource kind, flattens each item to a row with Fields
@@ -61,41 +124,71 @@ type Kubernetes struct {
 func (k Kubernetes) Name() string { return "kubernetes:" + k.Spec.Name }
 
 func (k Kubernetes) Pull(ctx context.Context, _ time.Time) ([]ontology.Record, error) {
-	b, err := k.Run(ctx, k.Spec.Resource, k.Spec.K8sNamespace)
+	rc, err := k.Run(ctx, KubeQuery{Resource: k.Spec.Resource, Namespace: k.Spec.K8sNamespace,
+		Selector: k.Spec.K8sSelector, FieldSelector: k.Spec.K8sFieldSelector})
 	if err != nil {
 		return nil, err
 	}
-	rows, err := ItemsToRows(b, k.Spec.Fields)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", k.Name(), err)
+	rows, derr := ItemsToRows(rc, k.Spec.Fields)
+	if cerr := rc.Close(); cerr != nil && derr == nil {
+		derr = cerr
+	}
+	if derr != nil {
+		return nil, fmt.Errorf("%s: %w", k.Name(), derr)
 	}
 	return k.Spec.Mapping.FromRows(rows, k.Schema, k.Name(), time.Now().UTC())
 }
 
 // ItemsToRows flattens a kubectl list into rows; fields maps a column to a
-// dotted path into each item. A missing path leaves the column out.
-func ItemsToRows(b []byte, fields map[string]string) ([]any, error) {
-	var list struct {
-		Items []any `json:"items"`
+// dotted path into each item. A missing path leaves the column out. It reads
+// the stream one item at a time, so memory stays near the size of one object
+// plus the rows kept, not the whole listing.
+func ItemsToRows(r io.Reader, fields map[string]string) ([]any, error) {
+	dec := json.NewDecoder(r)
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, fmt.Errorf("decode kubectl output: expected a JSON object")
 	}
-	if err := json.Unmarshal(b, &list); err != nil {
-		return nil, fmt.Errorf("decode kubectl output: %w", err)
-	}
-	rows := make([]any, 0, len(list.Items))
-	for _, it := range list.Items {
-		row := map[string]any{}
-		for col, path := range fields {
-			if v, ok := Path(it, path); ok {
-				row[col] = v
-			}
+	var rows []any
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("decode kubectl output: %w", err)
 		}
-		rows = append(rows, row)
+		if key != "items" {
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return nil, fmt.Errorf("decode kubectl output: %w", err)
+			}
+			continue
+		}
+		if t, err := dec.Token(); err != nil || t != json.Delim('[') {
+			return nil, fmt.Errorf("decode kubectl output: items is not a list")
+		}
+		for dec.More() {
+			var item any
+			if err := dec.Decode(&item); err != nil {
+				return nil, fmt.Errorf("decode kubectl output: %w", err)
+			}
+			row := map[string]any{}
+			for col, path := range fields {
+				if v, ok := Path(item, path); ok {
+					row[col] = v
+				}
+			}
+			rows = append(rows, row)
+		}
+		if _, err := dec.Token(); err != nil {
+			return nil, fmt.Errorf("decode kubectl output: %w", err)
+		}
 	}
 	return rows, nil
 }
 
 // Path reads a dotted path from decoded JSON. A backslash escapes a dot, so
-// status.capacity.nvidia\.com/gpu works; a numeric segment indexes an array.
+// status.capacity.nvidia\.com/gpu works; a numeric segment indexes an array,
+// and [key=value] picks the first array element whose key equals value, which
+// is how to read a node's Ready condition without depending on its position:
+// status.conditions.[type=Ready].status
 func Path(v any, path string) (any, bool) {
 	var segs []string
 	var cur strings.Builder
@@ -121,6 +214,19 @@ func Path(v any, path string) (any, bool) {
 			}
 			v = next
 		case []any:
+			if k, want, ok := keyedSegment(s); ok {
+				found := false
+				for _, el := range x {
+					if m, isMap := el.(map[string]any); isMap && fmt.Sprint(m[k]) == want {
+						v, found = el, true
+						break
+					}
+				}
+				if !found {
+					return nil, false
+				}
+				continue
+			}
 			n, err := strconv.Atoi(s)
 			if err != nil || n < 0 || n >= len(x) {
 				return nil, false
@@ -250,4 +356,13 @@ func (q *SQL) Close() error {
 		return q.db.Close()
 	}
 	return nil
+}
+
+// keyedSegment parses "[key=value]".
+func keyedSegment(s string) (key, value string, ok bool) {
+	if len(s) < 5 || s[0] != '[' || s[len(s)-1] != ']' {
+		return "", "", false
+	}
+	key, value, ok = strings.Cut(s[1:len(s)-1], "=")
+	return key, value, ok && key != ""
 }

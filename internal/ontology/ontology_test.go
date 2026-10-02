@@ -496,3 +496,78 @@ func TestTenantPrincipalSeesOnlyItsTenant(t *testing.T) {
 		t.Fatalf("a cross-tenant merge candidate was proposed (%d)", n)
 	}
 }
+
+func TestSnapshotIngestPrunesOnlyWhatItAloneVouchesFor(t *testing.T) {
+	st, _ := Open("", testSchema())
+	var notes []string
+	st.Audit = func(sub, by, note string) { notes = append(notes, note) }
+	now := time.Now()
+	rec := func(key string) Record {
+		return Record{Type: "Cluster", Namespace: "k", Key: key, Props: map[string]any{"name": key}}
+	}
+	svc := Record{Type: "Service", Namespace: "k", Key: "s", Props: map[string]any{"name": "svc"},
+		Links: []RecordLink{{Type: "runs_on", ToType: "Cluster", ToNS: "k", ToKey: "gone"}}}
+	if _, err := st.IngestSnapshot("k8s", "t", []Record{rec("keep"), rec("gone"), rec("shared")}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Ingest("other", "t", []Record{svc, {Type: "Cluster", Namespace: "k", Key: "shared", Props: map[string]any{"gpus": 4.0}}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Links(MakeID("Cluster", "k", "gone"))) != 1 {
+		t.Fatal("setup: the service should link to the cluster")
+	}
+	// The next full listing no longer mentions "gone" or "shared".
+	rep, err := st.IngestSnapshot("k8s", "t", []Record{rec("keep")}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Pruned != 1 {
+		t.Fatalf("pruned %d, want 1 (only 'gone': 'shared' also has a fact from another source)", rep.Pruned)
+	}
+	if _, ok := st.Get(MakeID("Cluster", "k", "gone")); ok {
+		t.Error("a vanished object lingered")
+	}
+	if len(st.Links(MakeID("Service", "k", "s"))) != 0 {
+		t.Error("a link to a pruned object was left dangling")
+	}
+	for _, id := range []string{"keep", "shared"} {
+		if _, ok := st.Get(MakeID("Cluster", "k", id)); !ok {
+			t.Errorf("%s was pruned", id)
+		}
+	}
+	if _, ok := st.Get(MakeID("Service", "k", "s")); !ok {
+		t.Error("another source's object was pruned")
+	}
+	if last := notes[len(notes)-1]; !strings.Contains(last, "pruned 1") {
+		t.Errorf("the audit note should say what was pruned: %q", last)
+	}
+	// An empty listing, or one where every record failed, never wipes anything.
+	before := len(st.List(""))
+	if rep, _ := st.IngestSnapshot("k8s", "t", nil, now.Add(2*time.Minute)); rep.Pruned != 0 || len(st.List("")) != before {
+		t.Errorf("an empty snapshot pruned %d", rep.Pruned)
+	}
+	bad := []Record{{Type: "Cluster", Namespace: "k", Key: "x", Props: map[string]any{"nope": 1}}}
+	if rep, _ := st.IngestSnapshot("k8s", "t", bad, now.Add(3*time.Minute)); rep.Pruned != 0 || len(st.List("")) != before {
+		t.Errorf("an all-invalid snapshot pruned %d", rep.Pruned)
+	}
+	// A plain Ingest never prunes.
+	if rep, _ := st.Ingest("k8s", "t", []Record{rec("keep")}, now); rep.Pruned != 0 {
+		t.Error("Ingest pruned")
+	}
+}
+
+func TestPruneSurvivesAReopenOnSQLite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "o.db")
+	st, _ := Open(path, testSchema())
+	r := func(k string) Record {
+		return Record{Type: "Cluster", Namespace: "k", Key: k, Props: map[string]any{"name": k}}
+	}
+	_, _ = st.IngestSnapshot("k8s", "t", []Record{r("a"), r("b")}, time.Now())
+	_, _ = st.IngestSnapshot("k8s", "t", []Record{r("a")}, time.Now())
+	st.Close()
+	re, _ := Open(path, testSchema())
+	defer re.Close()
+	if len(re.List("Cluster")) != 1 {
+		t.Fatalf("a pruned object came back after a reopen: %d", len(re.List("Cluster")))
+	}
+}

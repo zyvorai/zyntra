@@ -186,9 +186,22 @@ func FromSpec(c ontology.ConnectorSpec, schema *ontology.Schema, o Options) (Con
 
 // Run pulls from c and ingests the batch.
 func Run(ctx context.Context, st *ontology.Store, c Connector, since time.Time, by string, now time.Time) (ontology.IngestReport, error) {
+	return run(ctx, st, c, since, by, now, false)
+}
+
+// RunSnapshot is Run for a connector that lists everything it knows: objects
+// it created that are no longer listed are removed.
+func RunSnapshot(ctx context.Context, st *ontology.Store, c Connector, since time.Time, by string, now time.Time) (ontology.IngestReport, error) {
+	return run(ctx, st, c, since, by, now, true)
+}
+
+func run(ctx context.Context, st *ontology.Store, c Connector, since time.Time, by string, now time.Time, prune bool) (ontology.IngestReport, error) {
 	recs, err := c.Pull(ctx, since)
 	if err != nil {
 		return ontology.IngestReport{Source: c.Name()}, err
+	}
+	if prune {
+		return st.IngestSnapshot(c.Name(), by, recs, now)
 	}
 	return st.Ingest(c.Name(), by, recs, now)
 }

@@ -335,9 +335,11 @@ func TestKeepApproval(t *testing.T) {
 	if got.Status != approvals.Approved || got.Keep == nil || got.Keep.SessionID != "sess-"+p.ID {
 		t.Fatalf("after keep approve %+v", got)
 	}
-	waitFor(t, "keep execution", func() bool {
+	// The broker calls the exec endpoint while Decide is still running, so the
+	// proposal turns executed before confirmKeep records the approval id.
+	waitFor(t, "keep execution and the recorded approval", func() bool {
 		x, _ := f.s.opt.Store.Get(p.ID)
-		return x.Status == approvals.Executed
+		return x.Status == approvals.Executed && x.Keep != nil && x.Keep.ApprovalID != ""
 	})
 	x, _ := f.s.opt.Store.Get(p.ID)
 	if x.Keep.ApprovalID != "appr-"+p.ID || x.Keep.Error != "" {

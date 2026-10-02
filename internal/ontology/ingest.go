@@ -45,6 +45,7 @@ type IngestReport struct {
 	Links      int      `json:"links"`
 	Candidates int      `json:"candidates"`
 	Skipped    []string `json:"skipped,omitempty"`
+	Pruned     int      `json:"pruned,omitempty"`
 	Hash       string   `json:"hash"`
 	Changed    bool     `json:"changed"`
 }
@@ -52,8 +53,21 @@ type IngestReport struct {
 // Ingest writes a batch of records in two passes (objects, then links) so a
 // link may point at an object later in the same batch. Records that fail
 // validation are skipped and reported; one bad row never drops the batch.
-func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (_ IngestReport, err error) {
+func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (IngestReport, error) {
+	return s.ingest(source, by, recs, now, false)
+}
+
+// IngestSnapshot is Ingest for a source that lists everything it knows: after
+// the batch, objects whose every fact came from this source and that the
+// batch did not mention are removed, with their links. An empty batch never
+// prunes, so a failed or empty listing cannot wipe the source's objects.
+func (s *Store) IngestSnapshot(source, by string, recs []Record, now time.Time) (IngestReport, error) {
+	return s.ingest(source, by, recs, now, true)
+}
+
+func (s *Store) ingest(source, by string, recs []Record, now time.Time, prune bool) (_ IngestReport, err error) {
 	rep := IngestReport{Source: source}
+	seen := make(map[string]bool, len(recs))
 	s.beginBatch()
 	defer func() {
 		if ferr := s.endBatch(); ferr != nil && err == nil {
@@ -104,6 +118,7 @@ func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (_ Inges
 			continue
 		}
 		rep.Objects++
+		seen[o.ID] = true
 		if isNew {
 			rep.Candidates += s.propose(o.ID)
 		}
@@ -119,9 +134,16 @@ func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (_ Inges
 			rep.Links++
 		}
 	}
+	if prune && len(recs) > 0 && len(rep.Skipped) < len(recs) {
+		rep.Pruned = s.pruneSource(source, seen)
+	}
 	rep.Changed = s.digest() != before
 	if rep.Changed && s.Audit != nil {
-		s.Audit("ontology:"+source, by, fmt.Sprintf("ingested %d objects, %d links (batch %s), %d skipped", rep.Objects, rep.Links, rep.Hash[:12], len(rep.Skipped)))
+		note := fmt.Sprintf("ingested %d objects, %d links (batch %s), %d skipped", rep.Objects, rep.Links, rep.Hash[:12], len(rep.Skipped))
+		if rep.Pruned > 0 {
+			note += fmt.Sprintf(", pruned %d that are no longer listed", rep.Pruned)
+		}
+		s.Audit("ontology:"+source, by, note)
 	}
 	return rep, nil
 }
@@ -328,4 +350,39 @@ func (s *Store) IngestScoped(tenant, source, by string, recs []Record, now time.
 		}
 	}
 	return s.Ingest(source, by, scoped, now)
+}
+
+// pruneSource removes objects that this source alone vouches for and that it
+// no longer lists. An object with any fact from another source is kept (the
+// other source still knows it), as is one with no facts at all.
+func (s *Store) pruneSource(source string, keep map[string]bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var gone []string
+	for id, o := range s.s.Objects {
+		if keep[id] || len(o.Props) == 0 {
+			continue
+		}
+		only := true
+		for _, v := range o.Props {
+			if v.Prov.Source != source {
+				only = false
+				break
+			}
+		}
+		if only {
+			gone = append(gone, id)
+		}
+	}
+	sort.Strings(gone)
+	for _, id := range gone {
+		for lid := range s.ix.adj[id] {
+			s.delLink(lid)
+		}
+		s.delObject(id)
+	}
+	if len(gone) > 0 {
+		_ = s.save()
+	}
+	return len(gone)
 }

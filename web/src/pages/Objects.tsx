@@ -212,6 +212,8 @@ function Connectors() {
               <td className="num">{c.last_objects}</td>
               <td>
                 {c.healthy ? <Pill tone="ok">healthy</Pill> : <Pill tone="bad">{c.last_error ? 'failing' : 'stale'}</Pill>}
+                {c.slow ? <Pill tone="warn">slow</Pill> : null}
+                {c.slow ? <span className="muted small"> takes over half its interval; narrow it with a selector or lengthen the interval</span> : null}
                 {c.streak > 1 ? <span className="muted small"> retrying less often ({c.streak} failures)</span> : null}
                 {c.last_error ? <div className="muted small">{c.last_error}</div> : null}
               </td>

@@ -7,8 +7,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,7 +34,7 @@ connectors:
     kind: kubernetes
     resource: nodes
     interval: 30s
-    fields: {name: metadata.name, gpus: 'status.capacity.nvidia\.com/gpu', ready: "status.conditions.0.status"}
+    fields: {name: metadata.name, gpus: 'status.capacity.nvidia\.com/gpu', ready: 'status.conditions.[type=Ready].status'}
     mapping: {type: Node, namespace: k8s, key: name, props: {name: name, gpus: gpus, ready: ready}}
   - name: k8s-pods
     kind: kubernetes
@@ -51,15 +54,79 @@ const nodesJSON = `{"items":[
 const podsJSON = `{"items":[{"metadata":{"name":"infer-0"},"status":{"phase":"Running"},"spec":{"nodeName":"gpu-1"}}]}`
 
 func kubectl(calls *[]string) KubectlGet {
-	return func(_ context.Context, resource, ns string) ([]byte, error) {
-		*calls = append(*calls, resource+"|"+ns)
-		switch resource {
+	return func(_ context.Context, q KubeQuery) (io.ReadCloser, error) {
+		*calls = append(*calls, q.Resource+"|"+q.Namespace)
+		switch q.Resource {
 		case "nodes":
-			return []byte(nodesJSON), nil
+			return io.NopCloser(strings.NewReader(nodesJSON)), nil
 		case "pods":
-			return []byte(podsJSON), nil
+			return io.NopCloser(strings.NewReader(podsJSON)), nil
 		}
 		return nil, errors.New("not found")
+	}
+}
+
+func TestPathKeyedSelector(t *testing.T) {
+	doc := map[string]any{"status": map[string]any{"conditions": []any{
+		map[string]any{"type": "MemoryPressure", "status": "False"},
+		map[string]any{"type": "Ready", "status": "True"},
+	}}}
+	if v, ok := Path(doc, "status.conditions.[type=Ready].status"); !ok || v != "True" {
+		t.Errorf("keyed selector = %v %v", v, ok)
+	}
+	// It does not depend on position.
+	rev := map[string]any{"status": map[string]any{"conditions": []any{
+		map[string]any{"type": "Ready", "status": "False"}, map[string]any{"type": "DiskPressure", "status": "False"},
+	}}}
+	if v, _ := Path(rev, "status.conditions.[type=Ready].status"); v != "False" {
+		t.Errorf("reordered conditions = %v", v)
+	}
+	for _, bad := range []string{"status.conditions.[type=Nope].status", "status.conditions.[type].status", "status.conditions.[=x].status"} {
+		if _, ok := Path(doc, bad); ok {
+			t.Errorf("%s resolved", bad)
+		}
+	}
+}
+
+func TestPrunedKubernetesObjectsDisappear(t *testing.T) {
+	d, err := ontology.ParseDefinition([]byte(strings.Replace(liveDef, "    resource: pods\n", "    resource: pods\n    prune: true\n", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := ontology.Open("", d.Schema())
+	pods := podsJSON
+	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: func(_ context.Context, q KubeQuery) (io.ReadCloser, error) {
+		if q.Resource == "nodes" {
+			return io.NopCloser(strings.NewReader(nodesJSON)), nil
+		}
+		return io.NopCloser(strings.NewReader(pods)), nil
+	}}, "")
+	if _, err := sc.RunAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Get("Pod:k8s:infer-0"); !ok {
+		t.Fatal("pod missing")
+	}
+	pods = `{"items":[{"metadata":{"name":"infer-1"},"status":{"phase":"Running"},"spec":{"nodeName":"gpu-1"}}]}`
+	if _, err := sc.RunNow(context.Background(), "k8s-pods"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Get("Pod:k8s:infer-0"); ok {
+		t.Error("a deleted pod is still in the ontology")
+	}
+	if _, ok := st.Get("Pod:k8s:infer-1"); !ok {
+		t.Error("the new pod is missing")
+	}
+	if im := st.Impact("Node:k8s:gpu-1", 0); len(im) != 1 || im[0].Object.ID != "Pod:k8s:infer-1" {
+		t.Errorf("impact of the node = %+v", im)
+	}
+	// Nodes were not pruned: that connector has no prune flag.
+	if _, ok := st.Get("Node:k8s:cpu-1"); !ok {
+		t.Error("an unpruned connector lost an object")
+	}
+	// prune is refused where it makes no sense.
+	if _, err := ontology.ParseDefinition([]byte("objects: [{name: N, properties: [{name: n, type: string}]}]\nlinks: []\nconnectors:\n  - {name: x, kind: exec, command: [y], prune: true}\n")); err == nil {
+		t.Error("prune on an exec connector was accepted")
 	}
 }
 
@@ -220,12 +287,12 @@ func TestSchedulerBackoffHealthAndRestore(t *testing.T) {
 	d, _ := ontology.ParseDefinition([]byte(liveDef))
 	st, _ := ontology.Open("", d.Schema())
 	var fail atomic.Bool
-	run := func(ctx context.Context, resource, ns string) ([]byte, error) {
+	run := func(ctx context.Context, q KubeQuery) (io.ReadCloser, error) {
 		if fail.Load() {
 			return nil, errors.New("connection refused to https://user:tok@api.example")
 		}
 		var c []string
-		return kubectl(&c)(ctx, resource, ns)
+		return kubectl(&c)(ctx, q)
 	}
 	state := filepath.Join(t.TempDir(), "connectors.json")
 	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: run}, state)
@@ -297,7 +364,7 @@ func TestSchedulerLongErrorsAreClipped(t *testing.T) {
 	d, _ := ontology.ParseDefinition([]byte(liveDef))
 	st, _ := ontology.Open("", d.Schema())
 	long := strings.Repeat("x ", 500)
-	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: func(context.Context, string, string) ([]byte, error) { return nil, errors.New(long) }}, "")
+	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: func(context.Context, KubeQuery) (io.ReadCloser, error) { return nil, errors.New(long) }}, "")
 	_, _ = sc.RunNow(context.Background(), "k8s-nodes")
 	for _, s := range sc.Statuses() {
 		if s.Name == "k8s-nodes" && len(s.LastError) > maxErrorLen+4 {
@@ -311,13 +378,13 @@ func TestRunAndSingleFlight(t *testing.T) {
 	st, _ := ontology.Open("", d.Schema())
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
-	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: func(context.Context, string, string) ([]byte, error) {
+	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: func(context.Context, KubeQuery) (io.ReadCloser, error) {
 		select {
 		case started <- struct{}{}:
 		default:
 		}
 		<-release
-		return []byte(nodesJSON), nil
+		return io.NopCloser(strings.NewReader(nodesJSON)), nil
 	}}, "")
 	done := make(chan error, 1)
 	go func() { _, err := sc.RunNow(context.Background(), "k8s-nodes"); done <- err }()
@@ -432,5 +499,83 @@ connectors:
 	_ = db.QueryRow("SELECT count(*) FROM zyntra_assets").Scan(&n)
 	if n != 2 {
 		t.Fatalf("rows left = %d; the connector deleted data", n)
+	}
+}
+
+func TestItemsToRowsStreamsAndSurvivesOddShapes(t *testing.T) {
+	fields := map[string]string{"name": "metadata.name"}
+	// Other top-level keys, before and after items, are skipped.
+	rows, err := ItemsToRows(strings.NewReader(`{"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"1"},"items":[{"metadata":{"name":"a"}},{"metadata":{"name":"b"}}],"extra":[1,2,3]}`), fields)
+	if err != nil || len(rows) != 2 || rows[1].(map[string]any)["name"] != "b" {
+		t.Fatalf("%v %v", rows, err)
+	}
+	if rows, err := ItemsToRows(strings.NewReader(`{"items":[]}`), fields); err != nil || len(rows) != 0 {
+		t.Errorf("empty list: %v %v", rows, err)
+	}
+	for name, bad := range map[string]string{"not an object": `[1]`, "items not a list": `{"items":3}`, "truncated": `{"items":[{"metadata":{"na`} {
+		if _, err := ItemsToRows(strings.NewReader(bad), fields); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// A pull the size of a real cluster (12k pods) must not hold the whole
+// listing in memory as decoded JSON.
+func TestLargeListingMemory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test")
+	}
+	var b strings.Builder
+	b.WriteString(`{"items":[`)
+	for i := 0; i < 12000; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"metadata":{"name":"pod-%d","namespace":"default","uid":"u%d","labels":{"a":"b","c":"d"},"annotations":{"x":"%s"}},"spec":{"nodeName":"n1","containers":[{"name":"c","image":"i","env":[%s]}]},"status":{"phase":"Running"}}`,
+			i, i, strings.Repeat("y", 400), strings.Repeat(`{"name":"E","value":"v"},`, 20)+`{"name":"Z","value":"v"}`)
+	}
+	b.WriteString(`]}`)
+	raw := b.String()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	rows, err := ItemsToRows(strings.NewReader(raw), map[string]string{"uid": "metadata.uid", "name": "metadata.name", "node": "spec.nodeName"})
+	runtime.ReadMemStats(&after)
+	if err != nil || len(rows) != 12000 {
+		t.Fatalf("%d rows, %v", len(rows), err)
+	}
+	t.Logf("listing %d MB; allocations while streaming: %d MB total", len(raw)>>20, (after.TotalAlloc-before.TotalAlloc)>>20)
+	runtime.KeepAlive(rows)
+}
+
+func TestNextRunCountsFromTheEndAndSlowIsFlagged(t *testing.T) {
+	d, _ := ontology.ParseDefinition([]byte(liveDef))
+	st, _ := ontology.Open("", d.Schema())
+	var c []string
+	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{Kubectl: kubectl(&c)}, "")
+	// A 30s connector whose run takes 25s: the clock reads 12:00:00 at the
+	// start and 12:00:25 at the end.
+	base := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	var calls int
+	sc.now = func() time.Time {
+		calls++
+		if calls <= 2 { // start of execute, and the ingest timestamp inside the run
+			return base
+		}
+		return base.Add(25 * time.Second)
+	}
+	if _, err := sc.RunNow(context.Background(), "k8s-nodes"); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sc.Statuses() {
+		if s.Name != "k8s-nodes" {
+			continue
+		}
+		if want := base.Add(25*time.Second + 30*time.Second); !s.NextRun.Equal(want) {
+			t.Errorf("next run %v, want %v (interval counted from the end of the run)", s.NextRun, want)
+		}
+		if !s.Slow {
+			t.Errorf("a 25s run on a 30s interval should be flagged slow: %+v", s)
+		}
 	}
 }
