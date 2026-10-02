@@ -91,4 +91,23 @@ describe('Model calibration card', () => {
     expect(screen.getByText(/5 are needed/)).toBeTruthy();
     expect(calls.filter((c) => c.method !== 'GET')).toEqual([]); // read-only
   });
+
+  it('shows a suggested action effect, and an older server without the field still renders', async () => {
+    mockApi({
+      ...insights,
+      'GET /api/v1/ai/calibration': {
+        decisions: 8,
+        kpis: [],
+        suggestions: [],
+        action_suggestions: [{ action: 'restart', kpi: 'wait', n: 8, declared: -0.2, scale: 1.5, suggested: -0.3, loo_error_before: 0.1, loo_error_after: 0.02, improvement: 0.8, yaml: '  - { kpi: wait, change: -0.3 } # was -0.2', why: 'Across 8 decisions that ran only restart, wait moved about 1.5x as much as the declared effect.' }],
+      },
+    });
+    const { unmount } = render(<Insights setPage={() => {}} />);
+    expect(await screen.findByText(/ran only restart/)).toBeTruthy();
+    expect(screen.getByText(/change: -0.3/)).toBeTruthy();
+    unmount();
+    mockApi({ ...insights, 'GET /api/v1/ai/calibration': { decisions: 1, kpis: [], suggestions: [] } });
+    render(<Insights setPage={() => {}} />);
+    expect(await screen.findByText('1 decision(s)')).toBeTruthy();
+  });
 });

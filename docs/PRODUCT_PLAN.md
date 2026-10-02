@@ -148,7 +148,7 @@ An ontology layer for business objects, kept separate from the KPI simulator. De
 
 5. **Scale and live data:** SQLite object store with migration, Kubernetes and SQL connectors with a scheduler, calibration of edge weights, the rollout contract for deployment tooling, tenant-scoped KPIs, three more packs, console component tests.
 
-Still open: holding objects outside memory (the store is write-efficient but memory-resident), a larger connector catalogue (SAP, MES, PACS, object storage), removal of objects that vanish upstream, true multi-engine tenancy (one KPI graph per deployment), learning action effects as well as edge weights, and delivery itself (belongs to the deployment tooling, not Zyntra).
+Still open: holding objects outside memory (the store is write-efficient but memory-resident), a larger connector catalogue (SAP, MES, PACS, object storage), true multi-engine tenancy (one KPI graph per deployment), and delivery itself (belongs to the deployment tooling, not Zyntra).
 
 ## 3. Pack catalog
 
