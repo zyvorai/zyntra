@@ -39,7 +39,7 @@ FPID=$!
 export ZYNTRA_NETRA_URL=http://127.0.0.1:$FAKE ZYNTRA_GRAVIA_URL=http://127.0.0.1:$FAKE \
   ZYNTRA_FABRIC_URL=http://127.0.0.1:$FAKE ZYNTRA_FABRIC_PASSWORD=fake ZYNTRA_KEEP_URL=http://127.0.0.1:$FAKE \
   ZYNTRA_API_KEY=$KEY ZYNTRA_EXEC_TOKEN=e2e-exec ZYNTRA_STATE_DIR=$STATE ZYNTRA_EXECUTE=dry-run
-$BIN serve -f examples/lab-kpis.yaml -addr "127.0.0.1:$PORT" -interval 1s >/tmp/zyntra-e2e.log 2>&1 &
+$BIN serve -f packs/gpu -addr "127.0.0.1:$PORT" -interval 1s >/tmp/zyntra-e2e.log 2>&1 &
 PID=$!
 trap 'kill $PID $FPID 2>/dev/null || true; rm -rf "$STATE"' EXIT
 for _ in $(seq 1 50); do
@@ -88,5 +88,66 @@ expect console '<div id="root">' curl -fsS "http://127.0.0.1:$PORT/"
 expect "spa fallback" '<div id="root">' curl -fsS "http://127.0.0.1:$PORT/approvals"
 sse=$(curl -sS -N --max-time 2 "${auth[@]}" "http://127.0.0.1:$PORT/api/v1/events" 2>/dev/null || true)
 grep -q 'event: pulse' <<<"$sse" || fail "sse pulse"
+
+# Shop pack: CSV fixtures, no Kubernetes. Webhooks go to the test receiver and
+# file actions are written for real (apply) into a scratch directory.
+expect "pack list" 'shop' $BIN pack list
+expect "pack validate shop" 'shop (packs/shop): ok' $BIN pack validate packs/shop
+expect "pack validate gpu" 'gpu (packs/gpu): ok' $BIN pack validate packs/gpu
+expect "shop plan closes stockout" 'reorder_fast_movers' $BIN plan -f packs/shop
+expect "shop invariant blocks markdown" 'markdown_dead_stock' $BIN plan -f packs/shop -o json
+$BIN plan -f packs/shop -o json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert any(b["action"] == "markdown_dead_stock" for b in d["blocked"]), "not blocked"
+assert not any(r["action"] == "markdown_dead_stock" for r in d["recommendations"]), "still ranked"
+' || fail "markdown_dead_stock must be blocked by the margin invariant"
+expect "shop dry-run PO" 'Purchase order: fast movers below cover' $BIN simulate -f packs/shop -action reorder_fast_movers
+expect "shop owner filter" 'queue_wait' $BIN gaps -f packs/shop -owner floor
+
+SPORT=$((PORT + 2))
+RPORT=$((PORT + 3))
+SSTATE=$(mktemp -d)
+./bin/zyntra-receiver -addr "127.0.0.1:$RPORT" -dir "$SSTATE/inbox" >/tmp/zyntra-e2e-receiver.log 2>&1 &
+RPID=$!
+env -u ZYNTRA_NETRA_URL -u ZYNTRA_GRAVIA_URL -u ZYNTRA_FABRIC_URL -u ZYNTRA_KEEP_URL \
+  ZYNTRA_STATE_DIR="$SSTATE" ZYNTRA_OUTPUT_DIR="$SSTATE/out" ZYNTRA_EXECUTE=apply \
+  ZYNTRA_INGEST_TOKEN=e2e-ingest ZYNTRA_POS_URL="http://127.0.0.1:$RPORT/pos" ZYNTRA_ERP_URL="http://127.0.0.1:$RPORT/erp" \
+  $BIN serve -f packs/shop -addr "127.0.0.1:$SPORT" -interval 1s >/tmp/zyntra-e2e-shop.log 2>&1 &
+SPID=$!
+trap 'kill $PID $FPID $SPID $RPID 2>/dev/null || true; rm -rf "$STATE" "$SSTATE"' EXIT
+for _ in $(seq 1 50); do
+  curl -fsS "http://127.0.0.1:$SPORT/healthz" >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:$RPORT/healthz" >/dev/null 2>&1 && break
+  sleep 0.1
+done
+S="http://127.0.0.1:$SPORT/api/v1"
+json=(-H 'Content-Type: application/json')
+expect "shop meta pack" '"id": "shop"' curl -fsS "$S/meta"
+expect "shop file sources" '"state": "ok"' api "$S/sources"
+expect "manual value" '"kpi": "cashiers_open"' api -X POST "${json[@]}" -d '{"value":1,"reason":"e2e"}' "$S/kpis/cashiers_open/value"
+expect "manual audited" 'manual value cashiers_open' api "$S/audit"
+[ "$(code -X POST "${json[@]}" -d '{"value":1}' "${auth[@]}" "$S/kpis/stockout_rate/value")" = 400 ] || fail "non-manual KPI must refuse a value"
+[ "$(code -H 'Authorization: Bearer e2e-ingest' "$S/gaps")" = 403 ] || fail "ingest token must not read gaps"
+[ "$(code -X POST "${json[@]}" -d '{}' -H 'Authorization: Bearer e2e-ingest' "$S/ingest/nope")" = 404 ] || fail "unknown ingest channel must be 404"
+expect "owner filter api" '"owner": "floor"' api "$S/gaps?owner=floor"
+
+wh=$(api -X POST "${json[@]}" -d '{"action":"markdown_capped"}' "$S/proposals")
+grep -q '"webhook"' <<<"$wh" || fail "webhook proposal kinds: $wh"
+grep -q '${ZYNTRA_POS_URL}' <<<"$wh" || fail "rendered webhook must keep the variable reference: $wh"
+wid=$(sed -n 's/^  "id": "\([^"]*\)".*/\1/p' <<<"$wh" | head -1)
+out=$(api -X POST "${json[@]}" -d '{"reason":"e2e"}' "$S/proposals/$wid/approve")
+grep -q '"status": "executed"' <<<"$out" || fail "webhook approve: $out"
+grep -q '"response_hash"' <<<"$out" || fail "webhook response hash: $out"
+expect "receiver got the markdown" "\"idempotency_key\":\"$wid\"" curl -fsS "http://127.0.0.1:$RPORT/"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Idempotency-Key: $wid" -d '{}' "http://127.0.0.1:$RPORT/pos/markdowns")
+[ "$code" = 200 ] || fail "receiver must acknowledge a repeated key with 200, got $code"
+
+fp=$(api -X POST "${json[@]}" -d '{"action":"drop_slow_supplier"}' "$S/proposals")
+fid=$(sed -n 's/^  "id": "\([^"]*\)".*/\1/p' <<<"$fp" | head -1)
+out=$(api -X POST "${json[@]}" -d '{"reason":"e2e"}' "$S/proposals/$fid/approve")
+grep -q '"status": "executed"' <<<"$out" || fail "file approve: $out"
+ls "$SSTATE"/out/buy-list/*-suppliers.md >/dev/null 2>&1 || fail "file action did not write the buy list"
+grep -q 'Next buy list' "$SSTATE"/out/buy-list/*-suppliers.md || fail "buy list content"
+expect "shop audit chain" '"ok": true' api "$S/audit/verify"
 
 echo "e2e OK"

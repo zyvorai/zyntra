@@ -53,10 +53,25 @@ func (s Snapshot) compact() map[string]any {
 			kpis = append(kpis, e)
 		}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"kpis": kpis, "gaps": s.Gaps, "severity_total": s.Severity, "plan": recs,
 		"anomalies": s.Anomalies, "forecasts": s.Forecasts, "sources": s.Sources,
 	}
+	if p := s.pack(); p != "" {
+		out["pack"] = p
+	}
+	return out
+}
+
+// pack names the pack the snapshot comes from ("shop@0.1.0"), or "".
+func (s Snapshot) pack() string {
+	if s.Model == nil || s.Model.Pack == nil {
+		return ""
+	}
+	if s.Model.Pack.Version != "" {
+		return s.Model.Pack.ID + "@" + s.Model.Pack.Version
+	}
+	return s.Model.Pack.ID
 }
 
 type Engine struct {
@@ -91,6 +106,9 @@ func (e *Engine) Status() Status {
 
 func (e *Engine) finish(ctx context.Context, q string, a Answer, s Snapshot) Answer {
 	a.Mode = "heuristic"
+	if p := s.pack(); p != "" {
+		a.Grounding = append([]string{"pack:" + p}, a.Grounding...)
+	}
 	if e.LLM == nil {
 		return a
 	}
@@ -400,7 +418,7 @@ func (e *Engine) Explain(ctx context.Context, r sim.Result, s Snapshot) Answer {
 
 // Digest is Digest plus the optional rewrite.
 func (e *Engine) Digest(ctx context.Context, s Snapshot) Answer {
-	return e.finish(ctx, "Summarise current infrastructure status in two sentences", Digest(s), s)
+	return e.finish(ctx, "Summarise the current status in two sentences", Digest(s), s)
 }
 
 func gapNames(g []gaps.Gap) string {

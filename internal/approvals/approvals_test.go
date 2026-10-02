@@ -161,3 +161,31 @@ func TestMigratesV1State(t *testing.T) {
 		t.Fatal("migration not persisted")
 	}
 }
+
+func TestAuditCoversPayloadAndResponse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, _ := Open(path)
+	p, _, _ := s.Create(Proposal{Action: "markdown", Render: "POST ${ZYNTRA_POS_URL}/markdowns\n{\"percent\":10}"}, "admin")
+	s.Decide(p.ID, true, "admin", "")
+	res := executor.Result{OK: true, Kind: "webhook", PayloadHash: strings.Repeat("a", 64), ResponseHash: strings.Repeat("b", 64)}
+	if _, err := s.Complete(p.ID, res, "zyntra"); err != nil {
+		t.Fatal(err)
+	}
+	events := s.AuditFor(p.ID)
+	if events[0].Payload == "" || events[0].Payload != renderHash(p.Render) {
+		t.Fatalf("proposal event must carry the rendered payload hash: %+v", events[0])
+	}
+	last := events[len(events)-1]
+	if last.Payload != res.PayloadHash || last.Response != res.ResponseHash {
+		t.Fatalf("execution event hashes: %+v", last)
+	}
+	if v := s.Verify(); !v.OK {
+		t.Fatalf("verify %+v", v)
+	}
+	raw, _ := os.ReadFile(path)
+	os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), strings.Repeat("b", 64), strings.Repeat("c", 64))), 0o600)
+	r, _ := Open(path)
+	if v := r.Verify(); v.OK {
+		t.Fatal("changing the recorded response hash must break the chain")
+	}
+}

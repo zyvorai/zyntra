@@ -286,7 +286,15 @@ export default function Decision() {
                       {e.phase ? <span className="muted"> · {e.phase}</span> : null}
                     </td>
                     <td>{e.by}</td>
-                    <td className="muted">{e.note}</td>
+                    <td className="muted">
+                      {e.note}
+                      {e.payload_sha256 ? (
+                        <div className="mono small" title={e.payload_sha256}>
+                          payload {e.payload_sha256.slice(0, 12)}
+                          {e.response_sha256 ? <span title={e.response_sha256}> · response {e.response_sha256.slice(0, 12)}</span> : null}
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="mono small muted" title={e.hash}>
                       {e.hash?.slice(0, 12)}
                     </td>

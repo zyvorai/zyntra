@@ -1,12 +1,13 @@
 # Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
-.PHONY: build build-go web test vet fmt check run run-lab test-e2e deploy
+.PHONY: build build-go web test vet fmt check run run-lab run-shop test-e2e deploy docker compose-up helm-lint k8s-manifest deploy-k8s
 
 build: web build-go
 
 build-go:
 	mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/zyntra ./cmd/zyntra
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/zyntra-receiver ./examples/receiver
 
 web:
 	cd web && npm ci --no-audit --no-fund && npm run build
@@ -31,7 +32,13 @@ run-lab: build
 	./bin/zyntra fake-sources -addr 127.0.0.1:19700 & \
 	ZYNTRA_NETRA_URL=http://127.0.0.1:19700 ZYNTRA_GRAVIA_URL=http://127.0.0.1:19700 \
 	ZYNTRA_FABRIC_URL=http://127.0.0.1:19700 ZYNTRA_FABRIC_PASSWORD=fake ZYNTRA_KEEP_URL=http://127.0.0.1:19700 \
-	ZYNTRA_API_KEY=$${ZYNTRA_API_KEY:-dev} ./bin/zyntra serve -f examples/lab-kpis.yaml; kill %1
+	ZYNTRA_API_KEY=$${ZYNTRA_API_KEY:-dev} ./bin/zyntra serve -f packs/gpu; kill %1
+
+# Shop pack from its fixture CSVs, webhooks going to the test receiver on :9099.
+run-shop: build
+	./bin/zyntra-receiver -addr 127.0.0.1:9099 -dir /tmp/zyntra-inbox & \
+	ZYNTRA_POS_URL=http://127.0.0.1:9099/pos ZYNTRA_ERP_URL=http://127.0.0.1:9099/erp \
+	ZYNTRA_API_KEY=$${ZYNTRA_API_KEY:-dev} ./bin/zyntra serve -f packs/shop; kill %1
 
 test-e2e: build
 	bash scripts/test-e2e.sh

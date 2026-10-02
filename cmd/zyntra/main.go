@@ -784,16 +784,22 @@ func printPlan(w io.Writer, res planner.Result) {
 		fmt.Fprintln(w, "No action reduces total gap severity without breaking a constraint.")
 	} else {
 		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "RANK\tACTION\tRISK\tGAIN\tSCORE\tCONFIDENCE\tCLOSES\tOPENS\tSTATUS")
+		fmt.Fprintln(tw, "RANK\tACTION\tRISK\tGAIN\tWORST\tSCORE\tCONFIDENCE\tCLOSES\tOPENS\tSTATUS")
 		for _, r := range recs {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%.3f\t%.3f\t%s\t%s\t%s\t%s\n", r.Rank, r.Action, orDefault(string(r.Risk), "low"),
-				r.WeightedImprovement, r.Score, r.Confidence, list(r.Result.GapsClosed), list(r.Result.GapsOpened), r.Status)
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%.3f\t%.3f\t%.3f\t%s\t%s\t%s\t%s\n", r.Rank, r.Action, orDefault(string(r.Risk), "low"),
+				r.WeightedImprovement, r.PessimisticImprovement, r.Score, r.Confidence, list(r.Result.GapsClosed), list(r.Result.GapsOpened), r.Status)
 		}
 		tw.Flush()
 	}
 	for _, r := range recs {
 		for _, f := range r.PreconditionFailures {
 			fmt.Fprintf(w, "  not approvable now: %s\n", f)
+		}
+		if r.OptimisticOnly {
+			fmt.Fprintf(w, "  %s: improves things only if every edge goes its way (ranked after robust actions)\n", r.Action)
+		}
+		for _, c := range r.Cancels {
+			fmt.Fprintf(w, "  %s: works against itself: %s\n", r.Action, c)
 		}
 	}
 	if len(res.Blocked) > 0 {

@@ -16,12 +16,13 @@
 # /etc/zyntra/zyntra.env on the deploy host (never printed).
 #
 # Options:
-#   --action ID   action to propose (default raise-inference-priority)
+#   --action ID   action to propose (default: raise-inference-priority when the
+#                 model has it, else the top approvable single action)
 #   --no-exec     skip the propose/approve round trip
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ACTION="raise-inference-priority"
+ACTION="auto"
 DO_EXEC=1
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -92,7 +93,8 @@ ok("console served")
 c, meta = call("GET", "/api/v1/meta", auth=False)
 if c != 200 or not meta.get("auth_required"):
     fail(f"meta HTTP {c} or auth not required: {meta}")
-ok(f"meta: v{meta['version']} · {meta['model']} · approvals {meta['approval_mode']} · execute {meta['execute_mode']} · AI {meta['ai_mode']}")
+pack = (meta.get("pack") or {}).get("id", "-")
+ok(f"meta: v{meta['version']} · {meta['model']} · pack {pack} · approvals {meta['approval_mode']} · execute {meta['execute_mode']} · AI {meta['ai_mode']}")
 
 c, _ = call("GET", "/api/v1/gaps", auth=False)
 if c != 401:
@@ -110,6 +112,14 @@ if c != 200 or who.get("identity", {}).get("subject") != "smoke":
     fail(f"whoami {c}: {who}")
 ok("session cookie login as smoke")
 
+c, inp = call("GET", "/api/v1/inputs")
+for m in (inp or {}).get("manual") or []:
+    if not m.get("entry"):
+        c, r = call("POST", f"/api/v1/kpis/{m['kpi']}/value", {"value": m["value"], "reason": "smoke test: confirm declared value"})
+        if c != 200:
+            fail(f"manual value {m['kpi']} HTTP {c}: {r}")
+        ok(f"manual value {m['kpi']} = {m['value']} recorded (audited)")
+
 deadline = time.time() + 60
 while True:
     c, src = call("GET", "/api/v1/sources")
@@ -122,7 +132,7 @@ for x in sources:
     print(f"     {'●' if x['ok'] else '○'} {x['name']:<8} {x['kind']:<8} {x['latency_ms']:>4} ms  {len(x['kpis'])} KPIs" + (f"  {x.get('error','')}" if not x["ok"] else ""))
 if not sources or bad:
     fail(f"{len(bad)}/{len(sources)} sources unhealthy")
-ok(f"{len(sources)}/{len(sources)} live sources healthy")
+ok(f"{len(sources)}/{len(sources)} sources healthy")
 
 c, g = call("GET", "/api/v1/gaps")
 if c != 200:
@@ -132,6 +142,18 @@ c, plan = call("GET", "/api/v1/plan")
 if c != 200:
     fail(f"plan HTTP {c}")
 ok(f"plan: {len(plan['recommendations'])} ranked actions")
+if action == "auto":
+    recs = plan["recommendations"]
+    ids = [r["action"] for r in recs]
+    if "raise-inference-priority" in ids:
+        action = "raise-inference-priority"
+    else:
+        pick = [r["action"] for r in recs if r["status"] == "pending-approval" and "+" not in r["action"]]
+        if not pick and do_exec:
+            fail("no approvable single action in the plan to smoke-test")
+        action = pick[0] if pick else ""
+    if do_exec:
+        print(f"     smoke action: {action}")
 
 c, d = call("GET", "/api/v1/ai/digest")
 if c != 200 or not d.get("text"):
@@ -161,7 +183,7 @@ if c not in (200, 201):
 if p.get("render_error"):
     fail(f"render error: {p['render_error']}")
 pid = p["id"]
-ok(f"proposed {action} → {pid} ({p.get('template')})")
+ok(f"proposed {action} → {pid} ({', '.join(p.get('kinds') or []) or p.get('template') or 'advisory'})")
 c, p = call("POST", f"/api/v1/proposals/{pid}/approve", {"reason": "smoke test"})
 if c not in (200, 202):
     fail(f"approve HTTP {c}: {p}")
@@ -179,7 +201,7 @@ if ex.get("output"):
     print("     " + ex["output"].strip().replace("\n", "\n     "))
 if p.get("status") != "executed":
     fail(f"proposal ended {p.get('status')}: {ex.get('error') or keep.get('error') or 'timeout'}")
-ok(f"executed via kubectl ({ex.get('mode')})")
+ok(f"executed via {ex.get('kind') or 'kubectl'} ({ex.get('mode')})")
 
 c, au = call("GET", "/api/v1/audit")
 trail = [e for e in au.get("events", []) if e.get("proposal") == pid]

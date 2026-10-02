@@ -118,7 +118,7 @@ func TestExamplePolicyLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := graph.Load("../../examples/lab-kpis.yaml")
+	m, err := graph.Load("../../packs/gpu/kpis.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

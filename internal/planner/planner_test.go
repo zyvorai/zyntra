@@ -106,3 +106,57 @@ func TestPairsStaleAndConfidence(t *testing.T) {
 		}
 	}
 }
+
+func TestPessimisticRankAndCancellingPairs(t *testing.T) {
+	m, err := graph.Parse([]byte(`
+kpis:
+  - {id: lat, value: 400, target: 300, direction: lower}
+  - {id: cost, value: 200, target: 100, direction: lower}
+  - {id: load, value: 50}
+edges:
+  - {from: lat, to: load, weight: -1}
+  - {from: cost, to: load, weight: 1}
+actions:
+  - {id: gamble, effects: [{kpi: lat, change: -0.3, uncertainty: 1}]}
+  - {id: steady, effects: [{kpi: lat, change: -0.2}]}
+  - {id: trim, effects: [{kpi: cost, change: -0.2}]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := PlanWith(m, Options{MaxCombo: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos := map[string]Recommendation{}
+	for _, rec := range r.Recommendations {
+		pos[rec.Action] = rec
+	}
+	g, s := pos["gamble"], pos["steady"]
+	if g.WeightedImprovement <= s.WeightedImprovement {
+		t.Fatalf("gamble should win on the nominal case: %v vs %v", g.WeightedImprovement, s.WeightedImprovement)
+	}
+	if !g.OptimisticOnly || s.OptimisticOnly {
+		t.Fatalf("optimistic-only flags: gamble %v steady %v", g.OptimisticOnly, s.OptimisticOnly)
+	}
+	if s.Rank >= g.Rank {
+		t.Fatalf("steady (wins either way) must outrank gamble: %d vs %d", s.Rank, g.Rank)
+	}
+
+	r, err = PlanWith(m, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pair *Recommendation
+	for i := range r.Recommendations {
+		if r.Recommendations[i].Action == "steady+trim" {
+			pair = &r.Recommendations[i]
+		}
+	}
+	if pair == nil {
+		t.Fatalf("steady+trim missing from %+v", r.Recommendations)
+	}
+	if len(pair.Cancels) != 1 || pair.Confidence == ConfidenceHigh {
+		t.Fatalf("steady lowers lat (load up) and trim lowers cost (load down): cancels %v confidence %s", pair.Cancels, pair.Confidence)
+	}
+}
