@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra — social card</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- Designed at 1600×840 (1.9:1). build-social-card.sh renders it at 2× (3200×1680), 1.5× (2400×1260)
+     and, at a 1600×800 viewport, 0.8× (1280×640, GitHub's social preview size). -->
+<style>
+:root{--ink:#0d0d0c;--signal:#ff5a15;--deep:#cc420a;--paper:#f7f3ec;--mute:#a79f95;
+ --display:"Avenir Next Condensed","Avenir Next","Helvetica Neue",Arial,sans-serif;--sans:"Avenir Next","Avenir","Helvetica Neue",Arial,sans-serif;--mono:"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0}
+body{width:1600px;height:100vh;min-height:800px;background:var(--ink);color:#fff;font-family:var(--sans);overflow:hidden;position:relative;-webkit-font-smoothing:antialiased}
+.glow{position:absolute;right:-220px;top:-260px;width:1020px;height:1020px;border-radius:50%;background:radial-gradient(closest-side,rgba(255,90,21,.42),rgba(255,90,21,.10) 62%,transparent 72%)}
+.grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:radial-gradient(ellipse at 72% 40%,#000 8%,transparent 70%);mask-image:radial-gradient(ellipse at 72% 40%,#000 8%,transparent 70%)}
+.wrap{position:absolute;inset:0;padding:58px 76px 52px;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:20px}
+.brand img{height:62px}
+.brand .n{font-family:var(--display);font-weight:700;font-size:34px;letter-spacing:.22em;text-transform:uppercase}.brand .n b{color:var(--signal)}
+.brand .tagline{margin-left:auto;font-family:var(--mono);font-size:19px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
+.body{flex:1;display:grid;grid-template-columns:860px 1fr;gap:34px;align-items:center}
+h1{margin:0;font-family:var(--display);font-weight:800;font-size:116px;line-height:.96;letter-spacing:-.012em}
+h1 em{font-style:normal;color:var(--signal)}
+.sub{margin:24px 0 0;font-size:28px;line-height:1.36;color:#d9d3ca;max-width:780px}
+.pills{display:flex;flex-wrap:nowrap;gap:8px;margin-top:28px}
+.pills span{white-space:nowrap;font-family:var(--mono);font-size:15px;letter-spacing:.04em;text-transform:uppercase;padding:10px 13px;border-radius:999px;border:2px solid #3a3733;color:#efe9e0}
+.pills span.o{background:var(--signal);border-color:var(--signal);color:#fff;font-weight:700}
+.loop{position:relative;height:540px}
+.node{position:absolute;left:0;right:0;height:84px;border-radius:18px;background:#1a1917;border:2px solid #34312d;display:flex;align-items:center;gap:18px;padding:0 24px}
+.node .k{font-family:var(--display);font-weight:800;font-size:44px;color:var(--signal);width:34px}
+.node .t{font-family:var(--display);font-weight:800;font-size:36px;line-height:1}.node .d{font-size:17px;color:var(--mute);margin-top:4px}
+.node.hot{background:var(--signal);border-color:var(--signal);transform:translateX(-26px);box-shadow:0 18px 50px rgba(255,90,21,.4)}.node.hot .k,.node.hot .d{color:#fff}.node.hot .d{opacity:.92}
+.rail{position:absolute;left:44px;top:84px;bottom:84px;width:0;border-left:3px dashed #5a554f}
+.foot{display:flex;align-items:center;font-family:var(--mono);font-size:21px;letter-spacing:.1em;color:var(--mute);text-transform:uppercase}
+.foot b{color:#fff}.foot .r{margin-left:auto;color:var(--signal)}
+</style></head>
+<body>
+<div class="glow"></div><div class="grid"></div>
+<div class="wrap">
+  <div class="brand"><img src="zyvor-mark.svg" alt=""><span class="n">Zyvor <b>Zyntra</b></span><span class="tagline">Decision intelligence</span></div>
+  <div class="body">
+    <div>
+      <h1>Know the<br><em>next best action</em><br>— and why.</h1>
+      <p class="sub">Live signals in. A ranked, explained plan out. Nothing runs until a person approves it.</p>
+      <div class="pills"><span>Explainable what-if</span><span class="o">Approval-gated</span><span>Dry-run by default</span><span>Packs for any industry</span></div>
+    </div>
+    <div class="loop">
+      <div class="rail"></div>
+      <div class="node" style="top:0"><span class="k">1</span><div><div class="t">Your signals</div><div class="d">CSV · Prometheus · SQL · REST · Kubernetes</div></div></div>
+      <div class="node" style="top:114px"><span class="k">2</span><div><div class="t">KPI graph and what-if</div><div class="d">Predicted change to every KPI, with the path</div></div></div>
+      <div class="node" style="top:228px"><span class="k">3</span><div><div class="t">Ranked plan</div><div class="d">Gap closed minus risk, with the reasoning</div></div></div>
+      <div class="node hot" style="top:342px"><span class="k">4</span><div><div class="t">A named human approves</div><div class="d">Re-checked, dry-run first, signed on the record</div></div></div>
+      <div class="node" style="top:456px"><span class="k">5</span><div><div class="t">Verified outcome</div><div class="d">Back within target, or rolled back</div></div></div>
+    </div>
+  </div>
+  <div class="foot"><span>github.com/zyvorai/zyntra</span><span class="r">Zyvor Production License</span></div>
+</div>
+</body></html>
