@@ -94,8 +94,8 @@ func TestRollback(t *testing.T) {
 		a    graph.Action
 		want string
 	}{
-		"priority": {act("gravia.priority", map[string]string{"name": "inference-high", "value": "1000"}), "delete gryviapriorities.gryvia.io inference-high -l app.kubernetes.io/managed-by=zyntra --ignore-not-found"},
-		"sharing":  {act("gravia.gpu-sharing", map[string]string{"name": "mig-a100", "profile": "all-1g.10gb"}), "delete gryviagpusharingpolicies.gryvia.io mig-a100"},
+		"priority": {act("gravia.priority", map[string]string{"name": "inference-high", "value": "1000"}), "delete gryviapriorities.gryvia.io -l app.kubernetes.io/managed-by=zyntra --field-selector metadata.name=inference-high --ignore-not-found"},
+		"sharing":  {act("gravia.gpu-sharing", map[string]string{"name": "mig-a100", "profile": "all-1g.10gb"}), "delete gryviagpusharingpolicies.gryvia.io -l app.kubernetes.io/managed-by=zyntra --field-selector metadata.name=mig-a100"},
 		"suspend":  {act("gravia.job-suspend", map[string]string{"job": "train", "namespace": "ml"}), `{"spec":{"suspend":false}}`},
 		"resume":   {act("gravia.job-suspend", map[string]string{"job": "train", "namespace": "ml", "suspend": "false"}), `{"spec":{"suspend":true}}`},
 	}

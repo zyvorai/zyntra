@@ -1,0 +1,59 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Zyntra approval policy (zyntra serve -policy examples/policy.yaml, or
+# ZYNTRA_POLICY). Without a policy file every proposal needs one approval,
+# pending proposals expire after 24h, approvals hold for 1h, Keep is
+# preferred and there are no maintenance windows.
+#
+# Rules are applied in order; later matches override earlier ones, and an
+# action's own `policy:` block in the model overrides them all. When actions
+# are proposed together the strictest requirement of each kind wins.
+
+maintenanceWindows:
+  weeknights:
+    days: [mon, tue, wed, thu, fri]
+    start: "22:00"
+    end: "06:00" # wraps past midnight
+    timezone: Europe/Berlin
+  weekend:
+    days: [sat, sun]
+    start: "00:00"
+    end: "24:00"
+    timezone: Europe/Berlin
+
+rules:
+  - name: baseline
+    approvals: 1
+    pendingExpiry: 24h
+    approvedExpiry: 1h
+
+  - name: gravia-changes
+    match: { adapters: [gravia] }
+    # Gravia changes go through Fabric Keep; never fall back to local
+    # execution if Keep is down.
+    keep: required
+    requireFresh: true
+
+  - name: high-risk-two-person
+    match: { risk: [high] }
+    approvals: 2
+    distinctFromProposer: true
+    maintenanceWindows: [weeknights, weekend]
+    approvedExpiry: 12h # long enough to reach the next window
+
+revalidation:
+  # Block execution if the predicted improvement has fallen by more than
+  # this fraction since the proposal was made.
+  maxDrift: 0.5
+
+# Local accounts for installs without an identity provider. Generate hashes
+# with: zyntra hash-password < password.txt
+# Roles: viewer, proposer, approver, executor, admin.
+users: []
+#  - name: ana
+#    passwordHash: "$2a$12$..."
+#    roles: [approver]
+#  - name: oncall
+#    passwordHash: "$2a$12$..."
+#    roles: [proposer, executor]

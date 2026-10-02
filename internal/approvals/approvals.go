@@ -158,12 +158,15 @@ type Proposal struct {
 	DecidedBy         string     `json:"decided_by,omitempty"`
 	Reason            string     `json:"reason,omitempty"`
 
-	Revalidation   *Revalidation    `json:"revalidation,omitempty"`
-	BlockedReasons []string         `json:"blocked_reasons,omitempty"`
-	Execution      *executor.Result `json:"execution,omitempty"`
-	ExecutedAt     *time.Time       `json:"executed_at,omitempty"`
-	Outcome        *outcome.Record  `json:"outcome,omitempty"`
-	Keep           *KeepRef         `json:"keep,omitempty"`
+	// WaitingForWindow is set on approved proposals held until their
+	// maintenance window opens.
+	WaitingForWindow bool             `json:"waiting_for_window,omitempty"`
+	Revalidation     *Revalidation    `json:"revalidation,omitempty"`
+	BlockedReasons   []string         `json:"blocked_reasons,omitempty"`
+	Execution        *executor.Result `json:"execution,omitempty"`
+	ExecutedAt       *time.Time       `json:"executed_at,omitempty"`
+	Outcome          *outcome.Record  `json:"outcome,omitempty"`
+	Keep             *KeepRef         `json:"keep,omitempty"`
 
 	// RollbackOf links a rollback proposal to the decision it undoes;
 	// RollbackID links the other way.
@@ -233,6 +236,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	st.s = state{}
 	if err := json.Unmarshal(b, &st.s); err != nil {
 		return nil, fmt.Errorf("approvals state %s: %w", path, err)
 	}

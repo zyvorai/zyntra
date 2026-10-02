@@ -214,7 +214,7 @@ func Render(a graph.Action) (Rendered, error) {
 			return r, err
 		}
 		kind := map[string]string{"gravia.priority-delete": "gryviapriorities.gryvia.io", "gravia.gpu-sharing-delete": "gryviagpusharingpolicies.gryvia.io"}[a.Execute.Template]
-		r.Args = []string{"delete", kind, n, "-l", "app.kubernetes.io/managed-by=zyntra", "--ignore-not-found"}
+		r.Args = []string{"delete", kind, "-l", "app.kubernetes.io/managed-by=zyntra", "--field-selector", "metadata.name=" + n, "--ignore-not-found"}
 		r.Display = fmt.Sprintf("# kubectl delete %s %s (only if managed by zyntra)\n", kind, n)
 	default:
 		return r, fmt.Errorf("unknown execute template %q (supported: %s)", a.Execute.Template, strings.Join(Templates, ", "))

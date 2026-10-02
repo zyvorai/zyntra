@@ -22,6 +22,9 @@ export interface KPI {
   value: number;
   target?: number;
   direction?: Direction;
+  criticality?: 'critical' | 'high' | 'normal' | 'low';
+  min?: number;
+  max?: number;
   source?: Source;
 }
 
@@ -61,7 +64,13 @@ export interface KPIResult {
   has_target: boolean;
   severity_before: number;
   severity_after: number;
+  low?: number;
+  high?: number;
+  settles_after?: string;
+  bounded?: boolean;
+  stale?: boolean;
 }
+export interface Violation { kpi: string; value: number; limit: number; kind: string; implicit?: boolean; text: string }
 export interface Step { from?: string; to: string; weight?: number; delta: number; text: string }
 export interface SimResult {
   action: string;
@@ -72,17 +81,38 @@ export interface SimResult {
   severity_after: number;
   gaps_closed: string[] | null;
   gaps_opened: string[] | null;
+  actions?: string[];
+  weighted_before?: number;
+  weighted_after?: number;
+  weighted_after_best?: number;
+  weighted_after_worst?: number;
+  violations?: Violation[];
+  stale_inputs?: string[];
+  settles_after?: string;
 }
 export interface Recommendation {
   rank: number;
   action: string;
+  actions?: string[];
   name: string;
   adapter?: string;
   risk?: Risk;
   improvement: number;
+  weighted_improvement: number;
+  uncertainty: number;
   score: number;
+  confidence: 'high' | 'medium' | 'low';
+  stale_inputs?: string[];
+  blocked_reasons?: string[];
+  settles_after?: string;
   status: string;
   result: SimResult;
+}
+export interface PlanResponse {
+  recommendations: Recommendation[];
+  blocked: Recommendation[];
+  unusable_inputs: string[];
+  model_version: string;
 }
 
 export interface SourceStatus {
@@ -127,7 +157,76 @@ export interface Answer {
 }
 export interface AIStatus { mode: string; provider?: string; model?: string; mutations: string }
 
-export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'executed' | 'failed';
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'blocked' | 'executed' | 'failed';
+export type Phase =
+  | 'proposed'
+  | 'approved'
+  | 'rejected'
+  | 'expired'
+  | 'blocked'
+  | 'failed'
+  | 'dry-run-validated'
+  | 'applied'
+  | 'observing'
+  | 'verified'
+  | 'regressed'
+  | 'missed'
+  | 'inconclusive'
+  | 'rollback-proposed'
+  | 'rolled-back';
+export interface FreshnessState {
+  kpi: string;
+  status: 'fresh' | 'stale' | 'missing' | 'static';
+  last_success?: string;
+  last_error?: string;
+  age_seconds?: number;
+  max_age?: string;
+  required?: boolean;
+}
+export interface Approval { by: string; role?: string; method?: string; at: string; reason?: string }
+export interface Alternative {
+  action: string;
+  name: string;
+  score: number;
+  weighted_improvement: number;
+  confidence?: string;
+  blocked_reasons?: string[];
+}
+export interface Revalidation {
+  at: string;
+  ok: boolean;
+  reasons?: string[];
+  model_version?: string;
+  weighted_improvement: number;
+  drift: number;
+  stale_inputs?: string[];
+}
+export interface EffectivePolicy {
+  rules?: string[];
+  approvals: number;
+  distinct_from_proposer: boolean;
+  pending_expiry: string;
+  approved_expiry: string;
+  maintenance_windows?: string[];
+  require_fresh: boolean;
+  keep: string;
+}
+export interface Criterion { kpi: string; op: string; value?: number }
+export interface OutcomeSample { at: string; values: Record<string, number>; stale?: string[]; met: boolean; breaches?: string[] }
+export interface OutcomeRecord {
+  state: 'observing' | 'verified' | 'regressed' | 'missed' | 'inconclusive';
+  started_at: string;
+  until: string;
+  window: string;
+  required_samples: number;
+  tolerance: number;
+  success_criteria: Criterion[];
+  guardrails?: string[];
+  baseline: Record<string, number>;
+  samples: OutcomeSample[];
+  reasons?: string[];
+  decided_at?: string;
+}
 export interface ExecResult { mode: string; args: string[]; output: string; ok: boolean; error?: string }
 export interface KeepRef { mode: string; session_id?: string; approval_id?: string; receipt_id?: string; error?: string }
 export interface Proposal {
@@ -149,24 +248,45 @@ export interface Proposal {
   baseline: Record<string, number>;
   actual?: Record<string, number>;
   status: ProposalStatus;
+  phase: Phase;
   created_at: string;
   created_by: string;
+  expires_at?: string;
+  approvals: Approval[];
+  required_approvals: number;
   decided_at?: string;
   decided_by?: string;
   reason?: string;
+  actions?: string[];
+  model_version?: string;
+  inputs?: { at: string; values: Record<string, number>; freshness?: FreshnessState[]; sources?: SourceStatus[] };
+  simulation?: SimResult;
+  alternatives?: Alternative[];
+  policy?: EffectivePolicy;
+  waiting_for_window?: boolean;
+  revalidation?: Revalidation;
+  blocked_reasons?: string[];
   execution?: ExecResult;
   executed_at?: string;
+  outcome?: OutcomeRecord;
   keep?: KeepRef;
+  rollback_of?: string;
+  rollback_id?: string;
 }
 export interface AuditEvent {
+  seq?: number;
   at: string;
   proposal: string;
   action: string;
   from?: string;
   to: string;
+  phase?: string;
   by: string;
   note?: string;
+  prev_hash?: string;
+  hash?: string;
 }
+export interface ChainStatus { ok: boolean; events: number; head: string; broken_at?: number; error?: string; migrated?: boolean }
 
 export interface Meta {
   product: string;
@@ -174,6 +294,7 @@ export interface Meta {
   host: string;
   model: string;
   auth_required: boolean;
+  auth_methods?: string[];
   sources: { total: number; healthy: number };
   approval_mode: string;
   execute_mode: string;
@@ -228,9 +349,35 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
 export const login = (operator: string, token: string, remember: boolean) =>
   api<{ ok: boolean; operator?: string }>('/api/v1/session', { method: 'POST', json: { operator, token, remember } });
 
+export const passwordLogin = (username: string, password: string, remember: boolean) =>
+  api<{ ok: boolean; operator?: string }>('/api/v1/session', { method: 'POST', json: { username, password, remember } });
+
+export type Role = 'viewer' | 'proposer' | 'approver' | 'executor' | 'admin' | 'exec';
 export interface WhoAmI {
-  identity: { subject: string; role: string; method: string };
+  identity: { subject: string; role: Role; roles?: Role[]; method: string };
   auth_required: boolean;
+  methods?: string[];
+}
+
+const capabilities: Record<'propose' | 'approve' | 'execute', Role[]> = {
+  propose: ['proposer', 'approver', 'admin'],
+  approve: ['approver', 'admin'],
+  execute: ['executor', 'admin'],
+};
+
+export function can(who: WhoAmI | null, what: keyof typeof capabilities): boolean {
+  if (!who) return false;
+  const roles = who.identity.roles?.length ? who.identity.roles : [who.identity.role];
+  return roles.some((r) => capabilities[what].includes(r));
+}
+
+export function until(iso?: string): string {
+  if (!iso) return '';
+  const s = (new Date(iso).getTime() - Date.now()) / 1000;
+  if (s <= 0) return 'expired';
+  if (s < 3600) return `${Math.ceil(s / 60)}m left`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h left`;
+  return `${(s / 86400).toFixed(1)}d left`;
 }
 export const logout = () => api('/api/v1/session', { method: 'DELETE' });
 

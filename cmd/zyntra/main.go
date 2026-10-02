@@ -24,6 +24,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	keeppack "github.com/zyvorai/zyntra/keep"
 
 	"github.com/zyvorai/zyntra/internal/adapters"
@@ -34,17 +36,19 @@ import (
 	"github.com/zyvorai/zyntra/internal/api"
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/decisions"
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
 	"github.com/zyvorai/zyntra/internal/keep"
 	"github.com/zyvorai/zyntra/internal/planner"
+	"github.com/zyvorai/zyntra/internal/policy"
 	"github.com/zyvorai/zyntra/internal/sim"
 	"github.com/zyvorai/zyntra/internal/tlsutil"
 	"github.com/zyvorai/zyntra/web"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 const usage = `zyntra - decision intelligence for infrastructure ops
 
@@ -52,8 +56,12 @@ Usage:
   zyntra graph    -f kpis.yaml            show KPIs and dependencies
   zyntra gaps     -f kpis.yaml            KPIs missing their targets, worst first
   zyntra simulate -f kpis.yaml -action ID what-if: predicted KPI changes and why
-  zyntra plan     -f kpis.yaml            rank all actions (all pending approval)
-  zyntra serve    -f kpis.yaml            web console, REST API and SSE pulse
+                                          (combine actions with a+b)
+  zyntra plan     -f kpis.yaml            rank actions and pairs; list constraint-blocked ones
+  zyntra serve    -f kpis.yaml [-policy policy.yaml]
+                                          web console, REST API and SSE pulse
+  zyntra verify-decision FILE             check a signed decision export offline
+  zyntra hash-password < pw               bcrypt hash for a local user in the policy file
   zyntra keep deploy|pubkey|credential    Fabric Keep executor agent
   zyntra fake-sources -addr :19700        dev: fake Netra/Gravia/Fabric/Keep sources
   zyntra exec-token                       print a random token for ZYNTRA_EXEC_TOKEN
@@ -257,10 +265,46 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 	case "serve":
 		addr := fs.String("addr", env("ZYNTRA_LISTEN", ":8080"), "listen address")
 		interval := fs.Duration("interval", 15*time.Second, "refresh and pulse interval")
+		pol := fs.String("policy", env("ZYNTRA_POLICY", ""), "approval policy file (quorum, expiry, windows, keep, local users)")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
-		return serve(ctx, &c, *addr, *interval)
+		return serve(ctx, &c, *addr, *interval, *pol)
+	case "hash-password":
+		b, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
+		if err != nil {
+			return err
+		}
+		pw := strings.TrimRight(string(b), "\r\n")
+		if len(pw) < 12 {
+			return fmt.Errorf("hash-password: read the password from stdin (at least 12 characters)")
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte(pw), 12)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, string(h))
+	case "verify-decision":
+		if len(args) != 1 {
+			return fmt.Errorf("verify-decision: want an exported decision file")
+		}
+		b, err := os.ReadFile(args[0])
+		if err != nil {
+			return err
+		}
+		var e decisions.Export
+		if err := json.Unmarshal(b, &e); err != nil {
+			return err
+		}
+		if err := decisions.Verify(e); err != nil {
+			return err
+		}
+		chain := "intact"
+		if !e.Chain.OK {
+			chain = "BROKEN: " + e.Chain.Error
+		}
+		fmt.Fprintf(out, "signature ok (ed25519 key %s)\ndecision %s %q: %s / %s\naudit chain at export: %s, %d events, head %s\n",
+			e.PublicKey, e.Decision.ID, e.Decision.ActionName, e.Decision.Status, e.Decision.Phase, chain, e.Chain.Events, e.Chain.Head)
 	case "keep":
 		return keepCmd(ctx, args, out)
 	case "fake-sources":
@@ -286,8 +330,19 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 	return nil
 }
 
-func serve(ctx context.Context, c *common, addr string, interval time.Duration) error {
+func serve(ctx context.Context, c *common, addr string, interval time.Duration, policyFile string) error {
 	m, err := graph.Load(c.file)
+	if err != nil {
+		return err
+	}
+	pol, err := policy.Load(policyFile)
+	if err != nil {
+		return err
+	}
+	if err := pol.CheckModel(m); err != nil {
+		return err
+	}
+	authn, err := buildAuth(ctx, pol)
 	if err != nil {
 		return err
 	}
@@ -316,7 +371,8 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration) 
 	execToken := env("ZYNTRA_EXEC_TOKEN", "")
 	opts := api.Options{
 		Model: m, Refresh: refresh, Interval: interval, Static: web.FS(),
-		Auth:     auth.New(env("ZYNTRA_API_KEY", ""), execToken),
+		Auth:     authn,
+		Policy:   pol,
 		AI:       engine,
 		History:  ai.NewHistory(0),
 		Store:    store,
@@ -335,7 +391,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration) 
 		return fmt.Errorf("keep approvals need ZYNTRA_KEEP_URL and ZYNTRA_EXEC_TOKEN")
 	}
 	if !opts.Auth.Required() {
-		log.Printf("warning: ZYNTRA_API_KEY is not set; the console and API are open")
+		log.Printf("warning: no ZYNTRA_API_KEY, OIDC or local users configured; the console and API are open")
 	}
 
 	execAddr := env("ZYNTRA_EXEC_TLS_ADDR", "")
@@ -387,6 +443,56 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration) 
 	}
 	s.Wait()
 	return nil
+}
+
+// buildAuth sets up the admin key, Keep's exec token, local users from the
+// policy file and OIDC from the environment.
+func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
+	a := auth.New(env("ZYNTRA_API_KEY", ""), env("ZYNTRA_EXEC_TOKEN", ""))
+	a.SetSessionSecret(env("ZYNTRA_SESSION_SECRET", ""))
+	var users []auth.LocalUser
+	for _, u := range pol.Users {
+		lu := auth.LocalUser{Name: u.Name, Hash: u.PasswordHash}
+		for _, r := range u.Roles {
+			role, err := auth.ParseRole(r)
+			if err != nil {
+				return nil, fmt.Errorf("policy user %s: %w", u.Name, err)
+			}
+			lu.Roles = append(lu.Roles, role)
+		}
+		users = append(users, lu)
+	}
+	if len(users) > 0 {
+		a.SetUsers(users)
+	}
+	issuer := env("ZYNTRA_OIDC_ISSUER", "")
+	if issuer == "" {
+		return a, nil
+	}
+	roleMap, err := auth.ParseRoleMap(env("ZYNTRA_OIDC_ROLE_MAP", ""))
+	if err != nil {
+		return nil, fmt.Errorf("ZYNTRA_OIDC_ROLE_MAP: %w", err)
+	}
+	cfg := auth.OIDCConfig{
+		Issuer: issuer, ClientID: env("ZYNTRA_OIDC_CLIENT_ID", ""), ClientSecret: env("ZYNTRA_OIDC_CLIENT_SECRET", ""),
+		RedirectURL: env("ZYNTRA_OIDC_REDIRECT_URL", ""), GroupsClaim: env("ZYNTRA_OIDC_GROUPS_CLAIM", "groups"), RoleMap: roleMap,
+	}
+	if s := env("ZYNTRA_OIDC_SCOPES", ""); s != "" {
+		cfg.Scopes = strings.Fields(strings.ReplaceAll(s, ",", " "))
+	}
+	if d := env("ZYNTRA_OIDC_DEFAULT_ROLE", ""); d != "" {
+		if cfg.DefaultRole, err = auth.ParseRole(d); err != nil {
+			return nil, fmt.Errorf("ZYNTRA_OIDC_DEFAULT_ROLE: %w", err)
+		}
+	}
+	if env("ZYNTRA_SESSION_SECRET", "") == "" && env("ZYNTRA_API_KEY", "") == "" {
+		log.Printf("warning: ZYNTRA_SESSION_SECRET is not set; sign-ins end when zyntra restarts")
+	}
+	if err := a.EnableOIDC(ctx, cfg); err != nil {
+		return nil, err
+	}
+	log.Printf("oidc sign-in via %s (%d group mappings)", issuer, len(roleMap))
+	return a, nil
 }
 
 func hostname() string {

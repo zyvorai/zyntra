@@ -6,6 +6,12 @@
 # KPIs. Endpoints are configured by environment (ZYNTRA_NETRA_URL,
 # ZYNTRA_GRAVIA_URL, ZYNTRA_FABRIC_URL, ZYNTRA_KEEP_URL); `zyntra
 # fake-sources` serves look-alike data for local runs.
+#
+# v0.3 fields shown here: criticality (weights gap severity and makes
+# critical targets hard constraints), min/max bounds, per-KPI freshness,
+# explicit constraints, effect uncertainty/delay/saturation, edge
+# confidence and provenance, outcome criteria, rollbacks and per-action
+# approval policy. See README "Model reference".
 name: zyvor-lab
 
 kpis:
@@ -17,6 +23,8 @@ kpis:
     value: 2
     target: 5
     direction: lower
+    min: 0
+    freshness: { maxAge: 2m }
     source: { kind: metrics, endpoint: netra, metric: netra_tcp_retransmissions, agg: sum, rate: true }
   - id: kernel_drops_per_s
     name: Kernel packet drops
@@ -64,6 +72,8 @@ kpis:
     value: 90
     target: 80
     direction: higher
+    min: 0
+    max: 100
     source: { kind: netra, path: /api/v1/ebpf/health, field: summary.healthScore }
 
   # —— Gravia GPU scheduler (gateway JSON) ——
@@ -72,6 +82,8 @@ kpis:
     unit: "%"
     owner: ml-platform
     value: 0
+    min: 0
+    max: 100
     source: { kind: gravia, path: /api/cluster/stats, field: utilizationPercent }
   - id: gravia_pending_jobs
     name: Pending GPU jobs
@@ -84,6 +96,7 @@ kpis:
     name: Available GPUs
     owner: ml-platform
     value: 0
+    direction: higher
     source: { kind: gravia, path: /api/cluster/stats, field: availableGPUs }
   - id: gpu_cost_total
     name: GPU spend (all time)
@@ -100,6 +113,8 @@ kpis:
     value: 20
     target: 80
     direction: lower
+    min: 0
+    max: 100
     source: { kind: fabric, path: /api/v1/system/metrics, field: cpu_percent }
   - id: host_memory_percent
     name: Host memory
@@ -108,6 +123,8 @@ kpis:
     value: 60
     target: 75
     direction: lower
+    min: 0
+    max: 100
     source: { kind: fabric, path: /api/v1/system/metrics, field: memory_percent }
   - id: root_disk_percent
     name: Root filesystem used
@@ -137,6 +154,9 @@ kpis:
     value: 1
     target: 1
     direction: higher
+    criticality: high
+    # Gravia changes run through Keep; never act on a stale readiness flag.
+    freshness: { maxAge: 1m, required: true }
     source: { kind: json, endpoint: keep, path: /v1/keep/status, field: fluxvm.ready }
 
   # —— Service KPIs (modelled; set by your SLO tooling) ——
@@ -147,6 +167,7 @@ kpis:
     value: 185
     target: 200
     direction: lower
+    criticality: high
   - id: app_availability
     name: Service availability
     unit: "%"
@@ -154,6 +175,10 @@ kpis:
     value: 99.95
     target: 99.9
     direction: higher
+    # Critical with a target: no action may push it below 99.9.
+    criticality: critical
+    min: 0
+    max: 100
   - id: gpu_queue_wait_min
     name: GPU queue wait
     unit: min
@@ -161,6 +186,10 @@ kpis:
     value: 12
     target: 10
     direction: lower
+
+constraints:
+  - { kpi: host_memory_percent, ceiling: 90, why: the serving host swaps and OOM-kills above 90% }
+  - { kpi: gravia_available_gpus, mustNotWorsen: true, why: never trade away free GPUs for a KPI win }
 
 edges:
   - { from: kernel_drops_per_s, to: tcp_retransmits_per_s, weight: 0.5, why: dropped skbs are retransmitted }
@@ -174,7 +203,7 @@ edges:
   - { from: service_latency_p99_ms, to: app_availability, weight: -0.002, why: timeouts past the client deadline }
   - { from: gravia_pending_jobs, to: gpu_queue_wait_min, weight: 0.6, why: queue depth drives wait time }
   - { from: gpu_utilization, to: gpu_queue_wait_min, weight: -0.3, why: packing more work per GPU drains the queue }
-  - { from: gpu_queue_wait_min, to: service_latency_p99_ms, weight: 0.05, why: inference replicas wait for GPUs }
+  - { from: gpu_queue_wait_min, to: service_latency_p99_ms, weight: 0.05, why: inference replicas wait for GPUs, confidence: 0.6, provenance: learned, delay: 5m }
 
 actions:
   - id: raise-inference-priority
@@ -183,22 +212,33 @@ actions:
     adapter: gravia
     risk: medium
     effects:
-      - { kpi: gpu_queue_wait_min, change: -0.35 }
-      - { kpi: service_latency_p99_ms, change: -0.05 }
+      - { kpi: gpu_queue_wait_min, change: -0.35, uncertainty: 0.3, delay: 5m }
+      - { kpi: service_latency_p99_ms, change: -0.05, uncertainty: 0.5 }
     execute:
       template: gravia.priority
       params: { name: zyntra-inference-critical, value: "900000", maxQueueTimeMinutes: "10" }
+    # Without a rollback block Zyntra deletes the GryviaPriority it created.
+    outcome:
+      window: 20m
+      samples: 3
+      successCriteria:
+        - { kpi: gpu_queue_wait_min, op: met }
+      guardrails: [app_availability, service_latency_p99_ms]
+      tolerance: 0.05
   - id: enable-mig-sharing
     name: Enable MIG GPU sharing
     description: Partition A100/H100 GPUs into 1g.10gb slices so small inference jobs share a card.
     adapter: gravia
     risk: medium
     effects:
-      - { kpi: gpu_utilization, change: 0.4 }
-      - { kpi: gpu_queue_wait_min, change: -0.25 }
+      - { kpi: gpu_utilization, change: 0.4, saturation: 0.3 }
+      - { kpi: gpu_queue_wait_min, change: -0.25, uncertainty: 0.4, delay: 10m }
     execute:
       template: gravia.gpu-sharing
       params: { name: zyntra-mig-inference, profile: 1g.10gb, count: "4", nodeSelector.gryvia.io/gpu-class: datacenter }
+    rollback:
+      template: gravia.gpu-sharing-delete
+      params: { name: zyntra-mig-inference }
   - id: tune-tcp-buffers
     name: Raise NIC ring and TCP buffer sizes
     description: Advisory. Raise rx ring and net.core.rmem_max on nodes where Netra sees kernel drops.
@@ -224,3 +264,5 @@ actions:
     effects:
       - { kpi: host_cpu_percent, change: -0.3 }
       - { kpi: host_load_1m, change: -0.3 }
+    policy:
+      approvals: 2

@@ -112,3 +112,25 @@ func TestValidation(t *testing.T) {
 		t.Fatal("unknown window in model accepted")
 	}
 }
+
+func TestExamplePolicyLoads(t *testing.T) {
+	p, err := Load("../../examples/policy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := graph.Load("../../examples/lab-kpis.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CheckModel(m); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := m.Action("rebalance-host")
+	if e := p.For(*a); e.Approvals != 2 || !e.DistinctFromProposer || len(e.Windows) != 2 {
+		t.Fatalf("rebalance-host %+v", e)
+	}
+	g, _ := m.Action("raise-inference-priority")
+	if e := p.For(*g); e.Keep != KeepRequired || !e.RequireFresh {
+		t.Fatalf("gravia %+v", e)
+	}
+}
