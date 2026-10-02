@@ -358,6 +358,32 @@ func (s *Store) IngestScoped(tenant, source, by string, recs []Record, now time.
 	return s.Ingest(source, by, scoped, now)
 }
 
+// PruneUnlisted removes the objects that source alone vouches for and that
+// recs, a complete listing of what still exists, does not name. Nothing is
+// written except the removals. An empty listing prunes nothing, so a failed or
+// empty query cannot wipe the source's objects.
+func (s *Store) PruneUnlisted(source, by string, recs []Record, now time.Time) (int, error) {
+	if len(recs) == 0 {
+		return 0, nil
+	}
+	seen := make(map[string]bool, len(recs))
+	for _, r := range recs {
+		if r.Type == "" || r.Namespace == "" || r.Key == "" {
+			return 0, fmt.Errorf("record %s/%s/%s: type, namespace and key are required", r.Type, r.Namespace, r.Key)
+		}
+		id := MakeID(r.Type, r.Namespace, r.Key)
+		if owner, ok := s.byAlias(r.Aliases, r.Tenant); ok {
+			id = owner
+		}
+		seen[id] = true
+	}
+	n := s.pruneSource(source, seen)
+	if n > 0 && s.Audit != nil {
+		s.Audit("ontology:"+source, by, fmt.Sprintf("reconciled against %d listed rows: pruned %d that no longer exist", len(recs), n))
+	}
+	return n, nil
+}
+
 // pruneSource removes objects that this source alone vouches for and that it
 // no longer lists. An object with any fact from another source is kept (the
 // other source still knows it), as is one with no facts at all.

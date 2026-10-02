@@ -115,12 +115,44 @@ func NewScheduler(st *ontology.Store, def *ontology.Definition, dir string, load
 			to, _ = time.ParseDuration(spec.Timeout)
 		}
 		conn, prune := c, spec.Prune
+		var reconcile func(ctx context.Context) (int, error)
+		if sq, ok := c.(*SQL); ok && spec.ReconcileQuery != "" {
+			every := 24 * time.Hour
+			if spec.ReconcileEvery != "" {
+				every, _ = time.ParseDuration(spec.ReconcileEvery)
+			}
+			var last time.Time // in memory: a restart reconciles once, which is safe
+			reconcile = func(ctx context.Context) (int, error) {
+				now := s.now().UTC()
+				if !last.IsZero() && now.Sub(last) < every {
+					return 0, nil
+				}
+				keys, err := sq.Keys(ctx)
+				if err != nil {
+					return 0, err
+				}
+				n, err := st.PruneUnlisted(sq.Name(), s.by, keys, now)
+				if err == nil {
+					last = now
+				}
+				return n, err
+			}
+		}
 		s.add(&job{name: spec.Name, kind: spec.Kind, interval: iv, timeout: to,
 			run: func(ctx context.Context, since time.Time) (ontology.IngestReport, error) {
 				if prune {
 					return RunSnapshot(ctx, st, conn, since, s.by, s.now().UTC())
 				}
-				return Run(ctx, st, conn, since, s.by, s.now().UTC())
+				rep, err := Run(ctx, st, conn, since, s.by, s.now().UTC())
+				if err != nil || reconcile == nil {
+					return rep, err
+				}
+				n, err := reconcile(ctx)
+				rep.Pruned += n
+				if n > 0 {
+					rep.Changed = true
+				}
+				return rep, err
 			}})
 	}
 	s.restore()

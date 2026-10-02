@@ -72,6 +72,13 @@ type ConnectorSpec struct {
 	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
 	DSNEnv string `yaml:"dsn_env,omitempty" json:"dsn_env,omitempty"`
 	Query  string `yaml:"query,omitempty" json:"query,omitempty"`
+	// ReconcileQuery finds rows deleted at the source when Query returns
+	// changes only. It is a parameterless read-only listing of the rows that
+	// still exist, with at least the columns that identify an object; every
+	// ReconcileEvery (default 24h) the objects this connector alone created
+	// and that it no longer lists are removed. An empty listing never prunes.
+	ReconcileQuery string `yaml:"reconcile_query,omitempty" json:"reconcile_query,omitempty"`
+	ReconcileEvery string `yaml:"reconcile_every,omitempty" json:"reconcile_every,omitempty"`
 
 	// Prune removes objects this connector created that a later full listing
 	// no longer contains, so a deleted pod or row disappears from the ontology
@@ -366,8 +373,27 @@ func (d *Definition) Validate() error {
 			if err := CheckReadOnlyQuery(c.Query); err != nil && c.Query != "" {
 				errs = append(errs, fmt.Errorf("%s: %w", label, err))
 			}
+			if c.ReconcileQuery != "" {
+				switch {
+				case !QueryHasParam(c.Query):
+					errs = append(errs, fmt.Errorf("%s: reconcile_query is for a query that returns changes only; this one is a full listing, use prune", label))
+				case QueryHasParam(c.ReconcileQuery):
+					errs = append(errs, fmt.Errorf("%s: reconcile_query must list every row, so it takes no parameter", label))
+				}
+				if err := CheckReadOnlyQuery(c.ReconcileQuery); err != nil {
+					errs = append(errs, fmt.Errorf("%s: reconcile_query: %w", label, err))
+				}
+			}
 		default:
 			errs = append(errs, fmt.Errorf("%s: unknown kind %q", label, c.Kind))
+		}
+		if c.ReconcileEvery != "" && c.ReconcileQuery == "" {
+			errs = append(errs, fmt.Errorf("%s: reconcile_every needs reconcile_query", label))
+		}
+		if c.ReconcileEvery != "" {
+			if dur, err := time.ParseDuration(c.ReconcileEvery); err != nil || dur < time.Minute {
+				errs = append(errs, fmt.Errorf("%s: reconcile_every %q must be a duration of at least 1m", label, c.ReconcileEvery))
+			}
 		}
 		switch {
 		case c.Prune && c.Kind != "kubernetes" && c.Kind != "sql" && c.Kind != "rest":
