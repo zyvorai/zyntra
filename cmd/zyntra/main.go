@@ -77,6 +77,9 @@ Usage:
   zyntra connector-token -name N -tenant T[,T2] [-types A,B] [-days N]
                                           new connector credential: prints the token once
                                           and the policy snippet (SHA-256 only)
+  zyntra service-token -name N -roles viewer[,proposer] [-tenant T] [-days N]
+                                          new read/propose credential for an agent or script:
+                                          prints the token once and the policy snippet
   zyntra serve    -f kpis.yaml [-policy policy.yaml]
                                           web console, REST API and SSE pulse
   zyntra verify-decision FILE             check a signed decision export offline
@@ -340,6 +343,8 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		return calibrateCmd(ctx, &c, fs, args, out)
 	case "connector-token":
 		return connectorTokenCmd(args, out)
+	case "service-token":
+		return serviceTokenCmd(args, out)
 	case "ontology":
 		return ontologyCmd(ctx, &c, fs, args, out)
 	case "scenario":
@@ -542,6 +547,9 @@ func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 	a.SetDeployToken(env("ZYNTRA_DEPLOY_TOKEN", ""))
 	if err := a.SetCredentials(pol.Credentials()); err != nil {
 		return nil, fmt.Errorf("policy connectors: %w", err)
+	}
+	if err := a.SetServiceTokens(pol.ServiceCredentials()); err != nil {
+		return nil, fmt.Errorf("policy service tokens: %w", err)
 	}
 	var users []auth.LocalUser
 	for _, u := range pol.Users {

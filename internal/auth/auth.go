@@ -199,6 +199,7 @@ type Auth struct {
 	secret    []byte
 	users     map[string]LocalUser
 	creds     []IngestCredential
+	services  []ServiceCredential
 	oidc      *oidcState
 	now       func() time.Time
 }
@@ -367,6 +368,9 @@ func (a *Auth) Identify(r *http.Request) Identity {
 			return newIdentity("deploy", "deploy-token", RoleDeploy)
 		}
 		if id, ok := a.connector(tok); ok {
+			return id
+		}
+		if id, ok := a.service(tok); ok {
 			return id
 		}
 		return Identity{}

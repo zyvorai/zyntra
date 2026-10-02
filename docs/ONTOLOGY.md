@@ -113,4 +113,12 @@ Kubernetes specifics, from running it against a real k3s cluster of 12,622 pods:
 
 It prints the token once and a policy snippet that holds only the token's SHA-256, the tenants and object types it may write, and an expiry. Rotate by adding a second entry with the same name and setting `not_after` on the old one; revoke with `revoked: true`. A connector identity (`connector:mes-alpha`) can only call the ingest route, is checked against its own tenants and types, and appears by name in the audit chain. The old shared `ZYNTRA_INGEST_TOKEN` still works for webhook-in channels and, for ontology ingest, needs an `ingest_tenants` grant.
 
+**Service tokens.** An agent or script that reads objects and drafts proposals gets its own token instead of the admin key:
+
+```bash
+./bin/zyntra service-token -name gryvia-agent-helper -roles viewer,proposer -tenant alpha
+```
+
+It prints the token once and a `service_tokens:` policy snippet with the token's SHA-256, its roles, an optional tenant and an expiry; rotate and revoke as for connector credentials. Only `viewer` and `proposer` are allowed, so a service can never approve, reject, execute or administer: its proposals wait for a named person like anyone else's. The identity is `service:<name>` in proposals and the audit chain, and a `tenant` confines it exactly as it does a tenant-bound user. Typed actions whose `permissions` name a higher role stay out of its reach.
+
 **Limits that remain.** An object id is global (`type:namespace:key`), so a connector gets a deliberately vague refusal if it picks an id another tenant already uses; give each tenant its own namespace. Tenant accounts that can approve a typed action cause the server to run it (dry-run by default) on shared infrastructure, so only define typed actions whose effect you are happy to delegate. The KPI graph is shared; tenants get their own KPIs (above) but not their own simulator. If tenants must not share an operator or the provider's graph at all, run separate deployments.

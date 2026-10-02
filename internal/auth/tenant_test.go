@@ -136,3 +136,70 @@ func TestCredentialValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceCredentialLifecycle(t *testing.T) {
+	a := New("k", "")
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	tok, h := NewServiceToken()
+	if !strings.HasPrefix(tok, ServiceTokenPrefix) || len(h) != 64 || h != HashToken(tok) {
+		t.Fatalf("token/hash shape: %q %q", tok, h)
+	}
+	tenTok, tenHash := NewServiceToken()
+	if err := a.SetServiceTokens([]ServiceCredential{
+		{Name: "agent", TokenHash: h, Roles: []Role{RoleProposer}, NotAfter: now.Add(time.Hour)},
+		{Name: "alpha-agent", TokenHash: tenHash, Roles: []Role{RoleViewer}, Tenant: "alpha"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ident := func(tok string) Identity {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Authorization", "Bearer "+tok)
+		return a.Identify(r)
+	}
+	id := ident(tok)
+	if id.Subject != "service:agent" || id.Role != RoleProposer || id.Has(RoleApprover, RoleAdmin) || id.Tenant != "" {
+		t.Fatalf("identity = %+v", id)
+	}
+	if got := ident(tenTok); got.Tenant != "alpha" || got.Role != RoleViewer {
+		t.Fatalf("tenant identity = %+v", got)
+	}
+	// A connector token is not a service token and the other way round.
+	if ident("zct_"+strings.TrimPrefix(tok, ServiceTokenPrefix)).Role != RoleNone {
+		t.Error("a service token authenticated under the connector prefix")
+	}
+	now = now.Add(2 * time.Hour)
+	if ident(tok).Role != RoleNone {
+		t.Error("an expired service token still authenticates")
+	}
+	a.services[1].Revoked = true
+	if ident(tenTok).Role != RoleNone {
+		t.Error("a revoked service token still authenticates")
+	}
+}
+
+func TestServiceCredentialValidation(t *testing.T) {
+	_, h := NewServiceToken()
+	good := ServiceCredential{Name: "agent", TokenHash: h, Roles: []Role{RoleViewer, RoleProposer}}
+	if err := good.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	bad := map[string]func(*ServiceCredential){
+		"name":       func(c *ServiceCredential) { c.Name = "Bad Name" },
+		"short hash": func(c *ServiceCredential) { c.TokenHash = "abc" },
+		"no roles":   func(c *ServiceCredential) { c.Roles = nil },
+		"approver":   func(c *ServiceCredential) { c.Roles = []Role{RoleApprover} },
+		"admin":      func(c *ServiceCredential) { c.Roles = []Role{RoleViewer, RoleAdmin} },
+		"executor":   func(c *ServiceCredential) { c.Roles = []Role{RoleExecutor} },
+		"ingest":     func(c *ServiceCredential) { c.Roles = []Role{RoleIngest} },
+		"bad tenant": func(c *ServiceCredential) { c.Tenant = "A.B" },
+		"window":     func(c *ServiceCredential) { c.NotBefore, c.NotAfter = time.Now(), time.Now().Add(-time.Hour) },
+	}
+	for name, mut := range bad {
+		c := good
+		mut(&c)
+		if c.Validate() == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
