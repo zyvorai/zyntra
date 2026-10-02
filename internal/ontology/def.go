@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -28,11 +30,14 @@ type Definition struct {
 	Rollout  *Rollout     `yaml:"rollout,omitempty" json:"rollout,omitempty"`
 	// Connectors are extra record sources beyond the file mappings.
 	Connectors []ConnectorSpec `yaml:"connectors,omitempty" json:"connectors,omitempty"`
+	// RefreshInterval is how often the pack's file mappings are re-read
+	// (default 1m).
+	RefreshInterval string `yaml:"refresh_interval,omitempty" json:"refresh_interval,omitempty"`
 }
 
 // ConnectorSpec configures one connector. Kind is exec (a program writing
-// JSON-lines records, enabled only when ZYNTRA_CONNECTOR_EXEC=1) or http (a
-// GET returning a JSON array of records).
+// JSON-lines records, enabled only when ZYNTRA_CONNECTOR_EXEC=1), http (a
+// GET returning a JSON array of records), kubernetes or sql.
 type ConnectorSpec struct {
 	Name    string   `yaml:"name" json:"name"`
 	Kind    string   `yaml:"kind" json:"kind"`
@@ -40,6 +45,39 @@ type ConnectorSpec struct {
 	URL     string   `yaml:"url,omitempty" json:"url,omitempty"`
 	// TokenEnv names the environment variable holding a bearer token.
 	TokenEnv string `yaml:"token_env,omitempty" json:"token_env,omitempty"`
+	// Interval is how often the scheduler runs the connector (e.g. "5m");
+	// empty means every 5 minutes.
+	Interval string `yaml:"interval,omitempty" json:"interval,omitempty"`
+	// Timeout bounds one run (default 1m).
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+
+	// kubernetes: kubectl get Resource -o json, each item flattened to a row
+	// by Fields (column -> dotted path, "\\." escapes a dot), then mapped by
+	// Mapping. K8sNamespace "" reads all namespaces.
+	Resource     string `yaml:"resource,omitempty" json:"resource,omitempty"`
+	K8sNamespace string `yaml:"k8s_namespace,omitempty" json:"k8s_namespace,omitempty"`
+	// K8sSelector and K8sFieldSelector narrow the list server-side (kubectl
+	// -l / --field-selector). On a large cluster this is the difference
+	// between a few kilobytes and a hundred megabytes per pull.
+	K8sSelector      string            `yaml:"k8s_selector,omitempty" json:"k8s_selector,omitempty"`
+	K8sFieldSelector string            `yaml:"k8s_field_selector,omitempty" json:"k8s_field_selector,omitempty"`
+	Fields           map[string]string `yaml:"fields,omitempty" json:"fields,omitempty"`
+
+	// sql: Query runs read-only with one argument, the time of the last
+	// successful run (RFC 3339; 1970 on the first), so it can select changes
+	// only. The connection string comes from the environment variable DSNEnv,
+	// never from the pack. Driver is postgres or sqlite.
+	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
+	DSNEnv string `yaml:"dsn_env,omitempty" json:"dsn_env,omitempty"`
+	Query  string `yaml:"query,omitempty" json:"query,omitempty"`
+
+	// Prune (kubernetes only) removes objects this connector created that a
+	// later full listing no longer contains, so a deleted pod disappears from
+	// the ontology instead of lingering. Off by default.
+	Prune bool `yaml:"prune,omitempty" json:"prune,omitempty"`
+
+	// Mapping turns rows (kubernetes, sql) into objects; its Source is unused.
+	Mapping *Mapping `yaml:"mapping,omitempty" json:"mapping,omitempty"`
 }
 
 // Schema returns the type system part of the definition.
@@ -193,29 +231,7 @@ func (d *Definition) Validate() error {
 	sc := d.Schema()
 	errs := []error{sc.Validate()}
 	for i, m := range d.Mappings {
-		ot, ok := sc.Object(m.Type)
-		switch {
-		case !ok:
-			errs = append(errs, fmt.Errorf("mapping %d: unknown object type %q", i, m.Type))
-			continue
-		case m.Source == "" || m.Key == "" || m.Namespace == "":
-			errs = append(errs, fmt.Errorf("mapping %d (%s): source, namespace and key are required", i, m.Type))
-		}
-		for p := range m.Props {
-			found := false
-			for _, dp := range ot.Properties {
-				found = found || dp.Name == p
-			}
-			if !found {
-				errs = append(errs, fmt.Errorf("mapping %d (%s): unknown property %q", i, m.Type, p))
-			}
-		}
-		for _, l := range m.Links {
-			lt, ok := sc.Link(l.Type)
-			if !ok || lt.From != m.Type || lt.To != l.To {
-				errs = append(errs, fmt.Errorf("mapping %d (%s): link %q must join %s to %s", i, m.Type, l.Type, m.Type, l.To))
-			}
-		}
+		errs = append(errs, validateMapping(sc, m, fmt.Sprintf("mapping %d", i), true)...)
 	}
 	seen := map[string]bool{}
 	for _, a := range d.Actions {
@@ -258,15 +274,60 @@ func (d *Definition) Validate() error {
 	}
 	cseen := map[string]bool{}
 	for _, c := range d.Connectors {
-		switch {
-		case c.Name == "" || cseen[c.Name]:
-			errs = append(errs, fmt.Errorf("connector %q: name missing or duplicated", c.Name))
-		case c.Kind == "exec" && len(c.Command) == 0, c.Kind == "http" && c.URL == "":
-			errs = append(errs, fmt.Errorf("connector %s: %s needs a command or url", c.Name, c.Kind))
-		case c.Kind != "exec" && c.Kind != "http":
-			errs = append(errs, fmt.Errorf("connector %s: unknown kind %q", c.Name, c.Kind))
+		label := "connector " + c.Name
+		if c.Name == "" || cseen[c.Name] || c.Name == PackFilesJob {
+			errs = append(errs, fmt.Errorf("connector %q: name missing, duplicated or reserved", c.Name))
 		}
 		cseen[c.Name] = true
+		for field, v := range map[string]string{"interval": c.Interval, "timeout": c.Timeout} {
+			if v == "" {
+				continue
+			}
+			dur, err := time.ParseDuration(v)
+			if err != nil || dur < 10*time.Second && field == "interval" || dur <= 0 {
+				errs = append(errs, fmt.Errorf("%s: %s %q must be a duration of at least 10s", label, field, v))
+			}
+		}
+		switch c.Kind {
+		case "exec":
+			if len(c.Command) == 0 {
+				errs = append(errs, fmt.Errorf("%s: exec needs a command", label))
+			}
+		case "http":
+			if c.URL == "" {
+				errs = append(errs, fmt.Errorf("%s: http needs a url", label))
+			}
+		case "kubernetes":
+			if !kubeName.MatchString(c.Resource) || (c.K8sNamespace != "" && !kubeName.MatchString(c.K8sNamespace)) {
+				errs = append(errs, fmt.Errorf("%s: resource and k8s_namespace must be plain kubernetes names", label))
+			}
+			if len(c.Fields) == 0 || c.Mapping == nil {
+				errs = append(errs, fmt.Errorf("%s: kubernetes needs fields and a mapping", label))
+			}
+			for _, sel := range []string{c.K8sSelector, c.K8sFieldSelector} {
+				if !selectorText.MatchString(sel) {
+					errs = append(errs, fmt.Errorf("%s: selector %q has characters a kubernetes selector never uses", label, sel))
+				}
+			}
+		case "sql":
+			if c.Driver != "postgres" && c.Driver != "sqlite" {
+				errs = append(errs, fmt.Errorf("%s: driver must be postgres or sqlite", label))
+			}
+			if c.DSNEnv == "" || c.Query == "" || c.Mapping == nil {
+				errs = append(errs, fmt.Errorf("%s: sql needs dsn_env, query and a mapping", label))
+			}
+			if err := CheckReadOnlyQuery(c.Query); err != nil && c.Query != "" {
+				errs = append(errs, fmt.Errorf("%s: %w", label, err))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("%s: unknown kind %q", label, c.Kind))
+		}
+		if c.Prune && c.Kind != "kubernetes" {
+			errs = append(errs, fmt.Errorf("%s: prune is only meaningful for a full listing (kubernetes)", label))
+		}
+		if c.Mapping != nil {
+			errs = append(errs, validateMapping(sc, *c.Mapping, label+" mapping", false)...)
+		}
 	}
 	vseen := map[string]bool{}
 	for _, v := range d.Views {
@@ -274,6 +335,11 @@ func (d *Definition) Validate() error {
 			errs = append(errs, fmt.Errorf("view %q: unknown type %q or duplicate id", v.ID, v.Type))
 		}
 		vseen[v.ID] = true
+	}
+	if d.RefreshInterval != "" {
+		if dur, err := time.ParseDuration(d.RefreshInterval); err != nil || dur < 10*time.Second {
+			errs = append(errs, fmt.Errorf("refresh_interval %q must be a duration of at least 10s", d.RefreshInterval))
+		}
 	}
 	if d.Rollout != nil {
 		for _, s := range d.Rollout.Stages {
@@ -311,4 +377,54 @@ type ObjectRef struct {
 	Input string `json:"input"`
 	ID    string `json:"id"`
 	Type  string `json:"type"`
+}
+
+// PackFilesJob is the scheduler's name for re-reading the pack's file
+// mappings; connectors may not use it.
+const PackFilesJob = "pack-files"
+
+var selectorText = regexp.MustCompile(`^[A-Za-z0-9_./=!, ()-]{0,200}$`)
+var kubeName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,62}$`)
+
+// CheckReadOnlyQuery refuses anything but a single SELECT or WITH statement.
+// It is a guard against a mis-typed pack, not a security boundary: the
+// connector also runs the query in a read-only transaction, and the database
+// account should be read-only.
+func CheckReadOnlyQuery(q string) error {
+	t := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(q), ";"))
+	l := strings.ToLower(t)
+	if !(strings.HasPrefix(l, "select") || strings.HasPrefix(l, "with")) {
+		return errors.New("query must be a SELECT (or WITH ... SELECT)")
+	}
+	if strings.Contains(t, ";") {
+		return errors.New("query must be a single statement")
+	}
+	return nil
+}
+
+func validateMapping(sc *Schema, m Mapping, label string, needSource bool) []error {
+	var errs []error
+	ot, ok := sc.Object(m.Type)
+	if !ok {
+		return []error{fmt.Errorf("%s: unknown object type %q", label, m.Type)}
+	}
+	if (needSource && m.Source == "") || m.Key == "" || m.Namespace == "" {
+		errs = append(errs, fmt.Errorf("%s (%s): source, namespace and key are required", label, m.Type))
+	}
+	for p := range m.Props {
+		found := false
+		for _, dp := range ot.Properties {
+			found = found || dp.Name == p
+		}
+		if !found {
+			errs = append(errs, fmt.Errorf("%s (%s): unknown property %q", label, m.Type, p))
+		}
+	}
+	for _, l := range m.Links {
+		lt, ok := sc.Link(l.Type)
+		if !ok || lt.From != m.Type || lt.To != l.To {
+			errs = append(errs, fmt.Errorf("%s (%s): link %q must join %s to %s", label, m.Type, l.Type, m.Type, l.To))
+		}
+	}
+	return errs
 }

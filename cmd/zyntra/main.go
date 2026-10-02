@@ -46,6 +46,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/pack"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/policy"
+	"github.com/zyvorai/zyntra/internal/rollout"
 	"github.com/zyvorai/zyntra/internal/sim"
 	"github.com/zyvorai/zyntra/internal/tlsutil"
 	"github.com/zyvorai/zyntra/web"
@@ -71,6 +72,8 @@ Usage:
                                           business objects from the pack's ontology.yaml
   zyntra scenario run|compare -f PACK [-set kpi=v] [name=]a+b ...
                                           what-if plans with business impact
+  zyntra calibrate -f PACK [-state DIR]   backtest edge weights against finished decisions
+                                          and suggest corrections (never applies them)
   zyntra connector-token -name N -tenant T[,T2] [-types A,B] [-days N]
                                           new connector credential: prints the token once
                                           and the policy snippet (SHA-256 only)
@@ -333,6 +336,8 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		return keepCmd(ctx, args, out)
 	case "pack":
 		return packCmd(ctx, args, out)
+	case "calibrate":
+		return calibrateCmd(ctx, &c, fs, args, out)
 	case "connector-token":
 		return connectorTokenCmd(args, out)
 	case "ontology":
@@ -407,6 +412,10 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 			env("ZYNTRA_AI_LABEL", "Fabric AI gateway"), envBool("ZYNTRA_AI_INSECURE"))
 	}
 	execToken := env("ZYNTRA_EXEC_TOKEN", "")
+	rollouts, err := rollout.Open(filepath.Join(stateDir, "rollouts.json"))
+	if err != nil {
+		return fmt.Errorf("rollouts: %w", err)
+	}
 	ont, err := buildOntology(c.file, m, pol, stateDir)
 	if err != nil {
 		return err
@@ -416,6 +425,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	}
 	opts := api.Options{
 		Ontology: ont,
+		Rollouts: rollouts,
 		Model:    m, Refresh: refresh, Interval: interval, Static: web.FS(),
 		Auth:    authn,
 		Policy:  pol,
@@ -469,6 +479,9 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 		}
 	}
 	go s.Run(ctx)
+	if ont.Scheduler != nil {
+		go ont.Scheduler.Run(ctx)
+	}
 
 	var servers []*http.Server
 	if execFiles.CA != "" {
@@ -526,6 +539,7 @@ func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 	a := auth.New(env("ZYNTRA_API_KEY", ""), env("ZYNTRA_EXEC_TOKEN", ""))
 	a.SetSessionSecret(env("ZYNTRA_SESSION_SECRET", ""))
 	a.SetIngestToken(env("ZYNTRA_INGEST_TOKEN", ""))
+	a.SetDeployToken(env("ZYNTRA_DEPLOY_TOKEN", ""))
 	if err := a.SetCredentials(pol.Credentials()); err != nil {
 		return nil, fmt.Errorf("policy connectors: %w", err)
 	}

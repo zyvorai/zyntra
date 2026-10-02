@@ -32,6 +32,10 @@ type OntologyOptions struct {
 	Actions   *actions.Registry
 	Scenarios *scenario.Store
 	Load      ontology.Loader
+	// Scheduler runs the pack's file mappings and connectors on their
+	// intervals; nil falls back to reading them on demand only.
+	Scheduler *connector.Scheduler
+	Connector connector.Options
 }
 
 func (s *Server) ontOn(w http.ResponseWriter) bool {
@@ -77,7 +81,7 @@ func (s *Server) objectContext(r *http.Request, m *graph.Model) *ai.ObjectContex
 	if s.opt.Ontology.Store == nil {
 		return nil
 	}
-	return &ai.ObjectContext{Reader: s.reader(r), Schema: s.opt.Ontology.Store.Schema(), Failing: failing(m)}
+	return &ai.ObjectContext{Reader: s.reader(r), Schema: s.opt.Ontology.Store.Schema(), Failing: failing(m), Label: s.kpiLabeler(r)}
 }
 
 type linkView struct {
@@ -95,8 +99,21 @@ func (s *Server) handleOntSchema(w http.ResponseWriter, r *http.Request) {
 	// other customers' locations, so tenant-bound callers do not get them.
 	d := *s.opt.Ontology.Def
 	d.Connectors = nil
-	if auth.FromContext(r.Context()).Tenant != "" {
+	if tenant := auth.FromContext(r.Context()).Tenant; tenant != "" {
 		d.Rollout = nil
+		// Object types name the provider KPIs that measure them; a tenant
+		// keeps only its own tenant's.
+		m, _ := s.snapshot()
+		d.Objects = append([]ontology.ObjectType(nil), d.Objects...)
+		for i := range d.Objects {
+			var own []string
+			for _, id := range d.Objects[i].KPIs {
+				if k, ok := m.KPI(id); ok && k.Tenant == tenant {
+					own = append(own, id)
+				}
+			}
+			d.Objects[i].KPIs = own
+		}
 	}
 	writeJSON(w, http.StatusOK, d)
 }
@@ -147,14 +164,16 @@ func (s *Server) handleOntObject(w http.ResponseWriter, r *http.Request) {
 	}
 	m, _ := s.snapshot()
 	var bad []string
-	for _, k := range ontology.BoundKPIs(s.opt.Ontology.Store.Schema(), o) {
+	bound := ontology.BoundKPIs(s.opt.Ontology.Store.Schema(), o)
+	for _, k := range bound {
 		if failing(m)(k) {
 			bad = append(bad, k)
 		}
 	}
+	label := s.kpiLabeler(r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"object": o, "links": links, "impact": rd.Impact(o.ID, 0),
-		"bound_kpis": ontology.BoundKPIs(s.opt.Ontology.Store.Schema(), o), "failing_kpis": bad,
+		"bound_kpis": labelAll(label, bound), "failing_kpis": labelAll(label, bad),
 	})
 }
 
@@ -177,7 +196,15 @@ func (s *Server) handleOntRisk(w http.ResponseWriter, r *http.Request) {
 	m, _ := s.snapshot()
 	rd := s.reader(r)
 	risks := ontology.AtRisk(rd, failing(m))
-	writeJSON(w, http.StatusOK, map[string]any{"at_risk": nilSafe(risks), "exposed": nilSafe(ontology.Exposed(rd, risks))})
+	exposed := ontology.Exposed(rd, risks)
+	label := s.kpiLabeler(r)
+	for i := range risks {
+		risks[i].KPIs = labelAll(label, risks[i].KPIs)
+	}
+	for i := range exposed {
+		exposed[i].KPIs = labelAll(label, exposed[i].KPIs)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"at_risk": nilSafe(risks), "exposed": nilSafe(exposed)})
 }
 
 func nilSafe[T any](v []T) []T {
@@ -215,13 +242,16 @@ func (s *Server) RefreshOntology(ctx context.Context, by string) ([]ontology.Ing
 	if o.Store == nil {
 		return nil, nil
 	}
+	if o.Scheduler != nil {
+		return o.Scheduler.RunAll(ctx)
+	}
 	now := time.Now().UTC()
 	reps, err := o.Store.IngestMappings(o.Def, o.Dir, by, o.Load, now)
 	if err != nil {
 		return reps, err
 	}
 	for _, spec := range o.Def.Connectors {
-		c, err := connector.FromSpec(spec)
+		c, err := connector.FromSpec(spec, o.Def.Schema(), o.Connector)
 		if err != nil {
 			return reps, err
 		}
@@ -285,6 +315,7 @@ func (s *Server) handleOntView(w http.ResponseWriter, r *http.Request) {
 	for _, e := range ontology.Exposed(rd, risks) {
 		exposed[e.ID] = e
 	}
+	label := s.kpiLabeler(r)
 	rows := []viewRow{}
 	for _, o := range rd.List(spec.Type) {
 		keep := true
@@ -302,7 +333,7 @@ func (s *Server) handleOntView(w http.ResponseWriter, r *http.Request) {
 				row.Cells[c] = v.V
 			}
 		}
-		row.Failing = byRisk[o.ID].KPIs
+		row.Failing = labelAll(label, byRisk[o.ID].KPIs)
 		if spec.Exposed {
 			for _, d := range exposed[o.ID].DependsOn {
 				if x, ok := rd.Get(d); ok {
@@ -502,4 +533,39 @@ func (s *Server) handleOntIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, rep)
+}
+
+// handleConnectors reports each connector's health. Errors can quote what a
+// source returned, so this is for approvers and admins, not tenants.
+func (s *Server) handleConnectors(w http.ResponseWriter, _ *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	st := []connector.Status{}
+	if sc := s.opt.Ontology.Scheduler; sc != nil {
+		st = sc.Statuses()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connectors": st})
+}
+
+func (s *Server) handleConnectorRun(w http.ResponseWriter, r *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	sc := s.opt.Ontology.Scheduler
+	if sc == nil {
+		writeErr(w, http.StatusNotFound, "no scheduler")
+		return
+	}
+	rep, err := sc.RunNow(r.Context(), r.PathValue("name"))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, rep)
+	case err.Error() == "already running":
+		writeErr(w, http.StatusConflict, err.Error())
+	case strings.HasPrefix(err.Error(), "no connector"):
+		writeErr(w, http.StatusNotFound, err.Error())
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "report": rep})
+	}
 }

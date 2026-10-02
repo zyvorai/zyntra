@@ -599,3 +599,67 @@ export interface OntChange {
   before?: { v: string | number | boolean; prov: Prov };
   after: { v: string | number | boolean; prov: Prov };
 }
+
+export interface ConnectorStatus {
+  name: string;
+  kind: string;
+  interval: string;
+  last_run?: string;
+  last_success?: string;
+  next_run?: string;
+  last_error?: string;
+  last_objects: number;
+  last_links: number;
+  last_skipped: number;
+  duration_ms: number;
+  runs: number;
+  failures: number;
+  streak: number;
+  running: boolean;
+  slow?: boolean;
+  healthy: boolean;
+}
+
+export interface CalibrationReport {
+  decisions: number;
+  kpis: { kpi: string; n: number; mean_abs_error: number; hit_rate: number; bias: number }[];
+  suggestions: {
+    kpi: string;
+    n: number;
+    edges: { from: string; to: string; weight: number; scale: number; suggested: number }[];
+    loo_error_before: number;
+    loo_error_after: number;
+    improvement: number;
+    yaml: string;
+    why: string;
+  }[];
+  notes?: string[];
+  note?: string;
+}
+
+export interface RolloutStage {
+  name: string;
+  sites: string[];
+  state: 'waiting' | 'running' | 'healthy' | 'blocked' | 'failed';
+  reports?: Record<string, { state: string; note?: string; by: string; at: string }>;
+  gate_check?: { kpi: string; value?: number; max?: number; min?: number; ok: boolean; reason?: string }[];
+}
+export interface Rollout {
+  id: string;
+  action: string;
+  state: 'open' | 'complete' | 'halted' | 'aborted';
+  reason?: string;
+  current?: string;
+  stages: RolloutStage[];
+}
+
+export interface TenantKPI {
+  id: string;
+  name: string;
+  unit?: string;
+  value: number;
+  target?: number;
+  direction?: Direction;
+  met: boolean;
+  stale?: boolean;
+}

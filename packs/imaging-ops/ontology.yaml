@@ -1,0 +1,60 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Which exams wait behind a scanner that is down or a slow archive. Links say
+# what depends on what; only kpis.yaml predicts. No patient data is modelled.
+name: imaging-operations
+
+objects:
+  - name: Department
+    properties:
+      - {name: name, type: string, required: true}
+  - name: Scanner
+    kpis: [scanners_down]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: modality, type: string}
+      - {name: status, type: string}
+  - name: Archive
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: status, type: string}
+  - name: Study
+    kpis: [report_turnaround_h]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: priority, type: string}
+      - {name: state, type: string}
+      - {name: referring_clinic, type: string, sensitive: true}
+
+links:
+  - {name: in_department, from: Scanner, to: Department}
+  - {name: acquired_on, from: Study, to: Scanner}
+
+mappings:
+  - {source: fixture/departments.csv, type: Department, namespace: ris, key: department_id, props: {name: name}}
+  - {source: fixture/archives.csv, type: Archive, namespace: pacs, key: archive_id, props: {name: name, status: status}}
+  - source: fixture/scanners.csv
+    type: Scanner
+    namespace: biomed
+    key: scanner_id
+    props: {name: name, modality: modality, status: status}
+    links: [{type: in_department, column: department, to: Department, namespace: ris}]
+  - source: fixture/studies.csv
+    type: Study
+    namespace: ris
+    key: accession
+    props: {name: accession, priority: priority, state: state, referring_clinic: referring_clinic}
+    links: [{type: acquired_on, column: scanner_id, to: Scanner, namespace: biomed}]
+
+actions:
+  - id: reroute_to_working_scanner
+    inputs: [{name: scanner, object_type: Scanner, required: true}]
+    requires: [{input: scanner, property: status, equals: down}]
+    affects: [Study]
+    permissions: [approver]
+    outcome: [{object_type: Scanner, must_be_safe: true}]
+
+views:
+  - {id: studies, title: Studies and the scanner behind them, type: Study, columns: [name, priority, state], exposed: true}
+  - {id: scanners, title: Scanners, type: Scanner, columns: [name, modality, status], actions: [reroute_to_working_scanner]}

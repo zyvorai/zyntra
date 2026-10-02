@@ -1,0 +1,5 @@
+merchant_id,name,segment,contact
+m-1,Northwind Travel,travel,payments@northwind.example
+m-2,Contoso Marketplace,marketplace,ops@contoso.example
+m-3,Fabrikam Grocers,grocery,treasury@fabrikam.example
+m-4,Tailspin Gaming,gaming,pay@tailspin.example

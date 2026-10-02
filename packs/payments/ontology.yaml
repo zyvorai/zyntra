@@ -1,0 +1,69 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Which merchants are behind a degraded acquirer or a deep settlement queue.
+# Links say what depends on what; only kpis.yaml predicts.
+name: payments-operations
+
+objects:
+  - name: Acquirer
+    kpis: [auth_latency_ms, approval_rate]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: region, type: string}
+      - {name: status, type: string}
+  - name: SettlementBatch
+    kpis: [settlement_backlog]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: queued, type: number}
+  - name: Merchant
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: segment, type: string}
+      - {name: contact, type: string, sensitive: true}
+
+links:
+  - {name: settles_via, from: SettlementBatch, to: Acquirer}
+  - {name: relies_on_batch, from: Merchant, to: SettlementBatch}
+
+mappings:
+  - {source: fixture/acquirers.csv, type: Acquirer, namespace: gw, key: acquirer_id, props: {name: name, region: region, status: status}}
+  - source: fixture/settlement.csv
+    type: SettlementBatch
+    namespace: gw
+    key: batch_id
+    props: {name: batch_id, queued: queued}
+    links: [{type: settles_via, column: acquirer_id, to: Acquirer}]
+  - {source: fixture/merchants.csv, type: Merchant, namespace: crm, key: merchant_id, props: {name: name, segment: segment, contact: contact}}
+  - source: fixture/settlement.csv
+    type: Merchant
+    namespace: crm
+    key: merchant_id
+    props: {}
+    links: [{type: relies_on_batch, column: batch_id, to: SettlementBatch, namespace: gw}]
+
+actions:
+  - id: failover_to_backup_acquirer
+    inputs: [{name: acquirer, object_type: Acquirer, required: true}]
+    requires: [{input: acquirer, property: status, equals: active}]
+    affects: [Merchant]
+    permissions: [approver]
+    outcome: [{object_type: Acquirer, must_be_safe: true}]
+  - id: scale_settlement_workers
+    inputs: [{name: batch, object_type: SettlementBatch, required: true}]
+    affects: [Merchant]
+    outcome: [{object_type: SettlementBatch, must_be_safe: true}]
+
+views:
+  - {id: merchants, title: Merchants and settlement exposure, type: Merchant, columns: [name, segment], exposed: true}
+  - {id: acquirers, title: Acquirers, type: Acquirer, columns: [name, region, status], actions: [failover_to_backup_acquirer]}
+
+rollout:
+  stages:
+    - name: one-region
+      sites: [eu-west]
+      gates:
+        - {kpi: approval_rate, min: 0.9}
+    - name: all-regions
+      sites: [eu-central, us-east]

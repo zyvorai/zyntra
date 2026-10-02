@@ -25,6 +25,8 @@ jobs:
         run: go test -race ./...
       - name: Build console and binary
         run: make build
+      - name: Console tests
+        run: npm test --prefix web
       - name: Shell lint
         run: bash -n scripts/*.sh scripts/lib/*.sh
       - name: Validate packs

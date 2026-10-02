@@ -33,6 +33,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/inputs"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/policy"
+	"github.com/zyvorai/zyntra/internal/rollout"
 	"github.com/zyvorai/zyntra/internal/sim"
 )
 
@@ -81,6 +82,8 @@ type Options struct {
 	// Ontology is the pack's business-object layer; the zero value means
 	// the pack has none.
 	Ontology OntologyOptions
+	// Rollouts tracks staged delivery of approved decisions.
+	Rollouts *rollout.Store
 	// Policy sets approval quorums, expiry, maintenance windows and Keep
 	// requirements; nil keeps the defaults.
 	Policy *policy.Policy
@@ -139,6 +142,9 @@ func New(o Options) *Server {
 	}
 	if o.Executor == nil {
 		o.Executor = &executor.Executor{Mode: executor.ModeDryRun}
+	}
+	if o.Rollouts == nil {
+		o.Rollouts, _ = rollout.Open("")
 	}
 	if o.ApprovalMode == "" {
 		o.ApprovalMode = ModeLocal
@@ -323,6 +329,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/ai/explain", read(s.handleAIExplain))
 	mux.Handle("POST /api/v1/ai/pack-draft", propose(http.HandlerFunc(s.handlePackDraft)))
 	mux.Handle("GET /api/v1/ai/edges", read(s.handleEdges))
+	mux.Handle("GET /api/v1/ai/calibration", read(s.handleCalibration))
 	mux.Handle("GET /api/v1/ai/contradictions", read(s.handleContradictions))
 	mux.Handle("GET /api/v1/similar", read(s.handleSimilar))
 	mux.Handle("GET /api/v1/proposals/{id}/explanation", read(s.handleExplanation))
@@ -339,6 +346,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/decisions/{id}", read(s.handleDecision))
 	mux.Handle("GET /api/v1/decisions/{id}/export", read(s.handleDecisionExport))
 	mux.Handle("GET /api/v1/policy", read(s.handlePolicy))
+	mux.Handle("GET /api/v1/tenant/kpis", read(s.handleTenantKPIs))
+	mux.Handle("GET /api/v1/tenant/gaps", read(s.handleTenantGaps))
+	mux.Handle("GET /api/v1/rollouts", s.opt.Auth.Require(http.HandlerFunc(s.handleRollouts), auth.RolloutReaders...))
+	mux.Handle("GET /api/v1/rollouts/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleRollout), auth.RolloutReaders...))
+	mux.Handle("POST /api/v1/rollouts/{id}/report", s.opt.Auth.Require(http.HandlerFunc(s.handleRolloutReport), auth.Deployers...))
+	mux.Handle("POST /api/v1/rollouts/{id}/recheck", approve(s.handleRolloutRecheck))
+	mux.Handle("POST /api/v1/rollouts/{id}/abort", approve(s.handleRolloutAbort))
 
 	mux.Handle("GET /api/v1/ontology/schema", read(s.handleOntSchema))
 	mux.Handle("GET /api/v1/ontology/objects", read(s.handleOntObjects))
@@ -353,6 +367,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/ontology/resolution/{id}/accept", approve(s.decideCandidate(true)))
 	mux.Handle("POST /api/v1/ontology/resolution/{id}/reject", approve(s.decideCandidate(false)))
 	mux.Handle("POST /api/v1/ontology/refresh", propose(s.handleOntRefresh))
+	mux.Handle("GET /api/v1/ontology/connectors", approve(s.handleConnectors))
+	mux.Handle("POST /api/v1/ontology/connectors/{name}/run", s.opt.Auth.Require(http.HandlerFunc(s.handleConnectorRun), auth.Admins...))
 	mux.Handle("POST /api/v1/ai/propose", propose(s.handleAIPropose))
 	if s.opt.Ontology.Scenarios != nil {
 		mux.Handle("GET /api/v1/scenarios", read(s.handleScenarios))

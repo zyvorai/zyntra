@@ -1,0 +1,12 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Replace the fixture files with your own exports (same columns). Dry-run never
+# needs any variable.
+variables: []
+files:
+  - {path: fixture/shipments.csv, description: "TMS export: shipment_id, customer_id, warehouse_id, vehicle_id, status, on_time (yes|no), cost"}
+  - {path: fixture/vehicles.csv, description: "Fleet: vehicle_id, warehouse_id, status (available|busy|maintenance), load_pct"}
+  - {path: fixture/docks.csv, description: "Yard: dock_id, warehouse_id, wait_min"}
+  - {path: fixture/warehouses.csv, description: "Sites: warehouse_id, name, region"}
+  - {path: fixture/customers.csv, description: "Customers: customer_id, name, tier, contact"}

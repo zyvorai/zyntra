@@ -377,6 +377,10 @@ type KPI struct {
 	// Calendar names the window whose samples count for this KPI; outside
 	// it the last in-window value is held. Defaults to the model calendar.
 	Calendar string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	// Tenant makes the KPI one tenant's own service level. Tenant-bound
+	// accounts see their tenant's KPIs and nothing else of the model; an edge
+	// may not join KPIs of two different tenants.
+	Tenant string `yaml:"tenant,omitempty" json:"tenant,omitempty"`
 }
 
 // DisplayUnit is the currency code for currency KPIs, otherwise Unit.
@@ -785,7 +789,20 @@ func (m *Model) Validate() error {
 			return fmt.Errorf("constraint on %q: mustNotWorsen needs the kpi to have a direction", c.KPI)
 		}
 	}
+	for i := range m.KPIs {
+		if t := m.KPIs[i].Tenant; t != "" && !tenantID.MatchString(t) {
+			return fmt.Errorf("kpi %q: tenant %q must be lowercase letters, digits, - or _", m.KPIs[i].ID, t)
+		}
+	}
 	for _, e := range m.Edges {
+		if from, ok := m.index[e.From]; ok {
+			if to, ok := m.index[e.To]; ok {
+				a, b := m.KPIs[from].Tenant, m.KPIs[to].Tenant
+				if a != "" && b != "" && a != b {
+					return fmt.Errorf("edge %s->%s joins KPIs of different tenants (%s, %s)", e.From, e.To, a, b)
+				}
+			}
+		}
 		if e.Confidence < 0 {
 			return fmt.Errorf("edge %s->%s: confidence must not be negative", e.From, e.To)
 		}
@@ -890,6 +907,7 @@ func (m *Model) Validate() error {
 }
 
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
+var tenantID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
 
 func validSource(k *KPI) error {
 	s := k.Source

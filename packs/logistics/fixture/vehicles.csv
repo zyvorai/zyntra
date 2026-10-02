@@ -1,0 +1,13 @@
+vehicle_id,warehouse_id,status,load_pct
+v-01,wh-east,available,0.0
+v-02,wh-east,available,0.0
+v-03,wh-east,available,0.0
+v-04,wh-east,available,0.0
+v-05,wh-east,available,0.0
+v-06,wh-east,busy,0.92
+v-07,wh-east,busy,0.88
+v-08,wh-west,busy,0.95
+v-09,wh-west,busy,0.9
+v-10,wh-west,busy,0.85
+v-11,wh-west,maintenance,0.0
+v-12,wh-west,maintenance,0.0

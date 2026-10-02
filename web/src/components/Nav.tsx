@@ -80,7 +80,7 @@ export default function Nav({
   return (
     <nav className="nav" aria-label="Global" ref={navRef}>
       <div className="nav-inner">
-        <button type="button" className="brand" onClick={() => setPage(tenant ? 'objects' : 'overview')} aria-label="Zyntra home">
+        <button type="button" className="brand" onClick={() => setPage(tenant ? 'servicelevels' : 'overview')} aria-label="Zyntra home">
           <img src="/zyvor-logomark.svg" alt="" className="brand-mark" aria-hidden />
           Zyntra
         </button>

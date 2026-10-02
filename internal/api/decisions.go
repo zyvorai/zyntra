@@ -348,6 +348,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, s.view(r, p))
 		return
 	}
+	s.openRollout(p, who.Subject)
 	if p.Template == "" {
 		s.mirror(p.ID)
 		writeJSON(w, http.StatusOK, s.view(r, p))

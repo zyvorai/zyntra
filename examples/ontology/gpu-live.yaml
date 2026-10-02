@@ -1,0 +1,96 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# A live ontology for packs/gpu: objects come from a Kubernetes cluster and an
+# asset database instead of CSV files, refreshed on a schedule. Copy it over
+# packs/gpu/ontology.yaml (or a copy of the pack) and set:
+#
+#   ZYNTRA_KUBECONFIG=/path/to/kubeconfig      # kubectl access, read-only is enough
+#   ZYNTRA_ERP_DSN='host=db user=zyntra_ro dbname=erp sslmode=require'   # a read-only account
+#   ZYNTRA_ONTOLOGY_STORE=sqlite               # recommended once objects number in the thousands
+#
+# The typed action below refuses to run on facts older than ten minutes. With
+# the scheduler refreshing every minute that holds in normal operation, and a
+# stalled connector shows up as stale evidence instead of a silent wrong answer.
+name: gpu-live
+
+objects:
+  - name: Node
+    match: name
+    kpis: [gpu_utilization, gravia_available_gpus]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: gpus, type: number}
+      - {name: ready, type: string}
+  - name: Service
+    kpis: [service_latency_p99_ms, app_availability]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: tier, type: string}
+      - {name: replicas, type: number}
+  - name: Customer
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: plan, type: string}
+      - {name: contact, type: string, sensitive: true}
+
+links:
+  - {name: consumes, from: Customer, to: Service, cardinality: many-to-many}
+
+refresh_interval: 1m
+
+connectors:
+  - name: k8s-nodes
+    kind: kubernetes
+    resource: nodes
+    interval: 1m
+    prune: true                 # a node removed from the cluster leaves the ontology
+    fields:
+      name: metadata.name
+      gpus: 'status.capacity.nvidia\.com/gpu'
+      ready: status.conditions.[type=Ready].status
+    mapping:
+      type: Node
+      namespace: k8s
+      key: name
+      props: {name: name, gpus: gpus, ready: ready}
+
+  - name: k8s-services
+    kind: kubernetes
+    resource: deployments
+    k8s_namespace: inference
+    interval: 1m
+    fields:
+      name: metadata.name
+      tier: metadata.labels.tier
+      replicas: status.readyReplicas
+    mapping:
+      type: Service
+      namespace: k8s
+      key: name
+      props: {name: name, tier: tier, replicas: replicas}
+
+  - name: crm-customers
+    kind: sql
+    driver: postgres
+    dsn_env: ZYNTRA_ERP_DSN
+    interval: 5m
+    # $1 is the time of the last successful run, so only changed rows come back.
+    query: >-
+      SELECT customer_id, name, plan, contact, service, updated_at
+      FROM customers WHERE updated_at > $1::timestamptz
+    mapping:
+      type: Customer
+      namespace: crm
+      key: customer_id
+      props: {name: name, plan: plan, contact: contact}
+      observed: updated_at
+      links: [{type: consumes, column: service, to: Service, namespace: k8s}]
+
+actions:
+  - id: raise-inference-priority
+    inputs: [{name: service, object_type: Service, required: true}]
+    requires: [{input: service, property: tier, equals: inference}]
+    evidence: [{input: service, properties: [tier, replicas], max_age: 10m}]
+    affects: [Service]
+    outcome: [{object_type: Service, must_be_safe: true}]

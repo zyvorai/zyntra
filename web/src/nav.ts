@@ -12,9 +12,10 @@ export type Page =
   | 'objects'
   | 'workflows'
   | 'scenarios'
+  | 'servicelevels'
   | 'decision';
 
-export interface NavChild { page: Page; label: string; blurb: string }
+export interface NavChild { page: Page; label: string; blurb: string; tenantOnly?: boolean }
 export interface NavGroup { label: string; page?: Page; children?: NavChild[]; ontology?: boolean }
 
 export const navGroups: NavGroup[] = [
@@ -40,6 +41,7 @@ export const navGroups: NavGroup[] = [
     children: [
       { page: 'objects', label: 'Objects', blurb: 'Business objects, links and where each fact came from.' },
       { page: 'workflows', label: 'Workflows', blurb: 'What is exposed to a failing KPI, and the typed actions to fix it.' },
+      { page: 'servicelevels', label: 'Service levels', blurb: 'Your service levels against their targets.', tenantOnly: true },
       { page: 'scenarios', label: 'Scenarios', blurb: 'Saved what-if plans compared side by side.' },
     ],
   },
@@ -68,6 +70,7 @@ export const pageTitles: Record<Page, string> = {
   objects: 'Objects',
   workflows: 'Workflows',
   scenarios: 'Scenarios',
+  servicelevels: 'Service levels',
   decision: 'Decision',
 };
 
@@ -97,13 +100,17 @@ export const openObject = (id: string) => {
 };
 
 /** Pages a tenant-bound account may use; the server enforces the same list. */
-export const tenantPages: Page[] = ['objects', 'workflows', 'approvals', 'ask', 'decision'];
+export const tenantPages: Page[] = ['servicelevels', 'objects', 'workflows', 'approvals', 'ask', 'decision'];
 
 /** The nav groups for this session: ontology groups only when the pack has
  * one, and only tenant pages for a tenant-bound account. */
 export function visibleGroups(ontology?: boolean, tenant?: string): NavGroup[] {
   return navGroups
     .filter((g) => !g.ontology || ontology)
-    .map((g) => (tenant && g.children ? { ...g, children: g.children.filter((c) => tenantPages.includes(c.page)) } : g))
+    .map((g) =>
+      g.children
+        ? { ...g, children: g.children.filter((c) => (tenant ? tenantPages.includes(c.page) : !c.tenantOnly)) }
+        : g,
+    )
     .filter((g) => (tenant ? (g.children ? g.children.length > 0 : !!g.page && tenantPages.includes(g.page)) : true));
 }

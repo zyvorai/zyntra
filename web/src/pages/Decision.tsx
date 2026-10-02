@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Download } from 'lucide-react';
-import { ago, fmt, sev, type AuditEvent, type ExplanationResponse, type Phase, type Precedents, type Proposal } from '../api';
+import { ago, api, fmt, sev, type AuditEvent, type ExplanationResponse, type Phase, type Precedents, type Proposal, type Rollout } from '../api';
 import { useApi } from '../hooks';
+import { useWho } from '../session';
 import { decisionFromHash, openDecision } from '../nav';
 import SimResultView from '../components/SimResultView';
 import { Card, Empty, ErrorNote, PageHero, Pill, riskTone } from '../components/ui';
@@ -45,6 +46,72 @@ function Step({ title, at, tone = 'neutral', children }: { title: string; at?: s
       </div>
       {children ? <div className="timeline-body">{children}</div> : null}
     </li>
+  );
+}
+
+const stageTone = { waiting: 'neutral', running: 'info', healthy: 'ok', blocked: 'warn', failed: 'bad' } as const;
+
+/** Staged delivery of an approved decision, as reported by deployment tooling. */
+function RolloutPanel({ id }: { id: string }) {
+  const { data, error, reload } = useApi<{ rollout: Rollout; execute_mode: string }>(`/api/v1/rollouts/${encodeURIComponent(id)}`, 10000);
+  const who = useWho();
+  const [err, setErr] = useState('');
+  const [reason, setReason] = useState('');
+  if (error || !data) return null;
+  const ro = data.rollout;
+  const canDecide = !!who && (who.identity.roles?.some((r) => r === 'approver' || r === 'admin') ?? false);
+  const act = async (verb: 'recheck' | 'abort') => {
+    setErr('');
+    try {
+      await api(`/api/v1/rollouts/${encodeURIComponent(id)}/${verb}`, { method: 'POST', json: verb === 'abort' ? { reason } : undefined });
+      setReason('');
+      reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  return (
+    <Card title="Rollout" aside={<Pill tone={ro.state === 'complete' ? 'ok' : ro.state === 'open' ? 'info' : 'warn'}>{ro.state}</Pill>}>
+      <p className="muted small">
+        Zyntra does not deploy. Your deployment tooling reports each site; the next stage may start only when the previous one is healthy and its KPI gates hold.
+        {data.execute_mode !== 'apply' ? ' Execution is in dry-run mode.' : ''}
+      </p>
+      {ro.reason ? <p className="error-note">{ro.reason}</p> : null}
+      {err ? <p className="error-note">{err}</p> : null}
+      <ol className="plain">
+        {ro.stages.map((st) => (
+          <li key={st.name}>
+            <strong>{st.name}</strong> <Pill tone={stageTone[st.state]}>{st.state}</Pill>
+            {ro.current === st.name ? <span className="muted small"> · may run now</span> : null}
+            <div className="small">
+              {st.sites.map((site) => (
+                <span key={site} className="mono" style={{ marginRight: 12 }}>
+                  {site}: {st.reports?.[site]?.state ?? '—'}
+                </span>
+              ))}
+            </div>
+            {st.gate_check?.map((g) => (
+              <div key={g.kpi} className={g.ok ? 'muted small' : 'down small'}>
+                gate {g.kpi} {g.max !== undefined ? `≤ ${g.max}` : ''} {g.min !== undefined ? `≥ ${g.min}` : ''}: {g.ok ? `ok (${g.value})` : g.reason}
+              </div>
+            ))}
+          </li>
+        ))}
+      </ol>
+      {canDecide && (ro.state === 'open' || ro.state === 'halted') ? (
+        <div className="row-actions">
+          {ro.state === 'halted' ? (
+            <button className="btn-secondary" onClick={() => act('recheck')}>
+              Recheck gates
+            </button>
+          ) : null}
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason to abort" aria-label="Reason to abort" maxLength={200} />
+          <button className="btn-secondary" disabled={!reason.trim()} onClick={() => act('abort')}>
+            Abort rollout
+          </button>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 
@@ -347,6 +414,7 @@ export default function Decision() {
             ) : null}
           </ol>
 
+          {data?.decision.rollout ? <RolloutPanel id={data.decision.id} /> : null}
           <Card title="Audit trail" aside={<Pill>{data?.audit.length ?? 0} events</Pill>}>
             <table className="table compact">
               <thead>

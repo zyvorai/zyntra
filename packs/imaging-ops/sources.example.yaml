@@ -1,0 +1,13 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Replace the fixture files with your own exports (same columns). Export
+# accession numbers and operational fields only: no patient names, identifiers,
+# findings or diagnoses are read or needed. Dry-run never needs any variable.
+variables: []
+files:
+  - {path: fixture/studies.csv, description: "RIS worklist: accession, scanner_id, priority (stat|routine), state (waiting|reported), turnaround_h, referring_clinic"}
+  - {path: fixture/scanners.csv, description: "Equipment status: scanner_id, name, modality, status (up|down), department"}
+  - {path: fixture/departments.csv, description: "Departments: department_id, name"}
+  - {path: fixture/services.csv, description: "Reporting and viewing services: service_id, name, archive_id"}
+  - {path: fixture/archives.csv, description: "Image archives: archive_id, name, status"}

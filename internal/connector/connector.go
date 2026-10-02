@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -155,22 +156,52 @@ func (h HTTP) Pull(ctx context.Context, since time.Time) ([]ontology.Record, err
 	return recs, nil
 }
 
+// Options carry what connectors need from the host.
+type Options struct {
+	Kubeconfig string
+	// Kubectl replaces the real runner; tests use it.
+	Kubectl KubectlGet
+	// OpenSQL replaces sql.Open; tests use it.
+	OpenSQL func(driver, dsn string) (*sql.DB, error)
+}
+
 // FromSpec builds the connector a pack declares.
-func FromSpec(c ontology.ConnectorSpec) (Connector, error) {
+func FromSpec(c ontology.ConnectorSpec, schema *ontology.Schema, o Options) (Connector, error) {
 	switch c.Kind {
 	case "exec":
 		return Exec{Spec: c.Name, Command: c.Command}, nil
 	case "http":
 		return HTTP{Spec: c.Name, URL: c.URL, Token: os.Getenv(c.TokenEnv)}, nil
+	case "kubernetes":
+		run := o.Kubectl
+		if run == nil {
+			run = Kubectl(o.Kubeconfig)
+		}
+		return Kubernetes{Spec: c, Run: run, Schema: schema}, nil
+	case "sql":
+		return &SQL{Spec: c, Schema: schema, Open: o.OpenSQL}, nil
 	}
 	return nil, fmt.Errorf("connector %s: unknown kind %q", c.Name, c.Kind)
 }
 
 // Run pulls from c and ingests the batch.
 func Run(ctx context.Context, st *ontology.Store, c Connector, since time.Time, by string, now time.Time) (ontology.IngestReport, error) {
+	return run(ctx, st, c, since, by, now, false)
+}
+
+// RunSnapshot is Run for a connector that lists everything it knows: objects
+// it created that are no longer listed are removed.
+func RunSnapshot(ctx context.Context, st *ontology.Store, c Connector, since time.Time, by string, now time.Time) (ontology.IngestReport, error) {
+	return run(ctx, st, c, since, by, now, true)
+}
+
+func run(ctx context.Context, st *ontology.Store, c Connector, since time.Time, by string, now time.Time, prune bool) (ontology.IngestReport, error) {
 	recs, err := c.Pull(ctx, since)
 	if err != nil {
 		return ontology.IngestReport{Source: c.Name()}, err
+	}
+	if prune {
+		return st.IngestSnapshot(c.Name(), by, recs, now)
 	}
 	return st.Ingest(c.Name(), by, recs, now)
 }

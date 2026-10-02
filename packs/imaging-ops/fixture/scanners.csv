@@ -1,0 +1,5 @@
+scanner_id,name,modality,status,department
+sc-ct1,CT 1,CT,up,dept-main
+sc-ct2,CT 2,CT,down,dept-main
+sc-mr1,MRI 1,MR,up,dept-main
+sc-xr1,X-ray 1,XR,up,dept-ed

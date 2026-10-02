@@ -10,6 +10,8 @@ import (
 
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/freshness"
+	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/policy"
 )
@@ -36,7 +38,8 @@ func tenantAllowed(method, path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/v1/ontology/"):
 		return !(method == http.MethodPost && path == "/api/v1/ontology/refresh") &&
-			!strings.HasPrefix(path, "/api/v1/ontology/ingest/")
+			!strings.HasPrefix(path, "/api/v1/ontology/ingest/") &&
+			!strings.HasPrefix(path, "/api/v1/ontology/connectors")
 	case path == "/api/v1/proposals":
 		return method == http.MethodGet || method == http.MethodPost
 	case strings.HasPrefix(path, "/api/v1/proposals/"):
@@ -53,6 +56,8 @@ func tenantAllowed(method, path string) bool {
 	case strings.HasPrefix(path, "/api/v1/decisions/"):
 		return method == http.MethodGet && !strings.HasSuffix(path, "/export")
 	case path == "/api/v1/audit":
+		return method == http.MethodGet
+	case path == "/api/v1/tenant/kpis" || path == "/api/v1/tenant/gaps":
 		return method == http.MethodGet
 	case path == "/api/v1/ai/ask" || path == "/api/v1/ai/propose":
 		return method == http.MethodPost
@@ -189,4 +194,97 @@ func (s *Server) proposalTenant(r *http.Request, refs []ontology.ObjectRef) (str
 		return t, nil
 	}
 	return "", nil
+}
+
+// providerLabel is what a tenant sees instead of a provider KPI's name.
+const providerLabel = "provider infrastructure"
+
+// kpiLabeler names KPIs for the caller. Deployment-wide callers see ids as
+// they are; a tenant-bound caller sees its own tenant's KPI ids and a generic
+// label for everything else, so provider internals do not leak through
+// "failing" lists.
+func (s *Server) kpiLabeler(r *http.Request) func(string) string {
+	tenant := auth.FromContext(r.Context()).Tenant
+	if tenant == "" {
+		return func(id string) string { return id }
+	}
+	m, _ := s.snapshot()
+	return func(id string) string {
+		if k, ok := m.KPI(id); ok && k.Tenant == tenant {
+			return id
+		}
+		return providerLabel
+	}
+}
+
+// labelAll maps ids through the labeller, dropping duplicates.
+func labelAll(label func(string) string, ids []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range ids {
+		l := label(id)
+		if !seen[l] {
+			seen[l] = true
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// tenantFor resolves the tenant a tenant-KPI request is about: the caller's
+// own, or for a deployment-wide caller (support, the provider) the ?tenant=
+// query.
+func tenantFor(r *http.Request) (string, bool) {
+	if t := auth.FromContext(r.Context()).Tenant; t != "" {
+		return t, true
+	}
+	t := r.URL.Query().Get("tenant")
+	return t, auth.TenantPattern.MatchString(t)
+}
+
+type tenantKPI struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Unit      string   `json:"unit,omitempty"`
+	Value     float64  `json:"value"`
+	Target    *float64 `json:"target,omitempty"`
+	Direction string   `json:"direction,omitempty"`
+	Met       bool     `json:"met"`
+	Stale     bool     `json:"stale,omitempty"`
+}
+
+// handleTenantKPIs lists a tenant's own service levels. Sources, owners and
+// every other KPI of the model are left out.
+func (s *Server) handleTenantKPIs(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := tenantFor(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "name a tenant with ?tenant=")
+		return
+	}
+	m, _ := s.snapshot()
+	unusable := freshness.Set(s.freshness(m))
+	out := []tenantKPI{}
+	for _, k := range m.KPIs {
+		if k.Tenant != tenant {
+			continue
+		}
+		met := gaps.Severity(k, k.Value) == 0
+		out = append(out, tenantKPI{ID: k.ID, Name: k.Name, Unit: k.DisplayUnit(), Value: k.Value, Target: k.Target,
+			Direction: string(k.Direction), Met: met, Stale: unusable[k.ID]})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": tenant, "kpis": out})
+}
+
+func (s *Server) handleTenantGaps(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := tenantFor(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "name a tenant with ?tenant=")
+		return
+	}
+	m, _ := s.snapshot()
+	g := gaps.ForTenant(gaps.Detect(m), tenant)
+	for i := range g {
+		g[i].Owner = "" // provider-side ownership is not the tenant's business
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": tenant, "gaps": g})
 }
