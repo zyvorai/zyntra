@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, AUTH_EXPIRED, logout, type Meta, type WhoAmI } from './api';
-import { usePulse } from './hooks';
+import { api, AUTH_EXPIRED, logout, type Meta, type ServedPack, type WhoAmI } from './api';
+import { useApi, usePulse } from './hooks';
 import { pageFromHash, pageTitles, tenantPages, type Page } from './nav';
 import { readStoredTheme, toggleTheme, type Theme } from './theme';
 import Nav from './components/Nav';
@@ -32,6 +32,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
   const [page, setPageState] = useState<Page>(() => (allowed(pageFromHash()) ? pageFromHash() : tenant ? 'servicelevels' : 'overview'));
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const pulse = usePulse(!tenant);
+  const served = useApi<ServedPack[]>(tenant ? null : '/api/v1/packs');
 
   useEffect(() => {
     const onHash = () => setPageState(allowed(pageFromHash()) ? pageFromHash() : tenant ? 'servicelevels' : 'overview');
@@ -65,6 +66,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         operator={who.identity.subject}
         ontology={meta?.ontology}
         tenant={tenant}
+        packs={served.data ?? undefined}
       />
       <main id="main">
         {who.default_password ? (

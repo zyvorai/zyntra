@@ -43,7 +43,9 @@ app.kubernetes.io/component: server
 {{- end -}}
 
 {{- define "zyntra.model" -}}
-{{- .Values.modelPath | default (printf "packs/%s" .Values.pack) -}}
+{{- $paths := list (.Values.modelPath | default (printf "packs/%s" .Values.pack)) -}}
+{{- range .Values.extraPacks }}{{- $paths = append $paths (printf "packs/%s" .) }}{{- end -}}
+{{- join "," $paths -}}
 {{- end -}}
 
 {{- define "zyntra.podSecurityContext" -}}

@@ -367,6 +367,7 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `ZYNTRA_OIDC_ROLE_MAP` | `group=role[+role],…` mapping from IdP groups to Zyntra roles |
 | `ZYNTRA_OIDC_REDIRECT_URL`, `_GROUPS_CLAIM`, `_SCOPES`, `_DEFAULT_ROLE` | Optional: callback URL (default derived from the request), groups claim (`groups`), scopes, role for unmapped users |
 | `ZYNTRA_LISTEN`, `ZYNTRA_STATE_DIR` | Listen address; directory for decisions, history, the decision signing key and exec TLS |
+| `ZYNTRA_DEFAULT_PACK` | With `serve -f a,b` (several packs), which pack requests without `X-Zyntra-Pack` use (default: the first) |
 | `ZYNTRA_NETRA_URL` / `_TOKEN` | Netra API (eBPF metrics and health) |
 | `ZYNTRA_GRAVIA_URL` / `_TOKEN` | Gryvia API (GPU cluster, quota, costs) |
 | `ZYNTRA_FABRIC_URL` / `_USER` / `_PASSWORD` or `_TOKEN` | Fabric host metrics (logs in for a token) |
