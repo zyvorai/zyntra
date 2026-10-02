@@ -258,7 +258,7 @@ func (m Mapping) FromRows(rows []any, schema *Schema, label string, observed tim
 			r.Props[prop] = v
 		}
 		if m.Observed != "" && cell(m.Observed) != "" {
-			if t, err := time.Parse(time.RFC3339, cell(m.Observed)); err == nil {
+			if t, ok := ParseObserved(cell(m.Observed)); ok {
 				r.ObservedAt = t
 			}
 		}
@@ -417,4 +417,30 @@ func (s *Store) pruneSource(source string, keep map[string]bool) int {
 		_ = s.save()
 	}
 	return len(gone)
+}
+
+// ParseObserved reads the time a row was observed: RFC 3339, a plain date
+// (YYYY-MM-DD, midnight UTC), or the "/Date(milliseconds)/" form SAP's OData v2
+// uses (an optional +hhmm or -hhmm offset after the number is ignored, since
+// the milliseconds are already UTC). It reports false for anything else, and
+// the row then counts as observed when it was read.
+func ParseObserved(v string) (time.Time, bool) {
+	v = strings.TrimSpace(v)
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, true
+	}
+	if t, err := time.Parse("2006-01-02", v); err == nil {
+		return t, true
+	}
+	if rest, ok := strings.CutPrefix(v, "/Date("); ok {
+		if num, ok := strings.CutSuffix(rest, ")/"); ok {
+			if i := strings.IndexAny(num[min(1, len(num)):], "+-"); i >= 0 {
+				num = num[:i+1]
+			}
+			if ms, err := strconv.ParseInt(num, 10, 64); err == nil && ms > -62135596800000 && ms < 253402300799000 {
+				return time.UnixMilli(ms).UTC(), true
+			}
+		}
+	}
+	return time.Time{}, false
 }

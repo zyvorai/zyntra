@@ -572,3 +572,36 @@ func TestPruneSurvivesAReopenOnSQLite(t *testing.T) {
 		t.Fatalf("a pruned object came back after a reopen: %d", len(re.List("Cluster")))
 	}
 }
+
+func TestParseObservedAcceptsSAPAndPlainDates(t *testing.T) {
+	want := time.Date(2023, 10, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		in   string
+		ok   bool
+		time bool // also check the instant
+	}{
+		{"2023-10-01T00:00:00Z", true, true},
+		{"2023-10-01T05:30:00+05:30", true, false},
+		{"2023-10-01", true, true},
+		{"/Date(1696118400000)/", true, true},
+		{"/Date(1696118400000+0000)/", true, true},
+		{"/Date(1696118400000-0500)/", true, true}, // milliseconds are already UTC; the offset is ignored
+		{"/Date(-1000)/", true, false},
+		{" /Date(1696118400000)/ ", true, true},
+		{"/Date()/", false, false},
+		{"/Date(abc)/", false, false},
+		{"/Date(99999999999999999)/", false, false},
+		{"01/10/2023", false, false},
+		{"", false, false},
+		{"yesterday", false, false},
+	}
+	for _, c := range cases {
+		got, ok := ParseObserved(c.in)
+		if ok != c.ok {
+			t.Errorf("ParseObserved(%q) ok = %v, want %v", c.in, ok, c.ok)
+		}
+		if c.time && !got.Equal(want) {
+			t.Errorf("ParseObserved(%q) = %v, want %v", c.in, got, want)
+		}
+	}
+}
