@@ -46,6 +46,9 @@ func calibrateCmd(ctx context.Context, c *common, fs *flag.FlagSet, args []strin
 	for _, s := range rep.Suggestions {
 		fmt.Fprintf(out, "\n%s\n  suggested edges (review, then edit the pack's kpis.yaml; nothing is applied):\n%s\n", s.Why, s.YAML)
 	}
+	for _, s := range rep.ActionSuggestions {
+		fmt.Fprintf(out, "\n%s\n  suggested action effect (review, then edit the action's effects in the pack; nothing is applied):\n%s\n", s.Why, s.YAML)
+	}
 	for _, n := range rep.Notes {
 		fmt.Fprintln(out, "\nno change:", n)
 	}

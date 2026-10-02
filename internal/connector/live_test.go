@@ -625,3 +625,92 @@ connectors:
 		t.Error("prune on an incremental query was accepted")
 	}
 }
+
+func TestSQLReconcileQueryFindsRowsDeletedUnderAnIncrementalQuery(t *testing.T) {
+	path := sqliteDB(t)
+	t.Setenv("ERP_DSN", "file:"+path)
+	d, err := ontology.ParseDefinition([]byte(`
+objects: [{name: Machine, properties: [{name: name, type: string}]}]
+links: []
+connectors:
+  - name: erp
+    kind: sql
+    driver: sqlite
+    dsn_env: ERP_DSN
+    reconcile_query: "SELECT id FROM assets"
+    reconcile_every: 1h
+    query: "SELECT id, name FROM assets WHERE updated_at > ?"
+    mapping: {type: Machine, namespace: erp, key: id, props: {name: name}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := ontology.Open("", d.Schema())
+	sc, _ := NewScheduler(st, d, t.TempDir(), nil, Options{}, "")
+	now := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
+	sc.now = func() time.Time { return now }
+	run := func() ontology.IngestReport {
+		t.Helper()
+		rep, err := sc.RunNow(context.Background(), "erp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep
+	}
+	if rep := run(); rep.Objects != 2 || rep.Pruned != 0 {
+		t.Fatalf("first: %+v", rep)
+	}
+	db, _ := sql.Open("sqlite", path)
+	if _, err := db.Exec("DELETE FROM assets WHERE id='a1'"); err != nil {
+		t.Fatal(err)
+	}
+	// Within the reconcile interval an incremental pull cannot see the delete.
+	now = now.Add(10 * time.Minute)
+	if rep := run(); rep.Pruned != 0 {
+		t.Fatalf("pruned before the reconcile was due: %+v", rep)
+	}
+	if _, ok := st.Get("Machine:erp:a1"); !ok {
+		t.Fatal("object removed before the reconcile was due")
+	}
+	now = now.Add(2 * time.Hour)
+	if rep := run(); rep.Pruned != 1 {
+		t.Fatalf("reconcile: %+v", rep)
+	}
+	if _, ok := st.Get("Machine:erp:a1"); ok {
+		t.Error("a deleted row is still an object")
+	}
+	if o, ok := st.Get("Machine:erp:a2"); !ok || o.Props["name"].V != "Lathe 2" {
+		t.Errorf("a surviving row lost its facts: %+v", o)
+	}
+	// An empty listing (every row gone or a broken query) must never wipe the source.
+	if _, err := db.Exec("DELETE FROM assets"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	now = now.Add(2 * time.Hour)
+	if rep := run(); rep.Pruned != 0 {
+		t.Fatalf("an empty listing pruned: %+v", rep)
+	}
+	if _, ok := st.Get("Machine:erp:a2"); !ok {
+		t.Error("an empty listing wiped the source")
+	}
+}
+
+func TestReconcileQueryValidation(t *testing.T) {
+	head := "objects: [{name: Machine, properties: [{name: name, type: string}]}]\nlinks: []\nconnectors:\n"
+	for name, c := range map[string]string{
+		"full listing needs prune, not reconcile": "  - {name: a, kind: sql, driver: sqlite, dsn_env: X, query: 'SELECT id FROM t', reconcile_query: 'SELECT id FROM t', mapping: {type: Machine, namespace: e, key: id}}\n",
+		"reconcile takes no parameter":            "  - {name: a, kind: sql, driver: sqlite, dsn_env: X, query: 'SELECT id FROM t WHERE u > ?', reconcile_query: 'SELECT id FROM t WHERE u > ?', mapping: {type: Machine, namespace: e, key: id}}\n",
+		"reconcile must be read-only":             "  - {name: a, kind: sql, driver: sqlite, dsn_env: X, query: 'SELECT id FROM t WHERE u > ?', reconcile_query: 'DELETE FROM t', mapping: {type: Machine, namespace: e, key: id}}\n",
+		"every needs a query":                     "  - {name: a, kind: sql, driver: sqlite, dsn_env: X, query: 'SELECT id FROM t WHERE u > ?', reconcile_every: 1h, mapping: {type: Machine, namespace: e, key: id}}\n",
+		"every too short":                         "  - {name: a, kind: sql, driver: sqlite, dsn_env: X, query: 'SELECT id FROM t WHERE u > ?', reconcile_query: 'SELECT id FROM t', reconcile_every: 5s, mapping: {type: Machine, namespace: e, key: id}}\n",
+	} {
+		if _, err := ontology.ParseDefinition([]byte(head + c)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	ok := head + "  - {name: a, kind: sql, driver: sqlite, dsn_env: X, query: 'SELECT id FROM t WHERE u > ?', reconcile_query: 'SELECT id FROM t', mapping: {type: Machine, namespace: e, key: id}}\n"
+	if _, err := ontology.ParseDefinition([]byte(ok)); err != nil {
+		t.Errorf("valid reconcile connector refused: %v", err)
+	}
+}

@@ -85,6 +85,14 @@ ai:
   apiKeySecret: ""                # Secret holding the key, if the endpoint needs one
   apiKeySecretKey: ZYNTRA_AI_API_KEY
 
+# Tell people a proposal needs them. The webhook URL (a Slack or Teams incoming
+# webhook is itself a secret) lives in a Secret under ZYNTRA_NOTIFY_URL, with an
+# optional ZYNTRA_NOTIFY_TOKEN. Off unless secret is set.
+notify:
+  secret: ""
+  on: ""                          # statuses to announce, e.g. "pending,executed,failed" (default pending)
+  consoleURL: ""                  # makes the message a link, e.g. https://zyntra.example.com
+
 # Plain environment, e.g. ZYNTRA_POS_URL. Only ${ZYNTRA_*} variables are
 # expanded inside packs, and secrets are never expanded.
 env: {}

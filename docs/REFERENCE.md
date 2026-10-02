@@ -21,7 +21,7 @@ Related: [Business ontology](ONTOLOGY.md) · [Product plan](PRODUCT_PLAN.md) · 
 
 ## What to know before you rely on it
 
-- **The simulator is a model, not a measurement.** It is a deterministic model over the edge weights and effects you supply. Its ranges come from the uncertainty you declare, not from data. `zyntra calibrate` backtests the weights against decisions that ran and suggests corrections, but never applies them.
+- **The simulator is a model, not a measurement.** It is a deterministic model over the edge weights and effects you supply. Its ranges come from the uncertainty you declare, not from data. `zyntra calibrate` backtests the edge weights against decisions that ran, and suggests a corrected direct effect for an action from decisions that ran it alone. It suggests corrections but never applies them.
 - **The newer packs carry declared starting weights**, not measured ones. Calibrate them against your own outcomes before you lean on the ranking.
 - **Changes execute only after human approval**, and in dry-run by default.
 - **Sources only read.** The AI layer explains and forecasts; it never picks or runs an action.
@@ -379,6 +379,7 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `ZYNTRA_KEEP_URL` / `_TOKEN` | Keep agent runtime (status, sessions, approvals, audit) |
 | `ZYNTRA_EXEC_TOKEN`, `ZYNTRA_EXEC_TLS_ADDR` | Token Keep injects, and the loopback TLS listener it calls |
 | `ZYNTRA_AI_BASE_URL` / `_API_KEY` / `_MODEL` | Optional OpenAI-compatible model for answer rewriting |
+| `ZYNTRA_NOTIFY_URL` / `_TOKEN` / `_ON`, `ZYNTRA_CONSOLE_URL` | Optional webhook (Slack/Teams-compatible `text`) that says a proposal needs a decision; `_ON` lists statuses (default `pending`). Sends action, status and who, never inputs or free text; best effort, never blocks an approval |
 
 ## CLI
 

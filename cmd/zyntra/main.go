@@ -44,6 +44,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/graph"
 	"github.com/zyvorai/zyntra/internal/inputs"
 	"github.com/zyvorai/zyntra/internal/keep"
+	"github.com/zyvorai/zyntra/internal/notify"
 	"github.com/zyvorai/zyntra/internal/pack"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/policy"
@@ -407,6 +408,17 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	store, err := approvals.Open(filepath.Join(stateDir, "approvals.json"))
 	if err != nil {
 		return err
+	}
+	if u := env("ZYNTRA_NOTIFY_URL", ""); u != "" {
+		on, err := notify.ParseStatuses(env("ZYNTRA_NOTIFY_ON", ""))
+		if err != nil {
+			return err
+		}
+		nt, err := notify.New(ctx, notify.Config{URL: u, Token: env("ZYNTRA_NOTIFY_TOKEN", ""), On: on, ConsoleURL: env("ZYNTRA_CONSOLE_URL", "")})
+		if err != nil {
+			return err
+		}
+		store.OnEvent(nt.Event)
 	}
 	mode, err := executor.ParseMode(env("ZYNTRA_EXECUTE", "dry-run"))
 	if err != nil {

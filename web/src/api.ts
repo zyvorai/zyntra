@@ -633,6 +633,20 @@ export interface CalibrationReport {
     yaml: string;
     why: string;
   }[];
+  /** Corrections to one action's direct effect, learned from single-action decisions. */
+  action_suggestions?: {
+    action: string;
+    kpi: string;
+    n: number;
+    declared: number;
+    scale: number;
+    suggested: number;
+    loo_error_before: number;
+    loo_error_after: number;
+    improvement: number;
+    yaml: string;
+    why: string;
+  }[];
   notes?: string[];
   note?: string;
 }

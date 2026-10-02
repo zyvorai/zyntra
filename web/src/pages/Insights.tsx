@@ -9,10 +9,11 @@ const fcTone = { breach: 'bad', 'at-risk': 'warn', improving: 'ok', stable: 'neu
 function Calibration() {
   const { data } = useApi<CalibrationReport>('/api/v1/ai/calibration', 60000);
   if (!data) return null;
+  const actionFixes = data.action_suggestions ?? [];
   return (
-    <Card title="Model calibration" aside={<Pill tone={data.suggestions.length ? 'warn' : 'neutral'}>{data.decisions} decision(s)</Pill>}>
+    <Card title="Model calibration" aside={<Pill tone={data.suggestions.length || actionFixes.length ? 'warn' : 'neutral'}>{data.decisions} decision(s)</Pill>}>
       <p className="muted small">
-        Backtests the model's edge weights against changes that actually ran. Suggestions are never applied automatically; review them and edit the pack.
+        Backtests the model's edge weights and action effects against changes that actually ran. Suggestions are never applied automatically; review them and edit the pack.
       </p>
       {data.note ? <Empty>{data.note}</Empty> : null}
       {data.kpis.length ? (
@@ -39,6 +40,12 @@ function Calibration() {
       ) : null}
       {data.suggestions.map((s) => (
         <div key={s.kpi} className="info-note">
+          <p>{s.why}</p>
+          <pre className="code">{s.yaml}</pre>
+        </div>
+      ))}
+      {actionFixes.map((s) => (
+        <div key={`${s.action}:${s.kpi}`} className="info-note">
           <p>{s.why}</p>
           <pre className="code">{s.yaml}</pre>
         </div>

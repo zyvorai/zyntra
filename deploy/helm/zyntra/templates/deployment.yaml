@@ -81,6 +81,29 @@ spec:
             - name: ZYNTRA_POLICY
               value: /etc/zyntra/policy.yaml
             {{- end }}
+            {{- with .Values.notify }}
+            {{- if .secret }}
+            - name: ZYNTRA_NOTIFY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secret | quote }}
+                  key: ZYNTRA_NOTIFY_URL
+            - name: ZYNTRA_NOTIFY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secret | quote }}
+                  key: ZYNTRA_NOTIFY_TOKEN
+                  optional: true
+            {{- if .on }}
+            - name: ZYNTRA_NOTIFY_ON
+              value: {{ .on | quote }}
+            {{- end }}
+            {{- if .consoleURL }}
+            - name: ZYNTRA_CONSOLE_URL
+              value: {{ .consoleURL | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.ai }}
             {{- if .baseURL }}
             - name: ZYNTRA_AI_BASE_URL
