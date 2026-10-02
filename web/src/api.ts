@@ -557,8 +557,8 @@ export interface OntLink { id: string; type: string; from: string; to: string; p
 export interface OntImpact { object: OntObject; depth: number; via: string }
 export interface OntObjectDetail {
   object: OntObject;
-  links: { link: OntLink; other: OntObject; out: boolean }[];
-  impact: OntImpact[];
+  links: { link: OntLink; other: OntObject; out: boolean }[] | null;
+  impact: OntImpact[] | null;
   bound_kpis: string[] | null;
   failing_kpis: string[] | null;
 }

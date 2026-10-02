@@ -214,7 +214,7 @@ func (s *Server) handleOntObject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "no such object")
 		return
 	}
-	var links []linkView
+	links := []linkView{}
 	for _, l := range rd.Links(o.ID) {
 		other, out := l.From, false
 		if l.From == o.ID {
@@ -233,8 +233,12 @@ func (s *Server) handleOntObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	label := s.kpiLabeler(r)
+	impact := rd.Impact(o.ID, 0)
+	if impact == nil {
+		impact = []ontology.Impact{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"object": o, "links": links, "impact": rd.Impact(o.ID, 0),
+		"object": o, "links": links, "impact": impact,
 		"bound_kpis": labelAll(label, bound), "failing_kpis": labelAll(label, bad),
 	})
 }
