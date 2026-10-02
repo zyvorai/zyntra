@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -31,7 +32,16 @@ func buildOntology(path string, m *graph.Model, pol *policy.Policy, stateDir str
 	if err != nil || def == nil {
 		return api.OntologyOptions{}, err
 	}
-	st, err := ontology.Open(filepath.Join(stateDir, "ontology.json"), def.Schema())
+	// ZYNTRA_ONTOLOGY_STORE=sqlite keeps objects in ontology.db (one write per
+	// ingest batch, change log on disk). An existing ontology.db is used even
+	// when the variable is unset, so a migrated install keeps working.
+	file := "ontology.json"
+	if strings.EqualFold(env("ZYNTRA_ONTOLOGY_STORE", ""), "sqlite") {
+		file = "ontology.db"
+	} else if _, err := os.Stat(filepath.Join(stateDir, "ontology.db")); err == nil {
+		file = "ontology.db"
+	}
+	st, err := ontology.Open(filepath.Join(stateDir, file), def.Schema())
 	if err != nil {
 		return api.OntologyOptions{}, fmt.Errorf("ontology: %w", err)
 	}
@@ -71,12 +81,29 @@ func ontologyCmd(ctx context.Context, c *common, fs *flag.FlagSet, args []string
 		return fmt.Errorf("ontology: want validate, dump or impact")
 	}
 	sub := args[0]
+	from := fs.String("from", "", "migrate: source store (ontology.json or .db)")
+	to := fs.String("to", "", "migrate: destination store (a new .db or .json file)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	m, err := c.load(ctx)
 	if err != nil {
 		return err
+	}
+	if sub == "migrate" {
+		def, _, err := pack.LoadOntology(c.file, m)
+		if err != nil || def == nil {
+			return fmt.Errorf("migrate: the pack has no %s: %v", ontology.FileName, err)
+		}
+		if *from == "" || *to == "" {
+			return fmt.Errorf("ontology migrate -f PACK -from STORE -to STORE")
+		}
+		o, l, err := ontology.Migrate(*from, *to, def.Schema())
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "copied %d objects and %d links from %s to %s\n", o, l, *from, *to)
+		return nil
 	}
 	def, st, err := memoryOntology(c, m)
 	if err != nil {

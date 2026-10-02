@@ -67,6 +67,7 @@ Usage:
                                           draft a pack from sample exports (uses the
                                           ZYNTRA_AI_* model when set; prints otherwise)
   zyntra ontology validate|dump|impact -f PACK [ID]
+  zyntra ontology migrate -f PACK -from ontology.json -to ontology.db
                                           business objects from the pack's ontology.yaml
   zyntra scenario run|compare -f PACK [-set kpi=v] [name=]a+b ...
                                           what-if plans with business impact
