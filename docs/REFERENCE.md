@@ -2,7 +2,7 @@
 
 The technical reference for Zyntra: the model file, sources, packs, the business ontology, the console, approvals and execution, policy, configuration, the CLI and API, deployment and development. For what Zyntra is and why teams use it, start with the [README](../README.md).
 
-Related: [Business ontology](ONTOLOGY.md) · [Product plan](PRODUCT_PLAN.md) · [Security](../SECURITY.md) · [Changelog](../CHANGELOG.md)
+Related: [Business ontology](ONTOLOGY.md) · [Product plan](PRODUCT_PLAN.md) · [Security](../SECURITY.md)
 
 ## Contents
 
