@@ -1,9 +1,12 @@
 # Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 #
-# The image carries packs and HTTP/file sources only. kubectl is not in the
-# image, so kubectl actions and the Kubernetes adapters need the binary
-# install (scripts/deploy-remote.sh) or a sidecar that provides it.
+# The image carries packs and HTTP/file/SQL/REST sources. kubectl is not in
+# the image, so kubectl *actions* and the node-inventory KPI adapter need the
+# binary install (scripts/deploy-remote.sh) or a sidecar that provides it.
+# Ontology Kubernetes connectors do not need it: in a pod they read the cluster
+# through the service account (helm: kubernetes.inCluster=true grants a
+# read-only ClusterRole, never secrets).
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./

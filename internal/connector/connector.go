@@ -174,7 +174,13 @@ func FromSpec(c ontology.ConnectorSpec, schema *ontology.Schema, o Options) (Con
 		return HTTP{Spec: c.Name, URL: c.URL, Token: os.Getenv(c.TokenEnv)}, nil
 	case "kubernetes":
 		run := o.Kubectl
-		if run == nil {
+		switch {
+		case run != nil:
+		case o.Kubeconfig == "" && InCluster():
+			// In a pod with no kubeconfig given: read this cluster through
+			// the service account, which needs no kubectl binary.
+			run = KubeAPI()
+		default:
 			run = Kubectl(o.Kubeconfig)
 		}
 		return Kubernetes{Spec: c, Run: run, Schema: schema}, nil

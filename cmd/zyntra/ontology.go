@@ -50,9 +50,9 @@ func buildOntology(path string, m *graph.Model, pol *policy.Policy, stateDir str
 	// runaway source from exhausting the host. 1,000,000 is roughly 1.5 GB.
 	maxObjects := 1_000_000
 	if v := env("ZYNTRA_ONTOLOGY_MAX_OBJECTS", ""); v != "" {
-		n, perr := strconv.Atoi(v)
-		if perr != nil || n < 0 {
-			return api.OntologyOptions{}, fmt.Errorf("ZYNTRA_ONTOLOGY_MAX_OBJECTS must be a number (0 for no cap), got %q", v)
+		n, perr := parseCount(v)
+		if perr != nil {
+			return api.OntologyOptions{}, fmt.Errorf("ZYNTRA_ONTOLOGY_MAX_OBJECTS must be a whole number (0 for no cap), got %q", v)
 		}
 		maxObjects = n
 	}
@@ -295,4 +295,21 @@ func printScenario(out io.Writer, sc scenario.Scenario) {
 		fmt.Fprintln(out, "blocked:", b)
 	}
 	fmt.Fprintf(out, "objects at risk %d -> %d, exposed %d -> %d\n", len(r.AtRiskBefore), len(r.AtRiskAfter), len(r.ExposedBefore), len(r.ExposedAfter))
+}
+
+// parseCount reads a non-negative whole number. It also accepts an integral
+// value written in scientific notation ("1e+06"), which is what some tools
+// (Helm among them) produce for a large number.
+func parseCount(v string) (int, error) {
+	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		if n < 0 {
+			return 0, fmt.Errorf("negative")
+		}
+		return n, nil
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || f < 0 || f != float64(int64(f)) || f > 1<<40 {
+		return 0, fmt.Errorf("not a whole number")
+	}
+	return int(f), nil
 }

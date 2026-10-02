@@ -20,8 +20,10 @@ approvalMode: local
 
 # Credentials. Leave empty to generate them once and keep them across
 # upgrades, or point existingSecret at a Secret with the same keys:
-# ZYNTRA_API_KEY, ZYNTRA_SESSION_SECRET, ZYNTRA_INGEST_TOKEN, ZYNTRA_EXEC_TOKEN
-# (and optionally ZYNTRA_ADMIN_PASSWORD).
+# ZYNTRA_API_KEY, ZYNTRA_SESSION_SECRET, ZYNTRA_INGEST_TOKEN, ZYNTRA_EXEC_TOKEN,
+# ZYNTRA_DEPLOY_TOKEN (and optionally ZYNTRA_ADMIN_PASSWORD). The deploy token
+# is what deployment tooling uses to report rollout progress; it can do nothing
+# else. Per-connector ingest credentials live in the policy file instead.
 # With no users in policy, the console has one local admin account. Its
 # default password is Admin@321; set adminPassword before exposing the console.
 auth:
@@ -32,6 +34,29 @@ auth:
   sessionSecret: ""
   ingestToken: ""
   execToken: ""
+  deployToken: ""
+
+# Object store. json keeps one file; sqlite keeps ontology.db (writes only what
+# changed, change log on disk). Objects are held in memory at about 1.4 KB
+# each, so size resources.limits.memory for the cap: 100,000 objects is roughly
+# 150 MB on top of the base. A batch that would pass maxObjects is refused whole.
+ontology:
+  store: json                     # json | sqlite
+  maxObjects: 1000000             # 0 removes the cap
+
+# Let Kubernetes connectors in the pack read the cluster Zyntra runs in, with
+# no kubectl in the image: creates a read-only ClusterRole (get and list only,
+# never secrets) bound to the service account and mounts its token. Off by
+# default, so a stock install can read nothing from the cluster.
+kubernetes:
+  inCluster: false
+  # What the role may read. Narrow it to what your connectors list.
+  resources: [nodes, pods, namespaces, services, deployments, statefulsets, daemonsets]
+
+# Allow ontology connectors of kind "exec" (they run a command from the pack).
+# Leave off unless the image carries the program and you trust the pack.
+connectors:
+  exec: false
 
 # Approval policy (quorum, expiry, windows, local users) as inline YAML.
 policy: ""
