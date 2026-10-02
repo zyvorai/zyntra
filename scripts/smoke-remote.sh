@@ -148,7 +148,11 @@ if action == "auto":
     if "raise-inference-priority" in ids:
         action = "raise-inference-priority"
     else:
+        _, g = call("GET", "/api/v1/graph")
+        acts = {x.get("id"): x for x in ((g or {}).get("model") or {}).get("actions") or []}
+        windowed = lambda a: bool(acts.get(a, {}).get("window") or (acts.get(a, {}).get("policy") or {}).get("maintenance_windows"))
         pick = [r["action"] for r in recs if r["status"] == "pending-approval" and "+" not in r["action"]]
+        pick.sort(key=windowed)
         if not pick and do_exec:
             fail("no approvable single action in the plan to smoke-test")
         action = pick[0] if pick else ""
@@ -190,7 +194,7 @@ if c not in (200, 202):
 ok(f"approved (HTTP {c}, status {p.get('status')})")
 
 deadline = time.time() + 240
-while p.get("status") not in ("executed", "failed") and time.time() < deadline:
+while p.get("status") not in ("executed", "failed") and not p.get("waiting_for_window") and time.time() < deadline:
     time.sleep(3)
     c, p = call("GET", f"/api/v1/proposals/{pid}")
 ex = p.get("execution") or {}
@@ -199,6 +203,10 @@ if keep:
     print(f"     keep: mode {keep.get('mode')} session {keep.get('session_id','-')} approval {keep.get('approval_id','-')}" + (f" error {keep['error']}" if keep.get("error") else ""))
 if ex.get("output"):
     print("     " + ex["output"].strip().replace("\n", "\n     "))
+if p.get("waiting_for_window"):
+    ok(f"held for its maintenance window {(p.get('policy') or {}).get('maintenance_windows')} (approved, not run)")
+    print("  ✨ smoke OK")
+    sys.exit(0)
 if p.get("status") != "executed":
     fail(f"proposal ended {p.get('status')}: {ex.get('error') or keep.get('error') or 'timeout'}")
 ok(f"executed via {ex.get('kind') or 'kubectl'} ({ex.get('mode')})")

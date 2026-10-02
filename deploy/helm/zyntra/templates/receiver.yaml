@@ -1,0 +1,75 @@
+{{- /*
+Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+*/ -}}
+{{- if .Values.receiver.enabled }}
+{{- $name := printf "%s-receiver" (include "zyntra.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: receiver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: receiver
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "zyntra.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: receiver
+          image: {{ include "zyntra.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/zyntra-receiver"]
+          args: ["-addr", ":9099"{{ if .Values.receiver.persistence }}, "-dir", "/var/lib/zyntra-inbox"{{ end }}]
+          ports:
+            - name: http
+              containerPort: 9099
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            {{- include "zyntra.containerSecurityContext" . | nindent 12 }}
+          {{- if .Values.receiver.persistence }}
+          volumeMounts:
+            - name: inbox
+              mountPath: /var/lib/zyntra-inbox
+          {{- end }}
+      {{- if .Values.receiver.persistence }}
+      volumes:
+        - name: inbox
+          emptyDir: {}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: receiver
+  ports:
+    - name: http
+      port: 9099
+      targetPort: http
+{{- end }}

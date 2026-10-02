@@ -1,6 +1,13 @@
 .git
+.github
+.deploy-last
 bin
 state
+out
+docs
+deploy
 web/node_modules
 web/dist
-.deploy-last
+**/*_test.go
+*.md
+!packs/**/README.md

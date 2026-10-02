@@ -1,0 +1,141 @@
+{{- /*
+Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+*/ -}}
+{{- $fullname := include "zyntra.fullname" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  # The audit chain and proposals are file state: one writer, no overlap.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "zyntra.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zyntra.selector" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/policy: {{ .Values.policy | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "zyntra.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "zyntra.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: zyntra
+          image: {{ include "zyntra.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - -addr
+            - :8080
+            - -interval
+            - {{ .Values.interval | quote }}
+            - -f
+            - {{ include "zyntra.model" . | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ZYNTRA_STATE_DIR
+              value: /var/lib/zyntra
+            - name: ZYNTRA_OUTPUT_DIR
+              value: /var/lib/zyntra/out
+            - name: ZYNTRA_EXECUTE
+              value: {{ .Values.execute | quote }}
+            - name: ZYNTRA_APPROVAL_MODE
+              value: {{ .Values.approvalMode | quote }}
+            - name: ZYNTRA_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- if .Values.policy }}
+            - name: ZYNTRA_POLICY
+              value: /etc/zyntra/policy.yaml
+            {{- end }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "zyntra.secretName" . }}
+            {{- with .Values.envFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- include "zyntra.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/zyntra
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.policy }}
+            - name: policy
+              mountPath: /etc/zyntra
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-state" $fullname) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.policy }}
+        - name: policy
+          configMap:
+            name: {{ $fullname }}-policy
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,5 +1,8 @@
 # Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+VERSION ?= $(shell sed -n 's/^var version = "\(.*\)"/\1/p' cmd/zyntra/main.go)
+CONTAINER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
+
 .PHONY: build build-go web test vet fmt check run run-lab run-shop test-e2e deploy docker compose-up helm-lint k8s-manifest deploy-k8s
 
 build: web build-go
@@ -46,3 +49,23 @@ test-e2e: build
 deploy:
 	@test -n "$(HOST)" || (echo "usage: make deploy HOST=1.2.3.4 [USER=sus]"; exit 2)
 	./scripts/deploy-remote.sh $(HOST) $(or $(USER),sus)
+
+# Container image with packs and the test receiver (docker or podman).
+docker:
+	$(CONTAINER) build --build-arg VERSION=$(VERSION) -t zyntra:$(VERSION) -t zyntra:latest .
+
+# Shop pack and receiver; needs ZYNTRA_API_KEY in the environment.
+compose-up:
+	$(CONTAINER) compose up --build
+
+helm-lint:
+	helm lint deploy/helm/zyntra
+	helm template zyntra deploy/helm/zyntra --set receiver.enabled=true,ingress.enabled=true,networkPolicy.enabled=true >/dev/null
+
+# Plain manifest for clusters without Helm; regenerate after chart changes.
+k8s-manifest:
+	./scripts/render-k8s.sh > deploy/kubernetes/zyntra.yaml
+
+deploy-k8s:
+	@test -n "$(HOST)" || (echo "usage: make deploy-k8s HOST=1.2.3.4 [USER=sus] [PACK=shop]"; exit 2)
+	./scripts/deploy-k8s.sh $(HOST) $(or $(USER),sus) --pack $(or $(PACK),shop)

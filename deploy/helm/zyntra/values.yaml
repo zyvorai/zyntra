@@ -1,0 +1,87 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+
+image:
+  repository: zyntra
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Pack shipped in the image (packs/<pack>). modelPath overrides it, for
+# example a pack mounted through extraVolumes.
+pack: shop
+modelPath: ""
+interval: 15s
+
+# dry-run records what would be sent and sends nothing; apply executes
+# approved actions. Nothing runs without a named human's approval either way.
+execute: dry-run
+approvalMode: local
+
+# Credentials. Leave empty to generate them once and keep them across
+# upgrades, or point existingSecret at a Secret with the same keys:
+# ZYNTRA_API_KEY, ZYNTRA_SESSION_SECRET, ZYNTRA_INGEST_TOKEN, ZYNTRA_EXEC_TOKEN.
+auth:
+  existingSecret: ""
+  apiKey: ""
+  sessionSecret: ""
+  ingestToken: ""
+  execToken: ""
+
+# Approval policy (quorum, expiry, windows, local users) as inline YAML.
+policy: ""
+
+# Plain environment, e.g. ZYNTRA_POS_URL. Only ${ZYNTRA_*} variables are
+# expanded inside packs, and secrets are never expanded.
+env: {}
+envFrom: []
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+service:
+  type: ClusterIP
+  port: 8080
+  nodePort: null
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: zyntra.example.internal
+  tls: []
+
+networkPolicy:
+  enabled: false
+  # Extra ingress peers allowed to reach the console and API.
+  ingressFrom: []
+
+# Test webhook inbox for trying actions without a real POS or ERP.
+# Point action URLs at http://<release>-receiver:9099/<path>.
+receiver:
+  enabled: false
+  persistence: false
+
+serviceAccount:
+  create: true
+  name: ""
+  automount: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraVolumes: []
+extraVolumeMounts: []

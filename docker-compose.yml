@@ -1,0 +1,53 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Shop pack with a local webhook receiver standing in for the POS and ERP.
+#   ZYNTRA_API_KEY=$(openssl rand -hex 24) docker compose up --build
+# Console: http://127.0.0.1:8080  Receiver inbox: http://127.0.0.1:9099
+# Set ZYNTRA_EXECUTE=apply to send approved webhooks to the receiver;
+# the default dry-run records what would be sent and sends nothing.
+services:
+  zyntra:
+    build:
+      context: .
+      args:
+        VERSION: ${ZYNTRA_VERSION:-0.4.0-dev}
+    image: zyntra:${ZYNTRA_VERSION:-0.4.0-dev}
+    command: ["serve", "-f", "packs/${ZYNTRA_PACK:-shop}"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ZYNTRA_API_KEY: ${ZYNTRA_API_KEY:?set ZYNTRA_API_KEY}
+      ZYNTRA_SESSION_SECRET: ${ZYNTRA_SESSION_SECRET:-}
+      ZYNTRA_INGEST_TOKEN: ${ZYNTRA_INGEST_TOKEN:-}
+      ZYNTRA_EXECUTE: ${ZYNTRA_EXECUTE:-dry-run}
+      ZYNTRA_POS_URL: http://receiver:9099/pos
+      ZYNTRA_ERP_URL: http://receiver:9099/erp
+    volumes:
+      - zyntra-state:/var/lib/zyntra
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    depends_on: [receiver]
+    restart: unless-stopped
+
+  receiver:
+    image: zyntra:${ZYNTRA_VERSION:-0.4.0-dev}
+    entrypoint: ["/usr/local/bin/zyntra-receiver"]
+    command: ["-addr", ":9099", "-dir", "/var/lib/zyntra-inbox"]
+    ports:
+      - "127.0.0.1:9099:9099"
+    volumes:
+      - receiver-inbox:/var/lib/zyntra-inbox
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+volumes:
+  zyntra-state:
+  receiver-inbox:
