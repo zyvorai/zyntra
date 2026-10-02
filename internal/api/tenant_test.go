@@ -396,6 +396,7 @@ func TestProviderKPIsAreHiddenBehindAGenericLabel(t *testing.T) {
 	// The pack's Cluster type is measured by the provider's "queue" KPI, which fails.
 	f.s.opt.Ontology.Def.Objects[0].KPIs = []string{"queue"}
 	f.s.opt.Ontology.Store.Schema().Objects[0].KPIs = []string{"queue"}
+	f.s.opt.Ontology.Store.RebuildBindings()
 	var d struct {
 		Failing []string `json:"failing_kpis"`
 		Bound   []string `json:"bound_kpis"`
