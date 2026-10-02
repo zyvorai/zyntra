@@ -323,6 +323,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/ai/explain", read(s.handleAIExplain))
 	mux.Handle("POST /api/v1/ai/pack-draft", propose(http.HandlerFunc(s.handlePackDraft)))
 	mux.Handle("GET /api/v1/ai/edges", read(s.handleEdges))
+	mux.Handle("GET /api/v1/ai/calibration", read(s.handleCalibration))
 	mux.Handle("GET /api/v1/ai/contradictions", read(s.handleContradictions))
 	mux.Handle("GET /api/v1/similar", read(s.handleSimilar))
 	mux.Handle("GET /api/v1/proposals/{id}/explanation", read(s.handleExplanation))

@@ -618,3 +618,20 @@ export interface ConnectorStatus {
   running: boolean;
   healthy: boolean;
 }
+
+export interface CalibrationReport {
+  decisions: number;
+  kpis: { kpi: string; n: number; mean_abs_error: number; hit_rate: number; bias: number }[];
+  suggestions: {
+    kpi: string;
+    n: number;
+    edges: { from: string; to: string; weight: number; scale: number; suggested: number }[];
+    loo_error_before: number;
+    loo_error_after: number;
+    improvement: number;
+    yaml: string;
+    why: string;
+  }[];
+  notes?: string[];
+  note?: string;
+}

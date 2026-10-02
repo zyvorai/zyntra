@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/zyvorai/zyntra/internal/calibrate"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -273,4 +274,11 @@ func nextEdge(w interface{ Contains(time.Time) bool }, now time.Time) time.Time 
 // verdictReady reports whether a proposal just reached an outcome verdict.
 func verdictReady(p approvals.Proposal) bool {
 	return p.Outcome != nil && p.Outcome.State != outcome.Observing
+}
+
+// handleCalibration backtests the model's edge weights against decisions that
+// ran and finished, and suggests corrections. It changes nothing.
+func (s *Server) handleCalibration(w http.ResponseWriter, _ *http.Request) {
+	m, _ := s.snapshot()
+	writeJSON(w, http.StatusOK, calibrate.Analyze(m, s.opt.Store.List(), calibrate.Options{}))
 }

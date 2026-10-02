@@ -71,6 +71,8 @@ Usage:
                                           business objects from the pack's ontology.yaml
   zyntra scenario run|compare -f PACK [-set kpi=v] [name=]a+b ...
                                           what-if plans with business impact
+  zyntra calibrate -f PACK [-state DIR]   backtest edge weights against finished decisions
+                                          and suggest corrections (never applies them)
   zyntra connector-token -name N -tenant T[,T2] [-types A,B] [-days N]
                                           new connector credential: prints the token once
                                           and the policy snippet (SHA-256 only)
@@ -333,6 +335,8 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		return keepCmd(ctx, args, out)
 	case "pack":
 		return packCmd(ctx, args, out)
+	case "calibrate":
+		return calibrateCmd(ctx, &c, fs, args, out)
 	case "connector-token":
 		return connectorTokenCmd(args, out)
 	case "ontology":

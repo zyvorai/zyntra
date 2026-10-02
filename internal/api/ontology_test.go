@@ -13,6 +13,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/ai"
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/calibrate"
 	"github.com/zyvorai/zyntra/internal/connector"
 	"github.com/zyvorai/zyntra/internal/decisions"
 	"github.com/zyvorai/zyntra/internal/ontology"
@@ -398,5 +399,16 @@ func TestScheduledRefreshUnblocksStaleEvidence(t *testing.T) {
 	// The scheduled refresh endpoint now runs through the scheduler.
 	if c := f.as(t, "POST", "/api/v1/ontology/refresh", "p", proposer, "", nil); c != 200 {
 		t.Errorf("refresh = %d", c)
+	}
+}
+
+func TestCalibrationEndpoint(t *testing.T) {
+	f := setup(t, nil)
+	var rep calibrate.Report
+	if c := f.as(t, "GET", "/api/v1/ai/calibration", "v", viewer, "", &rep); c != 200 || rep.Decisions != 0 || !strings.Contains(rep.Note, "dry-run") {
+		t.Fatalf("calibration = %d %+v", c, rep)
+	}
+	if c := f.do(t, "GET", "/api/v1/ai/calibration", "", "", nil); c != 401 {
+		t.Errorf("anonymous = %d", c)
 	}
 }
