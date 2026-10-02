@@ -429,3 +429,52 @@ func (s *Server) handleScenarioCompare(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, c)
 }
+
+func (s *Server) handleOntHistory(w http.ResponseWriter, r *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	h := s.reader(r).History(r.PathValue("id"))
+	if h == nil {
+		h = []ontology.Change{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changes": h})
+}
+
+// maxIngestRecords bounds one push; larger loads are split by the connector.
+const maxIngestRecords = 5000
+
+// handleOntIngest takes a normalized batch from a connector. The caller needs
+// the ingest or admin role and an explicit tenant grant in the access rules;
+// the batch is all-or-nothing and cannot touch another tenant's objects.
+func (s *Server) handleOntIngest(w http.ResponseWriter, r *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	tenant := r.PathValue("tenant")
+	if tenant == "default" {
+		tenant = ""
+	}
+	p := principal(r)
+	if !s.opt.Ontology.Access.CanIngest(p, tenant) {
+		writeErr(w, http.StatusForbidden, "no ingest grant for this tenant")
+		return
+	}
+	var req struct {
+		Source  string            `json:"source"`
+		Records []ontology.Record `json:"records"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Source == "" || len(req.Source) > 100 || len(req.Records) == 0 || len(req.Records) > maxIngestRecords {
+		writeErr(w, http.StatusBadRequest, "want a source name and 1-5000 records")
+		return
+	}
+	rep, err := s.opt.Ontology.Store.IngestScoped(tenant, "push:"+req.Source, p.Subject, req.Records, time.Now().UTC())
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, rep)
+}

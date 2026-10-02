@@ -28,6 +28,7 @@ actions:
   - id: add_gpus
     name: Add GPUs
     effects: [{kpi: queue, change: -0.6}]
+    execute: {template: gravia.priority, params: {name: zyntra-test, value: "1000"}}
   - id: free_action
     name: Free action
     effects: [{kpi: queue, change: -0.1}]
@@ -225,5 +226,79 @@ func TestNoOntologyRoutes404(t *testing.T) {
 	f := setup(t, nil)
 	if c := f.as(t, "GET", "/api/v1/ontology/objects", "v", viewer, "", nil); c != 404 {
 		t.Fatalf("pack without ontology = %d, want 404", c)
+	}
+}
+
+func TestApprovedProposalBlockedWhenObjectsChange(t *testing.T) {
+	f := ontSetup(t, nil)
+	var p approvals.Proposal
+	if c := f.as(t, "POST", "/api/v1/proposals", "boss", approver, `{"action":"add_gpus","inputs":{"cluster":"Cluster:x:c1"}}`, &p); c != 201 {
+		t.Fatalf("propose = %d", c)
+	}
+	if p.ObjectDigest == "" {
+		t.Fatal("typed proposal carries no object digest")
+	}
+	// The cluster is retired after the proposal and before the approval.
+	_, err := f.s.opt.Ontology.Store.Ingest("ops", "t", []ontology.Record{{Type: "Cluster", Namespace: "x", Key: "c1",
+		Props: map[string]any{"status": "retired"}}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var done approvals.Proposal
+	f.as(t, "POST", "/api/v1/proposals/"+p.ID+"/approve", "root", []auth.Role{auth.RoleAdmin}, `{}`, &done)
+	if done.Status != approvals.Blocked || done.Execution != nil {
+		t.Fatalf("a changed object must block execution: %+v", done)
+	}
+	if done.Revalidation == nil || !strings.Contains(strings.Join(done.Revalidation.Reasons, " "), "business objects") {
+		t.Fatalf("reason missing: %+v", done.Revalidation)
+	}
+}
+
+func TestPushIngestNeedsGrantAndKeepsTenants(t *testing.T) {
+	rules := []ontology.Rule{{Roles: []string{"ingest"}, IngestTenants: []string{"alpha"}}}
+	f := ontSetup(t, rules)
+	f.s.opt.Auth.SetIngestToken("ingest-tok")
+	body := `{"source":"mes","records":[{"type":"Cluster","namespace":"mes","key":"c9","props":{"name":"Pushed","status":"active"}}]}`
+	if c := f.do(t, "POST", "/api/v1/ontology/ingest/alpha", "ingest-tok", body, nil); c != 202 {
+		t.Fatalf("granted tenant = %d", c)
+	}
+	if c := f.do(t, "POST", "/api/v1/ontology/ingest/beta", "ingest-tok", body, nil); c != 403 {
+		t.Fatalf("tenant without a grant = %d", c)
+	}
+	if c := f.as(t, "POST", "/api/v1/ontology/ingest/alpha", "boss", approver, body, nil); c != 403 {
+		t.Fatalf("approver is not an ingester = %d", c)
+	}
+	if c := f.do(t, "GET", "/api/v1/ontology/objects", "ingest-tok", "", nil); c != 403 {
+		t.Fatalf("the ingest token must not read objects = %d", c)
+	}
+	o, ok := f.s.opt.Ontology.Store.Get("Cluster:mes:c9")
+	if !ok || o.Tenant != "alpha" || o.Props["name"].Prov.Source != "push:mes" {
+		t.Fatalf("pushed object = %+v", o)
+	}
+	bad := `{"source":"mes","records":[{"type":"Cluster","namespace":"mes","key":"c10","props":{"name":"ok"}},{"type":"Cluster","namespace":"mes","key":"c11","props":{"nope":"x"}}]}`
+	if c := f.do(t, "POST", "/api/v1/ontology/ingest/alpha", "ingest-tok", bad, nil); c != 422 {
+		t.Fatalf("invalid record = %d", c)
+	}
+	if _, ok := f.s.opt.Ontology.Store.Get("Cluster:mes:c10"); ok {
+		t.Error("an invalid batch was partly written")
+	}
+	if c := f.do(t, "POST", "/api/v1/ontology/ingest/alpha", "ingest-tok", `{"source":"mes","records":[]}`, nil); c != 400 {
+		t.Fatalf("empty batch = %d", c)
+	}
+}
+
+func TestObjectHistoryEndpoint(t *testing.T) {
+	f := ontSetup(t, nil)
+	_, _ = f.s.opt.Ontology.Store.Ingest("ops", "t", []ontology.Record{{Type: "Cluster", Namespace: "x", Key: "c1", Props: map[string]any{"status": "degraded"}}}, time.Now())
+	var h struct{ Changes []ontology.Change }
+	if c := f.as(t, "GET", "/api/v1/ontology/objects/Cluster:x:c1/history", "boss", approver, "", &h); c != 200 {
+		t.Fatalf("history = %d", c)
+	}
+	last := h.Changes[len(h.Changes)-1]
+	if last.Property != "status" || last.Before == nil || last.Before.V != "active" || last.After.V != "degraded" {
+		t.Fatalf("last change = %+v", last)
+	}
+	if c := f.as(t, "GET", "/api/v1/ontology/objects/Cluster:x:none/history", "boss", approver, "", nil); c != 200 {
+		t.Fatalf("unknown object history = %d", c)
 	}
 }

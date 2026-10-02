@@ -345,6 +345,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/ontology/objects/{id}", read(s.handleOntObject))
 	mux.Handle("GET /api/v1/ontology/objects/{id}/impact", read(s.handleOntImpact))
 	mux.Handle("GET /api/v1/ontology/risk", read(s.handleOntRisk))
+	mux.Handle("GET /api/v1/ontology/objects/{id}/history", read(s.handleOntHistory))
+	mux.Handle("POST /api/v1/ontology/ingest/{tenant}", s.opt.Auth.Require(http.HandlerFunc(s.handleOntIngest), auth.Ingesters...))
 	mux.Handle("GET /api/v1/ontology/actions", read(s.handleOntActions))
 	mux.Handle("GET /api/v1/ontology/views/{id}", read(s.handleOntView))
 	mux.Handle("GET /api/v1/ontology/resolution", read(s.handleOntCandidates))

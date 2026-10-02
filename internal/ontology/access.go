@@ -29,6 +29,9 @@ type Rule struct {
 	// Actions limits which typed actions may be proposed or run; the union
 	// across the principal's rules applies. Empty means no extra limit.
 	Actions []string `yaml:"actions,omitempty" json:"actions,omitempty"`
+	// IngestTenants lists the tenants a matching principal may push records
+	// into; "*" means any. Without a grant only admins may ingest.
+	IngestTenants []string `yaml:"ingest_tenants,omitempty" json:"ingest_tenants,omitempty"`
 }
 
 // Access enforces rules. With no rules the default holds: everyone sees every
@@ -117,6 +120,25 @@ func (a *Access) CanAct(p Principal, actionID string) bool {
 	return !limited || ok
 }
 
+// CanIngest reports whether p may push records into tenant ("" is the
+// default tenant). Admins always may; anyone else needs an explicit grant.
+func (a *Access) CanIngest(p Principal, tenant string) bool {
+	if p.has("admin") {
+		return true
+	}
+	if a == nil {
+		return false
+	}
+	for _, r := range a.matching(p) {
+		for _, t := range r.IngestTenants {
+			if t == "*" || t == tenant {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Reader is the permission-checked view of a store for one principal. Every
 // read path an assistant or API handler uses goes through it.
 type Reader struct {
@@ -179,3 +201,26 @@ func (r Reader) Candidates() []Candidate {
 
 // Schema returns the store's schema.
 func (s *Store) Schema() *Schema { return s.schema }
+
+// History returns the changes to id that the principal may see. Visibility
+// is judged now, not when the value was written: a property that has since
+// become sensitive, denied or undeclared does not appear in old entries.
+func (r Reader) History(id string) []Change {
+	cur, ok := r.Get(id)
+	if !ok {
+		return nil
+	}
+	declared := map[string]bool{}
+	if ot, ok := r.st.schema.Object(cur.Type); ok {
+		for _, p := range ot.Properties {
+			declared[p.Name] = true
+		}
+	}
+	var out []Change
+	for _, c := range r.st.History(cur.ID) {
+		if _, visible := cur.Props[c.Property]; visible && declared[c.Property] {
+			out = append(out, c)
+		}
+	}
+	return out
+}

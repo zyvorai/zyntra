@@ -211,6 +211,7 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(refs) > 0 {
 		p.Objects, p.ActionInputs, p.ScenarioID = refs, req.Inputs, req.Scenario
+		p.ObjectDigest = s.opt.Ontology.Actions.Digest(acts[0].ID, refs)
 		p.Rollout = s.opt.Ontology.Def.Rollout
 	}
 	rd, rerr := s.render(r.Context(), m, acts)
@@ -560,6 +561,9 @@ func (s *Server) execute(ctx context.Context, id, by string) approvals.Proposal 
 	if aerr != nil {
 		return s.block(id, by, aerr.Error())
 	}
+	if problems := s.recheckObjects(p); len(problems) > 0 {
+		return s.block(id, by, "business objects: "+strings.Join(problems, "; "))
+	}
 	rv := s.revalidate(p, m, acts)
 	if !rv.OK {
 		out, err := s.opt.Store.Block(id, rv, by)
@@ -794,4 +798,14 @@ func (s *Server) checkObjectOutcome(id string, p approvals.Proposal, m *graph.Mo
 		note = fmt.Sprintf("%d object(s) still failing a bound KPI", len(bad))
 	}
 	_, _ = s.opt.Store.Record(id, "zyntra", "object outcome: "+note, func(x *approvals.Proposal) { x.ObjectOutcome = oo })
+}
+
+// recheckObjects re-validates a typed proposal's objects against the store as
+// it is now. It returns nothing for proposals that have no objects.
+func (s *Server) recheckObjects(p approvals.Proposal) []string {
+	reg := s.opt.Ontology.Actions
+	if reg == nil || len(p.Objects) == 0 {
+		return nil
+	}
+	return reg.Recheck(p.Action, p.Objects, p.ObjectDigest)
 }

@@ -189,3 +189,39 @@ func TestEvalNeverChoosesAnAction(t *testing.T) {
 		}
 	}
 }
+
+func TestEvalSelectorCannotInventOrLeak(t *testing.T) {
+	w := newWorld(t, []ontology.Rule{{Roles: []string{"viewer"}, Types: []string{"Service", "Cluster"}}})
+	failing := map[string]bool{}
+	for _, g := range w.snap.Gaps {
+		failing[g.KPI] = true
+	}
+	ask := func(sel func(string, []ontology.Object) []string) ai.Answer {
+		s := w.snap
+		s.Objects = &ai.ObjectContext{
+			Reader:  w.st.As(w.ac, ontology.Principal{Roles: []string{"viewer"}}),
+			Schema:  w.def.Schema(),
+			Failing: func(k string) bool { return failing[k] },
+			Select:  sel,
+		}
+		return (&ai.Engine{}).Ask(context.Background(), "Which services are affected?", s)
+	}
+	base := ask(nil)
+	// A selector that invents ids and names a hidden customer: both ignored.
+	got := ask(func(_ string, _ []ontology.Object) []string {
+		return []string{"Service:erp:invented", "Customer:crm:cust-acme"}
+	})
+	if got.Text != base.Text {
+		t.Errorf("an invalid selection changed the answer:\n%s\n--\n%s", got.Text, base.Text)
+	}
+	// A valid narrowing is honoured, and the text still comes from records.
+	only := ask(func(_ string, c []ontology.Object) []string { return []string{c[0].ID} })
+	if strings.Count(only.Text, "(Service)") != 1 || strings.Contains(only.Text, "Acme") {
+		t.Errorf("narrowed answer wrong:\n%s", only.Text)
+	}
+	for _, c := range only.Citations {
+		if strings.HasPrefix(c.Object, "Customer:") {
+			t.Errorf("citation to a hidden type: %+v", c)
+		}
+	}
+}

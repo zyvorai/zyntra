@@ -131,13 +131,18 @@ func (e *Engine) finish(ctx context.Context, q string, a Answer, s Snapshot) Ans
 
 // Ask answers a free-text question from the snapshot.
 func (e *Engine) Ask(ctx context.Context, q string, s Snapshot) Answer {
+	if s.Objects != nil && e.LLM != nil && s.Objects.Select == nil {
+		oc := *s.Objects
+		oc.Select = e.LLM.selector(ctx)
+		s.Objects = &oc
+	}
 	return e.finish(ctx, q, answer(q, s), s)
 }
 
 func answer(q string, s Snapshot) Answer {
 	ql := strings.ToLower(q)
 	if s.Objects != nil {
-		if a, ok := answerObjects(ql, s); ok {
+		if a, ok := answerObjectsQ(q, ql, s); ok {
 			return a
 		}
 	}

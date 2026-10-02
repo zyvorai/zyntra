@@ -8,9 +8,13 @@
 package actions
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/zyvorai/zyntra/internal/ontology"
 )
@@ -20,11 +24,13 @@ type Registry struct {
 	defs   map[string]ontology.ActionType
 	store  *ontology.Store
 	access *ontology.Access
+	// Now supplies the clock for evidence-age checks; tests replace it.
+	Now func() time.Time
 }
 
 // New builds a registry; a nil definition yields an empty registry.
 func New(def *ontology.Definition, st *ontology.Store, ac *ontology.Access) *Registry {
-	r := &Registry{defs: map[string]ontology.ActionType{}, store: st, access: ac}
+	r := &Registry{defs: map[string]ontology.ActionType{}, store: st, access: ac, Now: time.Now}
 	if def != nil {
 		for _, a := range def.Actions {
 			r.defs[a.ID] = a
@@ -101,22 +107,7 @@ func (r *Registry) Validate(id string, inputs map[string]string, p ontology.Prin
 			refs = append(refs, ontology.ObjectRef{Input: in.Name, ID: o.ID, Type: o.Type})
 		}
 	}
-	for _, req := range a.Requires {
-		o, ok := got[req.Input]
-		if !ok {
-			continue
-		}
-		have := ""
-		if v, ok := o.Props[req.Property]; ok {
-			have = fmt.Sprint(v.V)
-		}
-		if req.Equals != "" && have != req.Equals {
-			problems = append(problems, fmt.Sprintf("%s.%s is %q, must be %q", o.ID, req.Property, have, req.Equals))
-		}
-		if req.NotEq != "" && have == req.NotEq {
-			problems = append(problems, fmt.Sprintf("%s.%s must not be %q", o.ID, req.Property, req.NotEq))
-		}
-	}
+	problems = append(problems, r.checkObjects(a, got, r.Now())...)
 	if len(problems) > 0 {
 		return nil, problems
 	}
@@ -165,4 +156,90 @@ func compare(a, b string) int {
 		return 1
 	}
 	return 0
+}
+
+// checkObjects applies the object-state requirements and the evidence rules
+// to the objects an action would act on.
+func (r *Registry) checkObjects(a ontology.ActionType, got map[string]ontology.Object, now time.Time) []string {
+	var problems []string
+	for _, req := range a.Requires {
+		o, ok := got[req.Input]
+		if !ok {
+			continue
+		}
+		have := ""
+		if v, ok := o.Props[req.Property]; ok {
+			have = fmt.Sprint(v.V)
+		}
+		if req.Equals != "" && have != req.Equals {
+			problems = append(problems, fmt.Sprintf("%s.%s is %q, must be %q", o.ID, req.Property, have, req.Equals))
+		}
+		if req.NotEq != "" && have == req.NotEq {
+			problems = append(problems, fmt.Sprintf("%s.%s must not be %q", o.ID, req.Property, req.NotEq))
+		}
+	}
+	for _, e := range a.Evidence {
+		o, ok := got[e.Input]
+		if !ok {
+			continue
+		}
+		props := e.Properties
+		if len(props) == 0 {
+			for k := range o.Props {
+				props = append(props, k)
+			}
+			sort.Strings(props)
+		}
+		var maxAge time.Duration
+		if e.MaxAge != "" {
+			maxAge, _ = time.ParseDuration(e.MaxAge)
+		}
+		for _, name := range props {
+			v, ok := o.Props[name]
+			switch {
+			case !ok:
+				problems = append(problems, fmt.Sprintf("%s: required evidence %q is missing", o.ID, name))
+			case maxAge > 0 && (v.Prov.ObservedAt.IsZero() || now.Sub(v.Prov.ObservedAt) > maxAge):
+				problems = append(problems, fmt.Sprintf("%s.%s is stale: observed %s, newer than %s is required",
+					o.ID, name, v.Prov.ObservedAt.UTC().Format(time.RFC3339), e.MaxAge))
+			}
+		}
+	}
+	return problems
+}
+
+// Digest fingerprints the action's contract and the objects it acts on, for
+// Recheck to compare against later.
+func (r *Registry) Digest(id string, refs []ontology.ObjectRef) string {
+	b, _ := json.Marshal(r.defs[id])
+	h := sha256.New()
+	h.Write(b)
+	h.Write([]byte(r.store.Digest(refs)))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// Recheck is Validate's second look, run right before execution against the
+// stored proposal: the contract and the objects' facts must be what they were
+// when the proposal was made, and the object-state and evidence rules must
+// still hold now. It does not depend on who is asking; the approval already
+// carries the authority.
+func (r *Registry) Recheck(id string, refs []ontology.ObjectRef, digest string) []string {
+	a, ok := r.defs[id]
+	if !ok {
+		return []string{fmt.Sprintf("%q is no longer a typed action", id)}
+	}
+	var problems []string
+	if digest != "" && r.Digest(id, refs) != digest {
+		problems = append(problems, "the objects or the action contract changed after this proposal was made; propose it again")
+	}
+	got := map[string]ontology.Object{}
+	for _, ref := range refs {
+		o, ok := r.store.Get(ref.ID)
+		if !ok {
+			problems = append(problems, fmt.Sprintf("object %q no longer exists", ref.ID))
+			continue
+		}
+		got[ref.Input] = o
+	}
+	return append(problems, r.checkObjects(a, got, r.Now())...)
 }

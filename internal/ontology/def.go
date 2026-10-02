@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -83,6 +84,19 @@ type ActionType struct {
 	Permissions []string      `yaml:"permissions,omitempty" json:"permissions,omitempty"` // roles; empty = any proposer
 	Requires    []Requirement `yaml:"requires,omitempty" json:"requires,omitempty"`
 	Outcome     []ObjectCheck `yaml:"outcome,omitempty" json:"outcome,omitempty"`
+	// Evidence says which facts about an input must be present and how old
+	// they may be. It is checked when the action is proposed and again
+	// right before it runs.
+	Evidence []EvidenceRule `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+}
+
+// EvidenceRule constrains the facts behind one input. Properties names the
+// properties that must be present (all of the object's when empty); MaxAge,
+// when set, is the oldest observation that still counts, e.g. "1h".
+type EvidenceRule struct {
+	Input      string   `yaml:"input" json:"input"`
+	Properties []string `yaml:"properties,omitempty" json:"properties,omitempty"`
+	MaxAge     string   `yaml:"max_age,omitempty" json:"max_age,omitempty"`
 }
 
 // Input is one typed argument of an action.
@@ -219,6 +233,16 @@ func (d *Definition) Validate() error {
 		for _, r := range a.Requires {
 			if !names[r.Input] {
 				errs = append(errs, fmt.Errorf("action %s: requirement names unknown input %q", a.ID, r.Input))
+			}
+		}
+		for _, e := range a.Evidence {
+			if !names[e.Input] {
+				errs = append(errs, fmt.Errorf("action %s: evidence rule names unknown input %q", a.ID, e.Input))
+			}
+			if e.MaxAge != "" {
+				if d, err := time.ParseDuration(e.MaxAge); err != nil || d <= 0 {
+					errs = append(errs, fmt.Errorf("action %s: evidence max_age %q is not a positive duration", a.ID, e.MaxAge))
+				}
 			}
 		}
 		for _, t := range a.Affects {
