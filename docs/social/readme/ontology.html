@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra — Business ontology</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<link rel="stylesheet" href="brand.css">
+<style>.split{display:grid;grid-template-columns:900px 1fr;gap:36px;margin-top:30px;align-items:center}
+.graph{background:#fff;border:2px solid var(--rule);border-radius:20px;padding:20px}
+.pts{display:grid;gap:18px}.pt{border-left:6px solid var(--signal);padding:4px 0 4px 18px;font-size:19px;line-height:1.38;color:var(--grey)}.pt b{display:block;color:var(--ink);font-family:var(--display);font-size:28px;font-weight:800;margin-bottom:2px}</style></head>
+<body>
+<div class="topbar"><img src="zyvor-mark.svg" alt=""><span class="name">Zyvor <b>Zyntra</b></span><span class="r">Business ontology</span></div>
+<div class="main">
+<div class="eyebrow">Objects and links</div>
+<h1>Know what a failing KPI <em>puts at risk.</em></h1>
+<p class="lede">Orders, lines, machines, clusters and customers are linked once. When a KPI misses target, Zyntra shows the objects behind it, where each fact came from, and what it would take to fix.</p>
+<div class="split"><div class="graph"><svg viewBox="0 0 860 440" width="860" height="440" font-family="Avenir Next,Helvetica,Arial,sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#5b5651"/></marker></defs>
+<g stroke="#5b5651" stroke-width="2.4" fill="none" marker-end="url(#a)">
+<path d="M135 70 L222 150"/><path d="M135 160 L222 170"/><path d="M135 250 L222 190"/>
+<path d="M352 170 L462 200"/><path d="M352 350 L462 240"/><path d="M602 220 L712 220"/></g>
+<g font-size="20" font-weight="700" text-anchor="middle">
+<rect x="15" y="44" width="120" height="52" rx="12" fill="#fff" stroke="#e6dfda" stroke-width="2.5"/><text x="75" y="77">O-1001</text>
+<rect x="15" y="134" width="120" height="52" rx="12" fill="#fff" stroke="#e6dfda" stroke-width="2.5"/><text x="75" y="167">O-1002</text>
+<rect x="15" y="224" width="120" height="52" rx="12" fill="#fff" stroke="#e6dfda" stroke-width="2.5"/><text x="75" y="257">Press 4</text>
+<rect x="222" y="144" width="130" height="52" rx="12" fill="#fff" stroke="#111" stroke-width="2.5"/><text x="287" y="177">Line 1</text>
+<rect x="222" y="324" width="130" height="52" rx="12" fill="#fff" stroke="#111" stroke-width="2.5"/><text x="287" y="357">Line 2</text>
+<rect x="462" y="185" width="140" height="70" rx="14" fill="#111"/><text x="532" y="216" fill="#fff">Vision QA</text><text x="532" y="240" font-size="15" fill="#ff8a54" font-weight="600">failing: backlog</text>
+<rect x="712" y="190" width="135" height="60" rx="12" fill="#fff" stroke="#111" stroke-width="2.5"/><text x="780" y="218" font-size="18">Inspection</text><text x="780" y="240" font-size="18">cluster A</text></g>
+<g font-size="14" fill="#5b5651" text-anchor="middle" font-family="SF Mono,Menlo,monospace"><text x="150" y="40">produced_on / on_line</text><text x="412" y="164">inspected_by</text><text x="657" y="210">runs_on</text></g>
+</svg></div>
+<div class="pts"><div class="pt"><b>Provenance on every fact</b>Each value carries its source, source id and the time it was observed.</div>
+<div class="pt"><b>Same thing, two systems?</b>Uncertain matches are queued for a person. Nothing merges on a guess, and each merge is audited.</div>
+<div class="pt"><b>Links explain. Edges predict.</b>Links show what depends on what. Predictions come only from the KPI edges you declared.</div>
+<div class="pt"><b>Answers respect permissions</b>People and tenants only see the objects they are allowed to see, including in AI answers.</div></div></div>
+</div>
+<div class="foot"><span><b>Zyvor</b> · decision intelligence</span><span class="r">github.com/zyvorai/zyntra</span></div>
+</body></html>

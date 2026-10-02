@@ -2,27 +2,30 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Zyntra social card</title>
-<!-- 1600x900 (16:9) card for LinkedIn and X: the decision loop in four steps. Build: ./build-social-card.sh -->
+<title>Zyntra — social card</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- Designed at 1600x840 (1.9:1). build-social-card.sh renders it at 2x (3200x1680), 1.5x (2400x1260) and,
+     at a 1600x800 viewport, 0.8x (1280x640, GitHub's social preview size). The steps are anchored to the bottom
+     so the same layout fits both heights. -->
 <style>
   :root { --bg:#09080d; --ink:#f4f2f8; --mute:#b3aec1; --dim:#77718a; --violet:#8b5cf6; --violet2:#a78bfa; --orange:#ff5a15;
     --sans:'Avenir Next','SF Pro Display','Helvetica Neue',Helvetica,Arial,sans-serif;
     --mono:'SF Mono','JetBrains Mono',Menlo,monospace; }
   * { box-sizing:border-box; }
-  html,body { margin:0; width:1600px; height:900px; overflow:hidden; background:var(--bg); }
+  html,body { margin:0; width:1600px; height:100vh; min-height:800px; overflow:hidden; background:var(--bg); }
   body { font-family:var(--sans); color:var(--ink); -webkit-font-smoothing:antialiased; position:relative; }
   .glow { position:absolute; inset:0; background:radial-gradient(900px 500px at 800px 120px, rgba(139,92,246,.20), transparent 70%),
     radial-gradient(500px 300px at 1350px 760px, rgba(255,90,21,.10), transparent 70%); }
   .stripe { position:absolute; left:0; right:0; top:0; height:8px; background:linear-gradient(90deg, var(--orange), var(--violet)); }
-  header { position:absolute; left:90px; right:90px; top:76px; display:flex; align-items:center; justify-content:space-between; }
+  header { position:absolute; left:90px; right:90px; top:62px; display:flex; align-items:center; justify-content:space-between; }
   .brand { display:flex; align-items:center; gap:18px; font-size:54px; font-weight:700; letter-spacing:-.03em; }
   .brand img { width:58px; height:58px; }
   .eyebrow { font-family:var(--mono); font-size:17px; letter-spacing:.26em; color:var(--violet2); }
-  h1 { position:absolute; left:90px; top:190px; margin:0; font-size:72px; line-height:1.06; letter-spacing:-.03em; width:1300px; }
+  h1 { position:absolute; left:90px; top:166px; margin:0; font-size:72px; line-height:1.06; letter-spacing:-.03em; width:1300px; }
   h1 em { font-style:normal; background:linear-gradient(90deg, var(--violet2), var(--orange)); -webkit-background-clip:text; color:transparent; }
-  .steps { position:absolute; left:90px; right:90px; top:420px; display:flex; gap:22px; }
+  .steps { position:absolute; left:90px; right:90px; bottom:118px; display:flex; gap:22px; }
   .step { flex:1; border:1px solid rgba(167,139,250,.28); background:linear-gradient(180deg, rgba(139,92,246,.12), rgba(139,92,246,.03));
-    border-radius:20px; padding:30px 30px 28px; position:relative; min-height:300px; }
+    border-radius:20px; padding:30px 30px 28px; position:relative; min-height:292px; }
   .step.act { border-color:rgba(255,90,21,.45); background:linear-gradient(180deg, rgba(255,90,21,.14), rgba(255,90,21,.03)); }
   .n { font-family:var(--mono); font-size:16px; letter-spacing:.2em; color:var(--violet2); }
   .act .n { color:#ffa27a; }
@@ -30,23 +33,23 @@
   .step p { margin:0; font-size:21px; line-height:1.45; color:var(--mute); }
   .step code { font-family:var(--mono); font-size:17px; color:#e2dafc; }
   .arrow { position:absolute; right:-19px; top:50%; width:16px; height:16px; border-top:2px solid var(--violet2); border-right:2px solid var(--violet2); transform:translateY(-50%) rotate(45deg); }
-  footer { position:absolute; left:90px; right:90px; bottom:56px; display:flex; justify-content:space-between; font-family:var(--mono); font-size:17px; color:var(--dim); letter-spacing:.05em; }
+  footer { position:absolute; left:90px; right:90px; bottom:48px; display:flex; justify-content:space-between; font-family:var(--mono); font-size:17px; color:var(--dim); letter-spacing:.05em; }
   footer span b { color:var(--ink); font-weight:600; }
 </style>
 </head>
 <body>
 <div class="glow"></div><div class="stripe"></div>
 <header>
-  <div class="brand"><img src="../../web/public/zyvor-mark.svg" alt="">Zyntra</div>
+  <div class="brand"><img src="zyvor-mark.svg" alt="">Zyntra</div>
   <div class="eyebrow">DECISION INTELLIGENCE FOR OPERATIONS</div>
 </header>
 <h1>Stop arguing over dashboards.<br><em>Know the next best action — and why.</em></h1>
 <div class="steps">
-  <div class="step"><div class="n">01 · SENSE</div><b>Live signals</b><p>Netra, Gravia and Fabric signals, or a shop's POS and stock CSVs through a pack, all mapped onto one KPI graph.</p><i class="arrow"></i></div>
+  <div class="step"><div class="n">01 · SENSE</div><b>Live signals</b><p>Netra, Gryvia and Fabric signals, or a shop's POS and stock CSVs through a pack, all mapped onto one KPI graph.</p><i class="arrow"></i></div>
   <div class="step"><div class="n">02 · GAPS</div><b>What's off target</b><p>Every KPI scored against its target and owner. AI flags anomalies and forecasts <code>misses target in 3 days</code>.</p><i class="arrow"></i></div>
   <div class="step"><div class="n">03 · SIMULATE</div><b>Ranked what-if</b><p>Each action propagated through the dependency graph and ranked by weighted gap closed minus risk, with ranges. Every number is traceable.</p><i class="arrow"></i></div>
-  <div class="step act"><div class="n">04 · ACT</div><b>You approve</b><p>Approve in the inbox and Zyntra renders the change (a Gravia CRD, a webhook or a PO file): <code>dry-run</code> by default, signed and audited.</p></div>
+  <div class="step act"><div class="n">04 · ACT</div><b>You approve</b><p>Approve in the inbox and Zyntra renders the change (a Gryvia CRD, a webhook or a PO file): <code>dry-run</code> by default, signed and audited.</p></div>
 </div>
-<footer><span><b>github.com/zyvorai/zyntra</b> · v0.4</span><span>Free for non-production · zyvor.dev</span></footer>
+<footer><span><b>github.com/zyvorai/zyntra</b> · Zyvor Production License</span><span>Free for non-production · zyvor.dev</span></footer>
 </body>
 </html>
