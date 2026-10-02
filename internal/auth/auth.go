@@ -52,6 +52,9 @@ const (
 	RoleExec Role = "exec"
 	// RoleIngest may only post documents to webhook-in channels.
 	RoleIngest Role = "ingest"
+	// RoleDeploy is the deployment tooling's machine role: it reads rollouts
+	// and reports per-site results, and does nothing else.
+	RoleDeploy Role = "deploy"
 )
 
 // Route groups.
@@ -62,14 +65,17 @@ var (
 	Executors = []Role{RoleExecutor, RoleAdmin, RoleExec}
 	Admins    = []Role{RoleAdmin}
 	Ingesters = []Role{RoleIngest, RoleAdmin}
+	// Deployers report rollout progress; readers may look at rollouts too.
+	Deployers      = []Role{RoleDeploy, RoleAdmin}
+	RolloutReaders = []Role{RoleViewer, RoleProposer, RoleApprover, RoleExecutor, RoleAdmin, RoleDeploy}
 )
 
-var rank = map[Role]int{RoleViewer: 1, RoleExec: 1, RoleIngest: 1, RoleProposer: 2, RoleExecutor: 3, RoleApprover: 4, RoleAdmin: 5}
+var rank = map[Role]int{RoleViewer: 1, RoleExec: 1, RoleIngest: 1, RoleDeploy: 1, RoleProposer: 2, RoleExecutor: 3, RoleApprover: 4, RoleAdmin: 5}
 
 // ParseRole accepts a user-facing role name.
 func ParseRole(s string) (Role, error) {
 	r := Role(strings.ToLower(strings.TrimSpace(s)))
-	if _, ok := rank[r]; !ok || r == RoleExec || r == RoleIngest {
+	if _, ok := rank[r]; !ok || r == RoleExec || r == RoleIngest || r == RoleDeploy {
 		return RoleNone, fmt.Errorf("unknown role %q (viewer, proposer, approver, executor, admin)", s)
 	}
 	return r, nil
@@ -189,6 +195,7 @@ type Auth struct {
 	key       []byte
 	execKey   []byte
 	ingestKey []byte
+	deployKey []byte
 	secret    []byte
 	users     map[string]LocalUser
 	creds     []IngestCredential
@@ -219,6 +226,10 @@ func (a *Auth) SetSessionSecret(s string) {
 // SetIngestToken sets the bearer token gateways use to post to webhook-in
 // channels. It grants nothing else.
 func (a *Auth) SetIngestToken(s string) { a.ingestKey = []byte(s) }
+
+// SetDeployToken sets the bearer token the deployment tooling uses to report
+// rollout progress. It grants nothing else.
+func (a *Auth) SetDeployToken(s string) { a.deployKey = []byte(s) }
 
 // SetUsers enables local accounts.
 func (a *Auth) SetUsers(users []LocalUser) {
@@ -352,6 +363,8 @@ func (a *Auth) Identify(r *http.Request) Identity {
 			return newIdentity("keep-broker", "exec-token", RoleExec)
 		case secureEq(a.ingestKey, []byte(tok)):
 			return newIdentity("ingest", "ingest-token", RoleIngest)
+		case secureEq(a.deployKey, []byte(tok)):
+			return newIdentity("deploy", "deploy-token", RoleDeploy)
 		}
 		if id, ok := a.connector(tok); ok {
 			return id

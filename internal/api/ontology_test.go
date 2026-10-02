@@ -17,6 +17,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/connector"
 	"github.com/zyvorai/zyntra/internal/decisions"
 	"github.com/zyvorai/zyntra/internal/ontology"
+	"github.com/zyvorai/zyntra/internal/rollout"
 	"github.com/zyvorai/zyntra/internal/scenario"
 )
 
@@ -410,5 +411,97 @@ func TestCalibrationEndpoint(t *testing.T) {
 	}
 	if c := f.do(t, "GET", "/api/v1/ai/calibration", "", "", nil); c != 401 {
 		t.Errorf("anonymous = %d", c)
+	}
+}
+
+func TestRolloutContractWithDeploymentTooling(t *testing.T) {
+	f := ontSetup(t, nil)
+	f.s.opt.Auth.SetDeployToken("deploy-tok")
+	max15 := 15.0
+	f.s.opt.Ontology.Def.Rollout = &ontology.Rollout{Stages: []ontology.Stage{
+		{Name: "canary", Sites: []string{"a"}, Gates: []ontology.Gate{{KPI: "queue", Max: &max15}}},
+		{Name: "fleet", Sites: []string{"b"}},
+	}}
+	var p approvals.Proposal
+	if c := f.as(t, "POST", "/api/v1/proposals", "boss", approver, `{"action":"add_gpus","inputs":{"cluster":"Cluster:x:c1"}}`, &p); c != 201 {
+		t.Fatalf("propose = %d", c)
+	}
+	var none struct{ Rollouts []rollout.Rollout }
+	f.as(t, "GET", "/api/v1/rollouts", "v", viewer, "", &none)
+	if len(none.Rollouts) != 0 {
+		t.Fatal("a rollout opened before the decision was approved")
+	}
+	f.as(t, "POST", "/api/v1/proposals/"+p.ID+"/approve", "root", []auth.Role{auth.RoleAdmin}, `{}`, nil)
+
+	var one struct{ Rollout rollout.Rollout }
+	if c := f.as(t, "GET", "/api/v1/rollouts/"+p.ID, "v", viewer, "", &one); c != 200 || one.Rollout.Current != "canary" || one.Rollout.State != rollout.RolloutOpen {
+		t.Fatalf("rollout = %d %+v", c, one.Rollout)
+	}
+	report := func(token, stage, site, state string, out any) int {
+		body := `{"stage":"` + stage + `","site":"` + site + `","state":"` + state + `"}`
+		return f.do(t, "POST", "/api/v1/rollouts/"+p.ID+"/report", token, body, out)
+	}
+	if c := report("deploy-tok", "fleet", "b", "healthy", nil); c != 409 {
+		t.Errorf("reporting a later stage = %d, want 409", c)
+	}
+	// The queue is 20, over the gate's 15: a healthy canary still halts the rollout.
+	var halted struct{ Rollout rollout.Rollout }
+	if c := report("deploy-tok", "canary", "a", "healthy", &halted); c != 200 || halted.Rollout.State != rollout.RolloutHalted || halted.Rollout.Stages[0].State != rollout.StageBlocked {
+		t.Fatalf("gate = %d %+v", c, halted.Rollout)
+	}
+	if g := halted.Rollout.Stages[0].GateCheck[0]; g.OK || g.Value == nil || *g.Value != 20 {
+		t.Errorf("gate check = %+v", g)
+	}
+	if c := f.as(t, "POST", "/api/v1/rollouts/"+p.ID+"/recheck", "boss", approver, "", &one); c != 200 || one.Rollout.State != rollout.RolloutHalted {
+		t.Errorf("recheck before recovery = %d %s", c, one.Rollout.State)
+	}
+	// The KPI recovers; an approver rechecks and the next stage opens.
+	f.s.mu.Lock()
+	k, _ := f.s.model.KPI("queue")
+	k.Value = 12
+	f.s.mu.Unlock()
+	if c := f.as(t, "POST", "/api/v1/rollouts/"+p.ID+"/recheck", "boss", approver, "", &one); c != 200 || one.Rollout.Current != "fleet" {
+		t.Fatalf("recheck after recovery = %d %+v", c, one.Rollout)
+	}
+	var done struct{ Rollout rollout.Rollout }
+	if c := report("deploy-tok", "fleet", "b", "healthy", &done); c != 200 || done.Rollout.State != rollout.RolloutComplete {
+		t.Fatalf("final stage = %d %+v", c, done.Rollout)
+	}
+	if c := report("deploy-tok", "fleet", "b", "healthy", nil); c != 409 {
+		t.Errorf("a finished rollout accepted a report = %d", c)
+	}
+
+	// Who may do what.
+	if c := f.as(t, "POST", "/api/v1/rollouts/"+p.ID+"/report", "boss", approver, `{"stage":"canary","site":"a","state":"healthy"}`, nil); c != 403 {
+		t.Errorf("a human approver reporting as the deploy tool = %d, want 403", c)
+	}
+	for _, path := range []string{"/api/v1/gaps", "/api/v1/proposals", "/api/v1/ontology/objects", "/api/v1/audit"} {
+		if c := f.do(t, "GET", path, "deploy-tok", "", nil); c != 403 {
+			t.Errorf("the deploy token read %s = %d, want 403", path, c)
+		}
+	}
+	if c := f.do(t, "GET", "/api/v1/rollouts", "deploy-tok", "", nil); c != 200 {
+		t.Errorf("the deploy token should read rollouts: %d", c)
+	}
+	if c := f.asTenant(t, "GET", "/api/v1/rollouts", "ann", "alpha", approver, "", nil); c != 403 {
+		t.Errorf("a tenant read rollouts = %d", c)
+	}
+	if c := f.as(t, "POST", "/api/v1/rollouts/"+p.ID+"/abort", "boss", approver, `{}`, nil); c != 400 {
+		t.Errorf("abort without a reason = %d, want 400", c)
+	}
+	// Everything the tool reported is in the decision's audit trail.
+	var dec struct {
+		Audit []approvals.Event `json:"audit"`
+	}
+	f.as(t, "GET", "/api/v1/decisions/"+p.ID, "root", []auth.Role{auth.RoleAdmin}, "", &dec)
+	var notes []string
+	for _, e := range dec.Audit {
+		notes = append(notes, e.Note)
+	}
+	joined := strings.Join(notes, "|")
+	for _, want := range []string{"rollout opened: canary → fleet", "rollout canary/a: healthy → rollout halted", "rollout fleet/b: healthy → rollout complete"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("audit trail lacks %q:\n%s", want, joined)
+		}
 	}
 }

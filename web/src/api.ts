@@ -635,3 +635,19 @@ export interface CalibrationReport {
   notes?: string[];
   note?: string;
 }
+
+export interface RolloutStage {
+  name: string;
+  sites: string[];
+  state: 'waiting' | 'running' | 'healthy' | 'blocked' | 'failed';
+  reports?: Record<string, { state: string; note?: string; by: string; at: string }>;
+  gate_check?: { kpi: string; value?: number; max?: number; min?: number; ok: boolean; reason?: string }[];
+}
+export interface Rollout {
+  id: string;
+  action: string;
+  state: 'open' | 'complete' | 'halted' | 'aborted';
+  reason?: string;
+  current?: string;
+  stages: RolloutStage[];
+}

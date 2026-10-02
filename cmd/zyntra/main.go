@@ -46,6 +46,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/pack"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/policy"
+	"github.com/zyvorai/zyntra/internal/rollout"
 	"github.com/zyvorai/zyntra/internal/sim"
 	"github.com/zyvorai/zyntra/internal/tlsutil"
 	"github.com/zyvorai/zyntra/web"
@@ -411,6 +412,10 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 			env("ZYNTRA_AI_LABEL", "Fabric AI gateway"), envBool("ZYNTRA_AI_INSECURE"))
 	}
 	execToken := env("ZYNTRA_EXEC_TOKEN", "")
+	rollouts, err := rollout.Open(filepath.Join(stateDir, "rollouts.json"))
+	if err != nil {
+		return fmt.Errorf("rollouts: %w", err)
+	}
 	ont, err := buildOntology(c.file, m, pol, stateDir)
 	if err != nil {
 		return err
@@ -420,6 +425,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	}
 	opts := api.Options{
 		Ontology: ont,
+		Rollouts: rollouts,
 		Model:    m, Refresh: refresh, Interval: interval, Static: web.FS(),
 		Auth:    authn,
 		Policy:  pol,
@@ -533,6 +539,7 @@ func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 	a := auth.New(env("ZYNTRA_API_KEY", ""), env("ZYNTRA_EXEC_TOKEN", ""))
 	a.SetSessionSecret(env("ZYNTRA_SESSION_SECRET", ""))
 	a.SetIngestToken(env("ZYNTRA_INGEST_TOKEN", ""))
+	a.SetDeployToken(env("ZYNTRA_DEPLOY_TOKEN", ""))
 	if err := a.SetCredentials(pol.Credentials()); err != nil {
 		return nil, fmt.Errorf("policy connectors: %w", err)
 	}
