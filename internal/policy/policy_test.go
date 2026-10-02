@@ -4,6 +4,7 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,37 @@ func TestExamplePolicyLoads(t *testing.T) {
 	g, _ := m.Action("raise-inference-priority")
 	if e := p.For(*g); e.Keep != KeepRequired || !e.RequireFresh {
 		t.Fatalf("gravia %+v", e)
+	}
+}
+
+func TestTenantUsersAndConnectorsInPolicy(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	ok := `
+users:
+  - {name: ann, passwordHash: x, roles: [approver], tenant: alpha}
+  - {name: root, passwordHash: x, roles: [admin]}
+connectors:
+  - {name: mes-alpha, token_sha256: ` + hash + `, tenants: [alpha], object_types: [Machine]}
+  - {name: mes-alpha, token_sha256: ` + strings.Repeat("b", 64) + `, tenants: [alpha], not_after: 2027-01-01T00:00:00Z}
+`
+	p, err := Parse(ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Credentials(); len(got) != 2 || got[0].Types[0] != "Machine" || got[1].NotAfter.Year() != 2027 {
+		t.Fatalf("credentials = %+v", got)
+	}
+	bad := map[string]string{
+		"tenant admin":    "users:\n  - {name: a, passwordHash: x, roles: [admin], tenant: alpha}\n",
+		"tenant executor": "users:\n  - {name: a, passwordHash: x, roles: [executor], tenant: alpha}\n",
+		"bad tenant id":   "users:\n  - {name: a, passwordHash: x, roles: [viewer], tenant: Alpha.Co}\n",
+		"short hash":      "connectors:\n  - {name: m, token_sha256: abc, tenants: [alpha]}\n",
+		"no tenants":      "connectors:\n  - {name: m, token_sha256: " + hash + "}\n",
+		"unknown field":   "connectors:\n  - {name: m, token: plaintext, token_sha256: " + hash + ", tenants: [a]}\n",
+	}
+	for name, text := range bad {
+		if _, err := Parse(text); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

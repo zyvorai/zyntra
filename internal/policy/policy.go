@@ -9,6 +9,7 @@ package policy
 
 import (
 	"fmt"
+	"github.com/zyvorai/zyntra/internal/auth"
 	"github.com/zyvorai/zyntra/internal/ontology"
 	"os"
 	"sort"
@@ -91,6 +92,22 @@ type User struct {
 	Name         string   `yaml:"name" json:"name"`
 	PasswordHash string   `yaml:"passwordHash" json:"-"`
 	Roles        []string `yaml:"roles" json:"roles"`
+	// Tenant confines the account to one tenant's workspace. Only viewer,
+	// proposer and approver roles may be tenant-bound.
+	Tenant string `yaml:"tenant,omitempty" json:"tenant,omitempty"`
+}
+
+// Connector is one connector credential: a token (kept as its SHA-256), the
+// tenants and object types it may write, and an optional validity window.
+// Create one with `zyntra connector-token`.
+type Connector struct {
+	Name        string     `yaml:"name" json:"name"`
+	TokenSHA256 string     `yaml:"token_sha256" json:"-"`
+	Tenants     []string   `yaml:"tenants" json:"tenants"`
+	ObjectTypes []string   `yaml:"object_types,omitempty" json:"object_types,omitempty"`
+	NotBefore   *time.Time `yaml:"not_before,omitempty" json:"not_before,omitempty"`
+	NotAfter    *time.Time `yaml:"not_after,omitempty" json:"not_after,omitempty"`
+	Revoked     bool       `yaml:"revoked,omitempty" json:"revoked,omitempty"`
 }
 
 type Policy struct {
@@ -105,6 +122,8 @@ type Policy struct {
 	// Access limits which business objects, properties and typed actions
 	// each role may use. It is enforced on every read and on proposals.
 	Access []ontology.Rule `yaml:"access,omitempty" json:"access,omitempty"`
+	// Connectors are per-connector ingest credentials.
+	Connectors []Connector `yaml:"connectors,omitempty" json:"connectors,omitempty"`
 }
 
 // Effective is the merged policy for one proposal.
@@ -182,8 +201,46 @@ func (p *Policy) validate() error {
 			return fmt.Errorf("duplicate user %q", u.Name)
 		}
 		seen[u.Name] = true
+		if u.Tenant != "" {
+			id := auth.Identity{}
+			for _, r := range u.Roles {
+				role, err := auth.ParseRole(r)
+				if err != nil {
+					return fmt.Errorf("user %s: %w", u.Name, err)
+				}
+				id.Roles = append(id.Roles, role)
+			}
+			if _, err := id.WithTenant(u.Tenant); err != nil {
+				return fmt.Errorf("user %s: %w", u.Name, err)
+			}
+		}
+	}
+	for _, c := range p.Connectors { // the same name twice is how a token is rotated
+		if err := p.credential(c).Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (p *Policy) credential(c Connector) auth.IngestCredential {
+	cr := auth.IngestCredential{Name: c.Name, TokenHash: c.TokenSHA256, Tenants: c.Tenants, Types: c.ObjectTypes, Revoked: c.Revoked}
+	if c.NotBefore != nil {
+		cr.NotBefore = *c.NotBefore
+	}
+	if c.NotAfter != nil {
+		cr.NotAfter = *c.NotAfter
+	}
+	return cr
+}
+
+// Credentials returns the connector credentials for the auth layer.
+func (p *Policy) Credentials() []auth.IngestCredential {
+	out := make([]auth.IngestCredential, 0, len(p.Connectors))
+	for _, c := range p.Connectors {
+		out = append(out, p.credential(c))
+	}
+	return out
 }
 
 // UseModel adds the model's calendars as windows. Windows in the policy

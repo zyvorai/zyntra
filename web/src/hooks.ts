@@ -33,9 +33,10 @@ export function useApi<T>(path: string | null, refreshMs = 0) {
   return { data, error, loading, reload: load };
 }
 
-export function usePulse() {
+export function usePulse(enabled = true) {
   const [pulse, setPulse] = useState<Pulse | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     const es = new EventSource('/api/v1/events', { withCredentials: true });
     es.addEventListener('pulse', (e) => {
       try {
@@ -45,7 +46,7 @@ export function usePulse() {
       }
     });
     return () => es.close();
-  }, []);
+  }, [enabled]);
   return pulse;
 }
 

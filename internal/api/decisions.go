@@ -150,6 +150,21 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	// Typed actions carry a contract: validated inputs, permissions and
 	// object preconditions, checked here before anything is proposed.
 	var refs []ontology.ObjectRef
+	tenantID := auth.FromContext(r.Context()).Tenant
+	if tenantID != "" {
+		// A tenant-bound caller may only propose typed actions on objects.
+		reg := s.opt.Ontology.Actions
+		for _, a := range acts {
+			if reg == nil {
+				writeErr(w, http.StatusForbidden, "tenant accounts can only propose typed actions")
+				return
+			}
+			if _, typed := reg.Get(a.ID); !typed || len(acts) > 1 {
+				writeErr(w, http.StatusForbidden, "tenant accounts can only propose typed actions, one at a time")
+				return
+			}
+		}
+	}
 	if reg := s.opt.Ontology.Actions; reg != nil {
 		id := auth.FromContext(r.Context())
 		for _, a := range acts {
@@ -210,6 +225,12 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 		p.PackID = m.Pack.ID
 	}
 	if len(refs) > 0 {
+		tenant, terr := s.proposalTenant(r, refs)
+		if terr != nil {
+			writeErr(w, http.StatusUnprocessableEntity, terr.Error())
+			return
+		}
+		p.Tenant = tenant
 		p.Objects, p.ActionInputs, p.ScenarioID = refs, req.Inputs, req.Scenario
 		p.ObjectDigest = s.opt.Ontology.Actions.Digest(acts[0].ID, refs)
 		p.Rollout = s.opt.Ontology.Def.Rollout
@@ -244,24 +265,25 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	if created {
 		code = http.StatusCreated
 	}
-	writeJSON(w, code, out)
+	writeJSON(w, code, s.view(r, out))
 }
 
 func (s *Server) handleProposal(w http.ResponseWriter, r *http.Request) {
-	p, err := s.opt.Store.Get(r.PathValue("id"))
+	p, err := s.proposalFor(r, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	writeJSON(w, http.StatusOK, s.view(r, p))
 }
 
-func (s *Server) handleAudit(w http.ResponseWriter, _ *http.Request) {
-	ev := s.opt.Store.Audit()
-	if ev == nil {
-		ev = []approvals.Event{}
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	ev := s.auditView(r, s.opt.Store.Audit())
+	out := map[string]any{"events": ev}
+	if auth.FromContext(r.Context()).Tenant == "" {
+		out["chain"] = s.opt.Store.Verify()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": ev, "chain": s.opt.Store.Verify()})
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleAuditVerify(w http.ResponseWriter, _ *http.Request) {
@@ -277,13 +299,17 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
 	if !decodeOptional(w, r, &d) {
 		return
 	}
+	if _, err := s.proposalFor(r, r.PathValue("id")); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
 	p, err := s.opt.Store.Decide(r.PathValue("id"), false, auth.FromContext(r.Context()).Subject, d.Reason)
 	if err != nil {
 		writeErr(w, statusFor(err), err.Error())
 		return
 	}
 	s.mirror(p.ID)
-	writeJSON(w, http.StatusOK, p)
+	writeJSON(w, http.StatusOK, s.view(r, p))
 }
 
 func keepMode(p approvals.Proposal) string {
@@ -299,7 +325,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	cur, err := s.opt.Store.Get(id)
+	cur, err := s.proposalFor(r, id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
@@ -319,19 +345,19 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !done {
-		writeJSON(w, http.StatusAccepted, p)
+		writeJSON(w, http.StatusAccepted, s.view(r, p))
 		return
 	}
 	if p.Template == "" {
 		s.mirror(p.ID)
-		writeJSON(w, http.StatusOK, p)
+		writeJSON(w, http.StatusOK, s.view(r, p))
 		return
 	}
 	keepOn := s.opt.ApprovalMode == ModeKeep && s.opt.Keep != nil
 	switch km := keepMode(p); {
 	case km == policy.KeepRequired && !keepOn:
 		p = s.block(p.ID, "zyntra", "policy requires Fabric Keep, but Keep approval mode is not enabled")
-		writeJSON(w, http.StatusConflict, p)
+		writeJSON(w, http.StatusConflict, s.view(r, p))
 		return
 	case keepOn && km != policy.KeepOff:
 		ref, err := s.opt.Keep.Start(r.Context(), p, strings.TrimRight(s.opt.ExecURL, "/")+"/api/v1/exec/"+p.ID)
@@ -340,13 +366,13 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 			p, _ = s.opt.Store.Update(p.ID, func(x *approvals.Proposal) { x.Keep = &ref })
 			if km == policy.KeepRequired {
 				p = s.block(p.ID, "zyntra", "Fabric Keep is required but unavailable: "+err.Error())
-				writeJSON(w, http.StatusConflict, p)
+				writeJSON(w, http.StatusConflict, s.view(r, p))
 				return
 			}
 			log.Printf("keep start %s: %v; executing locally", p.ID, err)
 			p = s.runOrSchedule(r.Context(), p.ID, "zyntra (keep unavailable)")
 			s.mirror(p.ID)
-			writeJSON(w, http.StatusOK, p)
+			writeJSON(w, http.StatusOK, s.view(r, p))
 			return
 		}
 		p, _ = s.opt.Store.Update(p.ID, func(x *approvals.Proposal) { x.Keep = &ref })
@@ -354,12 +380,12 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 			s.bg.Add(1)
 			go s.confirmKeep(p.ID, ref.SessionID)
 		}
-		writeJSON(w, http.StatusAccepted, p)
+		writeJSON(w, http.StatusAccepted, s.view(r, p))
 		return
 	}
 	p = s.runOrSchedule(r.Context(), p.ID, who.Subject)
 	s.mirror(p.ID)
-	writeJSON(w, http.StatusOK, p)
+	writeJSON(w, http.StatusOK, s.view(r, p))
 }
 
 // runOrSchedule executes an approved proposal now, or leaves it approved
@@ -443,7 +469,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	case approvals.Blocked, approvals.Expired:
 		code = http.StatusConflict
 	}
-	writeJSON(w, code, p)
+	writeJSON(w, code, s.view(r, p))
 }
 
 // actionsFor returns the actions a proposal runs: its own, or for a
@@ -738,30 +764,34 @@ func (s *Server) proposeRollback(m *graph.Model, p approvals.Proposal) {
 	})
 }
 
-func (s *Server) handleDecisions(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"decisions": s.opt.Store.List(), "chain": s.opt.Store.Verify()})
+func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
+	out := map[string]any{"decisions": s.ownProposals(r, s.opt.Store.List())}
+	if auth.FromContext(r.Context()).Tenant == "" {
+		out["chain"] = s.opt.Store.Verify()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
-	p, err := s.opt.Store.Get(r.PathValue("id"))
+	p, err := s.proposalFor(r, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
-	out := map[string]any{"decision": p, "audit": s.opt.Store.AuditFor(p.ID)}
+	out := map[string]any{"decision": s.view(r, p), "audit": s.auditView(r, s.opt.Store.AuditFor(p.ID))}
 	for _, link := range []string{p.RollbackID, p.RollbackOf} {
 		if link == "" {
 			continue
 		}
-		if x, err := s.opt.Store.Get(link); err == nil {
-			out["linked"] = x
+		if x, err := s.proposalFor(r, link); err == nil {
+			out["linked"] = s.view(r, x)
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleDecisionExport(w http.ResponseWriter, r *http.Request) {
-	p, err := s.opt.Store.Get(r.PathValue("id"))
+	p, err := s.proposalFor(r, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return

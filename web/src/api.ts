@@ -451,7 +451,7 @@ export const passwordLogin = (username: string, password: string, remember: bool
 
 export type Role = 'viewer' | 'proposer' | 'approver' | 'executor' | 'admin' | 'exec';
 export interface WhoAmI {
-  identity: { subject: string; role: Role; roles?: Role[]; method: string };
+  identity: { subject: string; role: Role; roles?: Role[]; method: string; tenant?: string };
   auth_required: boolean;
   methods?: string[];
   default_password?: boolean;

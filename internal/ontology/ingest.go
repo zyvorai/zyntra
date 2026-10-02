@@ -85,7 +85,7 @@ func (s *Store) Ingest(source, by string, recs []Record, now time.Time) (IngestR
 		}
 		o := Object{ID: id, Type: r.Type, Tenant: r.Tenant, Props: props, Aliases: r.Aliases}
 		// An alias seen before pins the record to the object that owns it.
-		if owner, ok := s.byAlias(r.Aliases); ok && owner != id {
+		if owner, ok := s.byAlias(r.Aliases, r.Tenant); ok && owner != id {
 			o.ID = owner
 		}
 		isNew := false
@@ -152,10 +152,15 @@ func (s *Store) digest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (s *Store) byAlias(as []Alias) (string, bool) {
+// byAlias finds the object of this tenant that owns one of the aliases. An
+// alias held by another tenant's object is invisible here.
+func (s *Store) byAlias(as []Alias, tenant string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, o := range s.s.Objects {
+		if o.Tenant != tenant {
+			continue
+		}
 		for _, a := range as {
 			if hasAlias(o.Aliases, a) {
 				return o.ID, true
@@ -289,11 +294,13 @@ func (s *Store) IngestScoped(tenant, source, by string, recs []Record, now time.
 			return IngestReport{}, fmt.Errorf("record %d: type, namespace and key are required", i+1)
 		}
 		id := MakeID(r.Type, r.Namespace, r.Key)
-		if owner, ok := s.byAlias(r.Aliases); ok {
+		if owner, ok := s.byAlias(r.Aliases, tenant); ok {
 			id = owner
 		}
+		// Deliberately vague: the message must not confirm that another
+		// tenant has an object with this id.
 		if cur, ok := s.Get(id); ok && cur.Tenant != tenant {
-			return IngestReport{}, fmt.Errorf("record %d: %s belongs to another tenant", i+1, id)
+			return IngestReport{}, fmt.Errorf("record %d: object id %s is not available to this tenant", i+1, id)
 		}
 		props := map[string]Value{}
 		for k, v := range r.Props {

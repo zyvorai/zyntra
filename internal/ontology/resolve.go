@@ -58,7 +58,8 @@ func (s *Store) propose(id string) int {
 	}
 	n := 0
 	for _, other := range s.s.Objects {
-		if other.ID == id || other.Type != o.Type {
+		// Objects of different tenants are never candidates for merging.
+		if other.ID == id || other.Type != o.Type || other.Tenant != o.Tenant {
 			continue
 		}
 		theirs, ok := other.Props[ot.Match]

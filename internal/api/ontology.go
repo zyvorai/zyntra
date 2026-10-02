@@ -53,7 +53,7 @@ func hasRole(id auth.Identity, role string) bool {
 
 func principal(r *http.Request) ontology.Principal {
 	id := auth.FromContext(r.Context())
-	p := ontology.Principal{Subject: id.Subject}
+	p := ontology.Principal{Subject: id.Subject, Tenant: id.Tenant}
 	for _, role := range id.Roles {
 		p.Roles = append(p.Roles, string(role))
 	}
@@ -86,11 +86,19 @@ type linkView struct {
 	Out   bool            `json:"out"`
 }
 
-func (s *Server) handleOntSchema(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleOntSchema(w http.ResponseWriter, r *http.Request) {
 	if !s.ontOn(w) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.opt.Ontology.Def)
+	// Connector commands, URLs and token variable names are operator
+	// configuration, not something a reader needs; rollout sites can name
+	// other customers' locations, so tenant-bound callers do not get them.
+	d := *s.opt.Ontology.Def
+	d.Connectors = nil
+	if auth.FromContext(r.Context()).Tenant != "" {
+		d.Rollout = nil
+	}
+	writeJSON(w, http.StatusOK, d)
 }
 
 func (s *Server) handleOntObjects(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +199,7 @@ func (s *Server) decideCandidate(accept bool) http.HandlerFunc {
 		if !s.ontOn(w) {
 			return
 		}
-		c, err := s.opt.Ontology.Store.Decide(r.PathValue("id"), accept, auth.FromContext(r.Context()).Subject)
+		c, err := s.reader(r).Decide(r.PathValue("id"), accept)
 		if err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
@@ -456,7 +464,16 @@ func (s *Server) handleOntIngest(w http.ResponseWriter, r *http.Request) {
 		tenant = ""
 	}
 	p := principal(r)
-	if !s.opt.Ontology.Access.CanIngest(p, tenant) {
+	id := auth.FromContext(r.Context())
+	// A connector credential carries its own grant: the tenants and object
+	// types it was issued for. The shared legacy token and admins go through
+	// the access rules instead.
+	if id.Scope != nil {
+		if !id.Scope.Allows(tenant) {
+			writeErr(w, http.StatusForbidden, "this connector credential is not issued for that tenant")
+			return
+		}
+	} else if !s.opt.Ontology.Access.CanIngest(p, tenant) {
 		writeErr(w, http.StatusForbidden, "no ingest grant for this tenant")
 		return
 	}
@@ -470,6 +487,14 @@ func (s *Server) handleOntIngest(w http.ResponseWriter, r *http.Request) {
 	if req.Source == "" || len(req.Source) > 100 || len(req.Records) == 0 || len(req.Records) > maxIngestRecords {
 		writeErr(w, http.StatusBadRequest, "want a source name and 1-5000 records")
 		return
+	}
+	if id.Scope != nil {
+		for _, rec := range req.Records {
+			if !id.Scope.AllowsType(rec.Type) {
+				writeErr(w, http.StatusForbidden, "this connector credential may not write objects of type "+rec.Type)
+				return
+			}
+		}
 	}
 	rep, err := s.opt.Ontology.Store.IngestScoped(tenant, "push:"+req.Source, p.Subject, req.Records, time.Now().UTC())
 	if err != nil {

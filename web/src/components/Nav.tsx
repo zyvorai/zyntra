@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Theme } from '../theme';
-import { navGroups, type Page } from '../nav';
+import { visibleGroups, type Page } from '../nav';
 import type { Pulse } from '../api';
 
 const OPEN_DELAY_MS = 120;
@@ -15,6 +15,7 @@ export default function Nav({
   pulse,
   operator,
   ontology,
+  tenant,
 }: {
   page: Page;
   setPage: (p: Page) => void;
@@ -24,6 +25,7 @@ export default function Nav({
   pulse: Pulse | null;
   operator: string;
   ontology?: boolean;
+  tenant?: string;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,12 +80,12 @@ export default function Nav({
   return (
     <nav className="nav" aria-label="Global" ref={navRef}>
       <div className="nav-inner">
-        <button type="button" className="brand" onClick={() => setPage('overview')} aria-label="Zyntra home">
+        <button type="button" className="brand" onClick={() => setPage(tenant ? 'objects' : 'overview')} aria-label="Zyntra home">
           <img src="/zyvor-logomark.svg" alt="" className="brand-mark" aria-hidden />
           Zyntra
         </button>
         <div className="navlinks">
-          {navGroups.filter((g) => !g.ontology || ontology).map((g) =>
+          {visibleGroups(ontology, tenant).map((g) =>
             g.children ? (
               <div key={g.label} className="navgroup" onMouseEnter={() => scheduleOpen(g.label)} onMouseLeave={scheduleClose}>
                 <button

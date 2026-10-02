@@ -316,7 +316,27 @@ mappings:
 - **Change history** per object (`GET /api/v1/ontology/objects/{id}/history`): before and after values with provenance, filtered by your current access, so a property that is now restricted does not show in old entries.
 - **Push ingest.** `POST /api/v1/ontology/ingest/{tenant}` takes a bounded batch of normalized records from a connector with `ZYNTRA_INGEST_TOKEN`. It needs an explicit grant (`ingest_tenants` in a policy `access:` rule; admins always may), is all-or-nothing, and cannot touch another tenant's objects, even through an alias. `examples/ontology/connector.py` (stdlib only, dry-run by default, HTTPS required off localhost, no redirects) maps an upstream JSON export to records; `--jsonl` feeds an exec connector instead.
 - **Optional model-assisted object selection.** With `ZYNTRA_AI_BASE_URL` set, the model may narrow which already-permitted objects an answer covers. It sees only objects the asker can read, can only choose among them, and invalid or empty output is ignored. Text and citations always come from the records.
-- **Honest limits:** the object store is a JSON file (fine for thousands of objects, not millions); entity resolution is deterministic aliases plus a human review queue, not ML; the rollout shape is exported in the signed decision and delivery stays in your deployment tooling; Kubernetes is not yet a connector; ontology permissions cover the ontology routes, and the KPI, proposal and audit APIs keep deployment-wide roles, so use separate deployments for mutually untrusted tenants.
+- **Honest limits:** the object store is a JSON file (fine for thousands of objects, not millions); entity resolution is deterministic aliases plus a human review queue, not ML; the rollout shape is exported in the signed decision and delivery stays in your deployment tooling; Kubernetes is not yet a connector. See *Tenants and connector credentials* below for exactly what tenant isolation covers.
+
+### Tenants and connector credentials
+
+**Tenant-bound accounts.** Give a local user (`tenant: alpha` in the policy file) or an OIDC user (`ZYNTRA_OIDC_TENANT_CLAIM`, required for everyone when set) a tenant and they work inside that tenant's workspace and nothing else. Only `viewer`, `proposer` and `approver` can be tenant-bound; admin and executor are deployment-wide. The tenant is part of the signed session cookie.
+
+- **Can:** search and read their tenant's objects, history and exposure; ask about those objects; draft and create typed proposals on them; approve and reject their tenant's proposals; read their tenant's decisions and audit entries.
+- **Cannot:** see the KPI model, gaps, plan, simulation, sources, inputs, policy, scenarios, other tenants' anything, the global audit chain, signed exports, Keep or the event stream. The route gate is deny-by-default, so a route added later stays closed to tenant accounts until it is listed in `internal/api/tenant.go`.
+- **What they see of a proposal:** who, what, on which objects, status and approvals. KPI values, simulation, rendered payloads, execution output and alternatives are removed, and automatic audit notes (which can carry KPI detail) are blanked.
+- **Objects:** an object belongs to one tenant, or to none. Tenant accounts see only their own; a policy `shared_types` rule can expose provider-owned types (a shared cluster, say) read-only. Identity-match candidates never pair objects of different tenants, and an alias held by another tenant never matches.
+- **Ask:** object answers only; the model is never shown deployment-wide data.
+
+**Connector credentials.** Replace the single shared ingest token with one credential per connector:
+
+```bash
+./bin/zyntra connector-token -name mes-alpha -tenant alpha -types Machine,Order
+```
+
+It prints the token once and a policy snippet that holds only the token's SHA-256, the tenants and object types it may write, and an expiry. Rotate by adding a second entry with the same name and setting `not_after` on the old one; revoke with `revoked: true`. A connector identity (`connector:mes-alpha`) can only call the ingest route, is checked against its own tenants and types, and appears by name in the audit chain. The old shared `ZYNTRA_INGEST_TOKEN` still works for webhook-in channels and, for ontology ingest, needs an `ingest_tenants` grant.
+
+**Limits that remain.** An object id is global (`type:namespace:key`), so a connector gets a deliberately vague refusal if it picks an id another tenant already uses; give each tenant its own namespace. Tenant accounts that can approve a typed action cause the server to run it (dry-run by default) on shared infrastructure, so only define typed actions whose effect you are happy to delegate. The KPI model itself is not tenant-scoped: there is one KPI graph per deployment. If tenants must not share that, or must not share an operator, run separate deployments.
 
 ## Console
 

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -80,6 +81,56 @@ type Identity struct {
 	Role   Role   `json:"role"`
 	Roles  []Role `json:"roles"`
 	Method string `json:"method"`
+	// Tenant, when set, confines the identity to one tenant's workspace:
+	// its objects, proposals, decisions and audit entries, and nothing
+	// deployment-wide. It travels in the signed session cookie.
+	Tenant string `json:"tenant,omitempty"`
+	// Scope is set for connector credentials and limits what they may push.
+	// It is never placed in a cookie.
+	Scope *IngestScope `json:"scope,omitempty"`
+}
+
+// IngestScope is what one connector credential may write.
+type IngestScope struct {
+	Connector string   `json:"connector"`
+	Tenants   []string `json:"tenants"` // "default" means the tenant-less space
+	Types     []string `json:"types,omitempty"`
+}
+
+// Allows reports whether the scope covers tenant ("" is the default space).
+func (s IngestScope) Allows(tenant string) bool {
+	if tenant == "" {
+		tenant = "default"
+	}
+	return slices.Contains(s.Tenants, tenant)
+}
+
+// AllowsType reports whether the scope covers an object type.
+func (s IngestScope) AllowsType(t string) bool {
+	return len(s.Types) == 0 || slices.Contains(s.Types, t)
+}
+
+// TenantPattern is what a tenant id looks like. It has no dots, so it can
+// sit inside the dotted session cookie.
+var TenantPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
+
+// TenantRoles are the roles a tenant-bound identity may hold. Admin, executor
+// and the machine roles are deployment-wide by nature.
+var TenantRoles = []Role{RoleViewer, RoleProposer, RoleApprover}
+
+// WithTenant returns the identity confined to tenant. It fails for an invalid
+// tenant id or for roles that cannot be confined.
+func (id Identity) WithTenant(tenant string) (Identity, error) {
+	if !TenantPattern.MatchString(tenant) {
+		return Identity{}, fmt.Errorf("invalid tenant %q", tenant)
+	}
+	for _, r := range id.Roles {
+		if !slices.Contains(TenantRoles, r) {
+			return Identity{}, fmt.Errorf("role %q cannot be tenant-bound (allowed: viewer, proposer, approver)", r)
+		}
+	}
+	id.Tenant = tenant
+	return id, nil
 }
 
 func newIdentity(subject, method string, roles ...Role) Identity {
@@ -130,6 +181,8 @@ type LocalUser struct {
 	Hash    string
 	Roles   []Role
 	Default bool
+	// Tenant confines the account to one tenant's workspace.
+	Tenant string
 }
 
 type Auth struct {
@@ -138,6 +191,7 @@ type Auth struct {
 	ingestKey []byte
 	secret    []byte
 	users     map[string]LocalUser
+	creds     []IngestCredential
 	oidc      *oidcState
 	now       func() time.Time
 }
@@ -201,8 +255,8 @@ func (a *Auth) mac(parts ...string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-func (a *Auth) sign(exp int64, method, roles, operator string) string {
-	return a.mac("zyntra-session.v2", strconv.FormatInt(exp, 10), method, roles, operator)
+func (a *Auth) sign(exp int64, method, roles, tenant, operator string) string {
+	return a.mac("zyntra-session.v3", strconv.FormatInt(exp, 10), method, roles, tenant, operator)
 }
 
 // Operator normalizes a display name recorded in the audit trail.
@@ -233,7 +287,9 @@ func joinRoles(roles []Role) string {
 }
 
 // Mint returns a cookie value for an identity valid for ttl. The format is
-// exp.method.roles.operator.sig; operator may itself contain dots.
+// exp.method.roles.tenant.operator.sig ("-" for no tenant); operator may
+// itself contain dots. Cookies from before tenants existed fail the
+// signature check and sign-in is asked for again.
 func (a *Auth) Mint(ttl time.Duration, id Identity) (string, time.Time) {
 	op := Operator(id.Subject)
 	roles := joinRoles(normalize(id.Roles))
@@ -241,9 +297,13 @@ func (a *Auth) Mint(ttl time.Duration, id Identity) (string, time.Time) {
 	if method == "" {
 		method = "session"
 	}
+	tenant := id.Tenant
+	if tenant == "" {
+		tenant = "-"
+	}
 	exp := a.now().Add(ttl)
 	e := exp.Unix()
-	return strings.Join([]string{strconv.FormatInt(e, 10), method, roles, op, a.sign(e, method, roles, op)}, "."), exp
+	return strings.Join([]string{strconv.FormatInt(e, 10), method, roles, tenant, op, a.sign(e, method, roles, tenant, op)}, "."), exp
 }
 
 // Valid returns the identity in an unexpired, correctly signed cookie.
@@ -252,16 +312,16 @@ func (a *Auth) Valid(v string) (Identity, bool) {
 		return Identity{}, false
 	}
 	parts := strings.Split(v, ".")
-	if len(parts) < 5 {
+	if len(parts) < 6 {
 		return Identity{}, false
 	}
-	expStr, method, roles, sig := parts[0], parts[1], parts[2], parts[len(parts)-1]
-	op := strings.Join(parts[3:len(parts)-1], ".")
+	expStr, method, roles, tenant, sig := parts[0], parts[1], parts[2], parts[3], parts[len(parts)-1]
+	op := strings.Join(parts[4:len(parts)-1], ".")
 	exp, err := strconv.ParseInt(expStr, 10, 64)
 	if err != nil || a.now().Unix() >= exp || Operator(op) != op {
 		return Identity{}, false
 	}
-	if !hmac.Equal([]byte(sig), []byte(a.sign(exp, method, roles, op))) {
+	if !hmac.Equal([]byte(sig), []byte(a.sign(exp, method, roles, tenant, op))) {
 		return Identity{}, false
 	}
 	var rs []Role
@@ -269,6 +329,12 @@ func (a *Auth) Valid(v string) (Identity, bool) {
 		rs = append(rs, Role(r))
 	}
 	id := newIdentity(op, method, rs...)
+	if tenant != "-" {
+		var err error
+		if id, err = id.WithTenant(tenant); err != nil {
+			return Identity{}, false
+		}
+	}
 	return id, id.Role != RoleNone
 }
 
@@ -286,6 +352,9 @@ func (a *Auth) Identify(r *http.Request) Identity {
 			return newIdentity("keep-broker", "exec-token", RoleExec)
 		case secureEq(a.ingestKey, []byte(tok)):
 			return newIdentity("ingest", "ingest-token", RoleIngest)
+		}
+		if id, ok := a.connector(tok); ok {
+			return id
 		}
 		return Identity{}
 	}
@@ -373,6 +442,13 @@ func (a *Auth) Routes(mux *http.ServeMux) {
 				return
 			}
 			id = newIdentity(Operator(u.Name), "password", u.Roles...)
+			if u.Tenant != "" {
+				var err error
+				if id, err = id.WithTenant(u.Tenant); err != nil {
+					writeErr(w, http.StatusForbidden, "this account is misconfigured; ask an administrator")
+					return
+				}
+			}
 		default:
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
