@@ -14,7 +14,7 @@ Nothing runs until a person approves it.
 
 [![CI](https://github.com/zyvorai/zyntra/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/zyntra/actions/workflows/ci.yml)
 [![License: Zyvor Production v1.0](https://img.shields.io/badge/License-Zyvor%20Production%20v1.0-ff5a15.svg)](LICENSE)
-[![Version](https://img.shields.io/github/v/release/zyvorai/zyntra?label=version&color=111111)](CHANGELOG.md)
+[![Version](https://img.shields.io/github/v/release/zyvorai/zyntra?label=version&color=111111)](https://github.com/zyvorai/zyntra/releases)
 
 <img src="docs/social/zyntra-share-2400x1260.png" alt="Zyntra: know the next best action, and why. Signals, KPI graph, what-if, ranked plan, human approval, verified outcome." width="100%">
 
@@ -150,7 +150,7 @@ Generic sources read exports and APIs, and webhook or file actions hand the appr
 
 - [Reference](docs/REFERENCE.md): the model file, sources, packs, console, approvals, policy, configuration, CLI, API and deployment
 - [Business ontology](docs/ONTOLOGY.md): objects, links, scenarios, tenants and rollouts
-- [Product plan](docs/PRODUCT_PLAN.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
+- [Product plan](docs/PRODUCT_PLAN.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 - [Social and README images](docs/social/README.md): how they are rebuilt from HTML
 
 ## License
