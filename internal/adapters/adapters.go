@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/adapters/kubernetes"
 	"github.com/zyvorai/zyntra/internal/adapters/prometheus"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/inputs"
 )
 
 type Config struct {
@@ -26,6 +28,34 @@ type Config struct {
 	Endpoints map[string]*httpsrc.Client
 	// Rates keeps counter samples between refreshes for rate sources.
 	Rates *RateTracker
+	// Files caches parsed file sources between refreshes.
+	Files *FileCache
+	// Inputs holds webhook-in documents and manual values.
+	Inputs *inputs.Store
+	// HTTP is the client for http and sheet sources.
+	HTTP *http.Client
+	// Holds keeps the last in-window value of KPIs with a calendar while
+	// outside the window. Nil disables holding (one-shot CLI runs).
+	Holds *HoldTracker
+	// Now is the clock (tests); nil means time.Now.
+	Now func() time.Time
+}
+
+func (c Config) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
+}
+
+// Generic reports whether m has KPIs read by generic source kinds.
+func Generic(m *graph.Model) bool {
+	for _, k := range m.KPIs {
+		if k.Source != nil && k.Source.Generic() {
+			return true
+		}
+	}
+	return false
 }
 
 // RateTracker remembers the last raw counter value per KPI.
@@ -68,9 +98,12 @@ func (r *RateTracker) Observe(id string, raw float64) (rate float64, ok bool) {
 
 // Status is the health of one source after a refresh.
 type Status struct {
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
-	OK        bool      `json:"ok"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	OK   bool   `json:"ok"`
+	// State is ok, stale, error or fallback (not configured; KPIs keep
+	// their last or model value).
+	State     string    `json:"state"`
 	Error     string    `json:"error,omitempty"`
 	LatencyMS int64     `json:"latency_ms"`
 	KPIs      []string  `json:"kpis"`
@@ -82,8 +115,14 @@ type KPIUpdate struct {
 	// OK means the value was updated from its source.
 	OK bool `json:"ok"`
 	// Warming means the source answered but a rate needs a second sample.
-	Warming bool   `json:"warming,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Warming bool `json:"warming,omitempty"`
+	// Held means the KPI is outside its calendar window and keeps its last
+	// in-window value.
+	Held bool `json:"held,omitempty"`
+	// Fallback means the value was not updated and still shows the last
+	// good or model value.
+	Fallback bool   `json:"fallback,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Report is the outcome of one refresh.
@@ -102,16 +141,28 @@ func Refresh(ctx context.Context, m *graph.Model, cfg Config) (Report, error) {
 	var errs []error
 	fail := func(id string, err error) {
 		errs = append(errs, fmt.Errorf("kpi %s: %w", id, err))
-		rep.KPIs[id] = KPIUpdate{Error: err.Error()}
+		rep.KPIs[id] = KPIUpdate{Error: err.Error(), Fallback: true}
 	}
+	now := cfg.now()
 	for i := range m.KPIs {
 		k := &m.KPIs[i]
 		if !k.Live() {
 			continue
 		}
-		v, served, err := r.value(ctx, *k.Source)
+		var (
+			v      float64
+			served bool
+			err    error
+		)
+		if k.Source.Generic() {
+			v, served, err = r.generic(ctx, m, k)
+		} else {
+			v, served, err = r.value(ctx, *k.Source)
+		}
 		if !served {
-			rep.KPIs[k.ID] = KPIUpdate{Error: "source " + sourceName(*k.Source) + " is not configured"}
+			name := sourceName(*k.Source)
+			r.recordState(name, k.Source.Kind, StateFallback, "not configured")
+			rep.KPIs[k.ID] = KPIUpdate{Error: "source " + name + " is not configured", Fallback: true}
 			continue
 		}
 		if err != nil {
@@ -133,6 +184,15 @@ func Refresh(ctx context.Context, m *graph.Model, cfg Config) (Report, error) {
 		if k.Source.Scale != 0 {
 			v *= k.Source.Scale
 		}
+		if win, ok := m.CalendarFor(*k); ok && cfg.Holds != nil {
+			if !win.Contains(now) && cfg.Holds.has(k.ID) {
+				rep.KPIs[k.ID] = KPIUpdate{Held: true}
+				continue
+			}
+			if win.Contains(now) {
+				cfg.Holds.mark(k.ID)
+			}
+		}
 		k.Value = v
 		rep.KPIs[k.ID] = KPIUpdate{OK: true}
 	}
@@ -141,7 +201,7 @@ func Refresh(ctx context.Context, m *graph.Model, cfg Config) (Report, error) {
 		if k.Source == nil {
 			continue
 		}
-		if st, ok := r.status[sourceName(*k.Source)]; ok {
+		if st, ok := r.status[statusName(*k.Source)]; ok {
 			st.KPIs = append(st.KPIs, k.ID)
 		}
 	}
@@ -186,19 +246,57 @@ func sourceName(s graph.Source) string {
 	return s.Endpoint
 }
 
-func (r *run) record(name, kind string, start time.Time, err error) {
+// statusName is the Status.Name a KPI's source reports under.
+func statusName(s graph.Source) string {
+	switch s.Kind {
+	case graph.SourceFile:
+		return "file:" + s.File
+	case graph.SourceHTTP, graph.SourceSheet:
+		return s.URL
+	case graph.SourceWebhookIn:
+		return "webhook:" + s.Name
+	case graph.SourceManual:
+		return "manual"
+	}
+	return sourceName(s)
+}
+
+var stateRank = map[string]int{StateOK: 0, StateStale: 1, StateFallback: 2, StateError: 3}
+
+func (r *run) status1(name, kind string) *Status {
 	st, ok := r.status[name]
 	if !ok {
-		st = &Status{Name: name, Kind: kind, OK: true}
+		st = &Status{Name: name, Kind: kind, OK: true, State: StateOK}
 		r.status[name] = st
 	}
 	st.CheckedAt = time.Now()
+	return st
+}
+
+func (r *run) record(name, kind string, start time.Time, err error) {
+	st := r.status1(name, kind)
 	if d := time.Since(start).Milliseconds(); d > st.LatencyMS {
 		st.LatencyMS = d
 	}
 	if err != nil && st.OK {
 		st.OK = false
 		st.Error = err.Error()
+		st.State = StateError
+	}
+}
+
+// recordState sets a non-request health state; the worst state wins.
+func (r *run) recordState(name, kind, state, msg string) {
+	st := r.status1(name, kind)
+	if stateRank[state] < stateRank[st.State] {
+		return
+	}
+	st.State = state
+	if state != StateOK {
+		st.OK = false
+		if msg != "" {
+			st.Error = msg
+		}
 	}
 }
 

@@ -40,7 +40,9 @@ import (
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/inputs"
 	"github.com/zyvorai/zyntra/internal/keep"
+	"github.com/zyvorai/zyntra/internal/pack"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/policy"
 	"github.com/zyvorai/zyntra/internal/sim"
@@ -48,16 +50,18 @@ import (
 	"github.com/zyvorai/zyntra/web"
 )
 
-var version = "0.3.0"
+var version = "0.4.0-dev"
 
-const usage = `zyntra - decision intelligence for infrastructure ops
+const usage = `zyntra - decision intelligence: KPI gaps, simulated actions, approved changes
 
 Usage:
   zyntra graph    -f kpis.yaml            show KPIs and dependencies
-  zyntra gaps     -f kpis.yaml            KPIs missing their targets, worst first
-  zyntra simulate -f kpis.yaml -action ID what-if: predicted KPI changes and why
-                                          (combine actions with a+b)
-  zyntra plan     -f kpis.yaml            rank actions and pairs; list constraint-blocked ones
+  zyntra gaps     -f kpis.yaml [-owner O] KPIs missing their targets, worst first
+  zyntra simulate -f kpis.yaml -action ID what-if: predicted KPI changes, why, and
+                                          the dry-run payload (combine with a+b)
+  zyntra plan     -f kpis.yaml [-owner O] rank actions and pairs; list blocked ones
+  zyntra pack list [-dir packs]           packs found under a directory
+  zyntra pack validate [DIR...]           check packs (default: every pack in packs/)
   zyntra serve    -f kpis.yaml [-policy policy.yaml]
                                           web console, REST API and SSE pulse
   zyntra verify-decision FILE             check a signed decision export offline
@@ -68,7 +72,7 @@ Usage:
   zyntra version
 
 Common flags:
-  -f FILE           KPI model (default examples/kpis.yaml)
+  -f FILE|DIR       KPI model file or pack directory (default examples/kpis.yaml)
   -o text|json      output format (default text)
   -prometheus URL   refresh prometheus-sourced KPIs before running
   -kubectl          refresh kubernetes-sourced KPIs via kubectl get nodes
@@ -150,7 +154,7 @@ func fabricLogin(user, pass string) httpsrc.TokenFunc {
 }
 
 func (c *common) adapterConfig() adapters.Config {
-	cfg := adapters.Config{Endpoints: endpoints(), Rates: adapters.NewRateTracker()}
+	cfg := adapters.Config{Endpoints: endpoints(), Rates: adapters.NewRateTracker(), Files: adapters.NewFileCache()}
 	if c.prom != "" {
 		cfg.Prometheus = prometheus.New(c.prom)
 	}
@@ -163,12 +167,16 @@ func (c *common) adapterConfig() adapters.Config {
 func (c *common) live() bool { return c.prom != "" || c.kubectl || len(endpoints()) > 0 }
 
 func (c *common) load(ctx context.Context) (*graph.Model, error) {
-	m, err := graph.Load(c.file)
+	m, err := pack.Load(c.file)
 	if err != nil {
 		return nil, err
 	}
-	if c.live() {
-		if _, err := adapters.Refresh(ctx, m, c.adapterConfig()); err != nil {
+	if c.live() || adapters.Generic(m) {
+		cfg := c.adapterConfig()
+		if in, err := inputs.Open(filepath.Join(env("ZYNTRA_STATE_DIR", "state"), "inputs.json")); err == nil {
+			cfg.Inputs = in
+		}
+		if _, err := adapters.Refresh(ctx, m, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 	}
@@ -206,6 +214,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		}
 		printGraph(out, m)
 	case "gaps":
+		owner := fs.String("owner", "", "only KPIs with this owner")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -213,7 +222,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		g := gaps.Detect(m)
+		g := gaps.ForOwner(gaps.Detect(m), *owner)
 		if c.output == "json" {
 			return emit(out, g)
 		}
@@ -246,7 +255,9 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 			return emit(out, r)
 		}
 		printSim(out, r)
+		printDryRun(out, m, acts)
 	case "plan":
+		owner := fs.String("owner", "", "only actions that move KPIs with this owner")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -258,6 +269,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
+		res = planner.ForOwner(m, res, *owner)
 		if c.output == "json" {
 			return emit(out, res)
 		}
@@ -307,6 +319,8 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 			e.PublicKey, e.Decision.ID, e.Decision.ActionName, e.Decision.Status, e.Decision.Phase, chain, e.Chain.Events, e.Chain.Head)
 	case "keep":
 		return keepCmd(ctx, args, out)
+	case "pack":
+		return packCmd(ctx, args, out)
 	case "fake-sources":
 		addr := flag.NewFlagSet(cmd, flag.ContinueOnError)
 		a := addr.String("addr", "127.0.0.1:19700", "listen address")
@@ -331,7 +345,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 }
 
 func serve(ctx context.Context, c *common, addr string, interval time.Duration, policyFile string) error {
-	m, err := graph.Load(c.file)
+	m, err := pack.Load(c.file)
 	if err != nil {
 		return err
 	}
@@ -339,6 +353,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	if err != nil {
 		return err
 	}
+	pol.UseModel(m)
 	if err := pol.CheckModel(m); err != nil {
 		return err
 	}
@@ -346,15 +361,20 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	if err != nil {
 		return err
 	}
+	stateDir := env("ZYNTRA_STATE_DIR", "state")
+	in, err := inputs.Open(filepath.Join(stateDir, "inputs.json"))
+	if err != nil {
+		return fmt.Errorf("inputs: %w", err)
+	}
 	var refresh api.RefreshFunc
-	if c.live() {
+	if c.live() || adapters.Generic(m) {
 		cfg := c.adapterConfig()
+		cfg.Inputs, cfg.Holds = in, adapters.NewHoldTracker()
 		refresh = func(ctx context.Context, m *graph.Model) (adapters.Report, error) {
 			return adapters.Refresh(ctx, m, cfg)
 		}
 	}
 
-	stateDir := env("ZYNTRA_STATE_DIR", "state")
 	store, err := approvals.Open(filepath.Join(stateDir, "approvals.json"))
 	if err != nil {
 		return err
@@ -371,12 +391,14 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	execToken := env("ZYNTRA_EXEC_TOKEN", "")
 	opts := api.Options{
 		Model: m, Refresh: refresh, Interval: interval, Static: web.FS(),
-		Auth:     authn,
-		Policy:   pol,
-		AI:       engine,
-		History:  ai.NewHistory(0),
-		Store:    store,
-		Executor: &executor.Executor{Mode: mode, Run: executor.Kubectl(c.kubeconfig)},
+		Auth:    authn,
+		Policy:  pol,
+		AI:      engine,
+		History: ai.NewHistory(0),
+		Store:   store,
+		Inputs:  in,
+		Executor: &executor.Executor{Mode: mode, Run: executor.Kubectl(c.kubeconfig),
+			OutDir: env("ZYNTRA_OUTPUT_DIR", filepath.Join(stateDir, "out"))},
 		StateDir: stateDir, Version: version, Host: env("ZYNTRA_HOST", hostname()),
 		ApprovalMode:       env("ZYNTRA_APPROVAL_MODE", api.ModeLocal),
 		KeepDoubleApproval: envBool("ZYNTRA_KEEP_DOUBLE_APPROVAL"),
@@ -450,6 +472,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 func buildAuth(ctx context.Context, pol *policy.Policy) (*auth.Auth, error) {
 	a := auth.New(env("ZYNTRA_API_KEY", ""), env("ZYNTRA_EXEC_TOKEN", ""))
 	a.SetSessionSecret(env("ZYNTRA_SESSION_SECRET", ""))
+	a.SetIngestToken(env("ZYNTRA_INGEST_TOKEN", ""))
 	var users []auth.LocalUser
 	for _, u := range pol.Users {
 		lu := auth.LocalUser{Name: u.Name, Hash: u.PasswordHash}
@@ -546,6 +569,109 @@ func keepCmd(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
+func packCmd(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("pack: want list or validate")
+	}
+	fs := flag.NewFlagSet("pack "+args[0], flag.ContinueOnError)
+	dir := fs.String("dir", "packs", "directory holding packs")
+	format := fs.String("o", "text", "output format: text|json")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		list, err := pack.List(*dir)
+		if err != nil {
+			return err
+		}
+		if *format == "json" {
+			return emit(out, list)
+		}
+		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tTITLE\tINDUSTRY\tVERSION\tKPIS\tACTIONS\tDIR")
+		for _, p := range list {
+			if p.Error != "" {
+				fmt.Fprintf(tw, "%s\t(invalid: %s)\t\t\t\t\t%s\n", p.ID, p.Error, p.Dir)
+				continue
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\n", p.ID, p.Title, p.Industry, p.Version, p.KPIs, p.Actions, p.Dir)
+		}
+		return tw.Flush()
+	case "validate":
+		dirs := fs.Args()
+		if len(dirs) == 0 {
+			list, err := pack.List(*dir)
+			if err != nil {
+				return err
+			}
+			for _, p := range list {
+				dirs = append(dirs, p.Dir)
+			}
+		}
+		if len(dirs) == 0 {
+			return fmt.Errorf("pack validate: no packs found under %s", *dir)
+		}
+		var reports []pack.Report
+		bad := 0
+		for _, d := range dirs {
+			r := pack.Validate(ctx, d)
+			reports = append(reports, r)
+			if !r.Valid() {
+				bad++
+			}
+		}
+		if *format == "json" {
+			if err := emit(out, reports); err != nil {
+				return err
+			}
+		} else {
+			for _, r := range reports {
+				status := "ok"
+				if !r.Valid() {
+					status = "INVALID"
+				}
+				fmt.Fprintf(out, "%s (%s): %s\n", orDefault(r.ID, r.Path), r.Path, status)
+				for _, x := range r.OK {
+					fmt.Fprintf(out, "  ok    %s\n", x)
+				}
+				for _, x := range r.Warnings {
+					fmt.Fprintf(out, "  warn  %s\n", x)
+				}
+				for _, x := range r.Errors {
+					fmt.Fprintf(out, "  error %s\n", x)
+				}
+			}
+		}
+		if bad > 0 {
+			return fmt.Errorf("%d of %d packs invalid", bad, len(reports))
+		}
+		return nil
+	}
+	return fmt.Errorf("pack: unknown subcommand %q", args[0])
+}
+
+// printDryRun shows what approving the actions would send or write.
+func printDryRun(w io.Writer, m *graph.Model, acts []graph.Action) {
+	for _, a := range acts {
+		if a.Kind() == "" {
+			continue
+		}
+		rd, err := executor.RenderIn(m, a)
+		fmt.Fprintf(w, "\nDry-run for %s (%s, nothing is sent until a person approves):\n", a.ID, a.Kind())
+		if err != nil {
+			fmt.Fprintf(w, "  cannot render: %v\n", err)
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimRight(rd.Display, "\n"), "\n") {
+			fmt.Fprintln(w, "  "+line)
+		}
+		if a.Compensate != "" {
+			fmt.Fprintf(w, "  compensate: %s\n", a.Compensate)
+		}
+	}
+}
+
 func emit(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -564,7 +690,11 @@ func target(k graph.KPI) string {
 }
 
 func printGraph(w io.Writer, m *graph.Model) {
-	fmt.Fprintf(w, "%s: %d KPIs, %d edges, %d actions\n\n", m.Name, len(m.KPIs), len(m.Edges), len(m.Actions))
+	fmt.Fprintf(w, "%s: %d KPIs, %d edges, %d actions\n", m.Name, len(m.KPIs), len(m.Edges), len(m.Actions))
+	if m.Pack != nil {
+		fmt.Fprintf(w, "pack %s: %s (%s), owners %s\n", m.Pack.ID, m.Pack.Title, m.Pack.Industry, strings.Join(m.Pack.Owners, ", "))
+	}
+	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "KPI\tVALUE\tTARGET\tOWNER\tSOURCE")
 	for _, k := range m.KPIs {
@@ -572,7 +702,7 @@ func printGraph(w io.Writer, m *graph.Model) {
 		if k.Source != nil && k.Source.Kind != "" {
 			src = k.Source.Kind
 		}
-		fmt.Fprintf(tw, "%s\t%s %s\t%s\t%s\t%s\n", k.ID, num(k.Value), k.Unit, target(k), k.Owner, src)
+		fmt.Fprintf(tw, "%s\t%s %s\t%s\t%s\t%s\n", k.ID, num(k.Value), k.DisplayUnit(), target(k), k.Owner, src)
 	}
 	tw.Flush()
 	fmt.Fprintln(w, "\nDependencies:")
@@ -581,7 +711,8 @@ func printGraph(w io.Writer, m *graph.Model) {
 	}
 	fmt.Fprintln(w, "\nActions:")
 	for _, a := range m.Actions {
-		fmt.Fprintf(w, "  %s  %s [risk %s, via %s]\n", a.ID, a.Name, orDefault(string(a.Risk), "low"), orDefault(a.Adapter, "manual"))
+		via := orDefault(a.Kind(), orDefault(a.Adapter, "manual"))
+		fmt.Fprintf(w, "  %s  %s [risk %s, via %s]\n", a.ID, a.Name, orDefault(string(a.Risk), "low"), via)
 	}
 }
 
@@ -660,8 +791,13 @@ func printPlan(w io.Writer, res planner.Result) {
 		}
 		tw.Flush()
 	}
+	for _, r := range recs {
+		for _, f := range r.PreconditionFailures {
+			fmt.Fprintf(w, "  not approvable now: %s\n", f)
+		}
+	}
 	if len(res.Blocked) > 0 {
-		fmt.Fprintln(w, "\nBlocked (hard constraints):")
+		fmt.Fprintln(w, "\nBlocked (constraints and invariants):")
 		for _, r := range res.Blocked {
 			fmt.Fprintf(w, "  %s: %s\n", r.Action, strings.Join(r.BlockedReasons, "; "))
 		}
@@ -669,7 +805,11 @@ func printPlan(w io.Writer, res planner.Result) {
 }
 
 func num(v float64) string {
-	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
+	scale := 100.0
+	if math.Abs(v) < 10 {
+		scale = 10000
+	}
+	return strconv.FormatFloat(math.Round(v*scale)/scale, 'f', -1, 64)
 }
 
 func list(s []string) string {

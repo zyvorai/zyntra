@@ -48,6 +48,8 @@ const (
 	RoleAdmin Role = "admin"
 	// RoleExec may only call the execution endpoint (Keep's broker uses it).
 	RoleExec Role = "exec"
+	// RoleIngest may only post documents to webhook-in channels.
+	RoleIngest Role = "ingest"
 )
 
 // Route groups.
@@ -57,14 +59,15 @@ var (
 	Approvers = []Role{RoleApprover, RoleAdmin}
 	Executors = []Role{RoleExecutor, RoleAdmin, RoleExec}
 	Admins    = []Role{RoleAdmin}
+	Ingesters = []Role{RoleIngest, RoleAdmin}
 )
 
-var rank = map[Role]int{RoleViewer: 1, RoleExec: 1, RoleProposer: 2, RoleExecutor: 3, RoleApprover: 4, RoleAdmin: 5}
+var rank = map[Role]int{RoleViewer: 1, RoleExec: 1, RoleIngest: 1, RoleProposer: 2, RoleExecutor: 3, RoleApprover: 4, RoleAdmin: 5}
 
 // ParseRole accepts a user-facing role name.
 func ParseRole(s string) (Role, error) {
 	r := Role(strings.ToLower(strings.TrimSpace(s)))
-	if _, ok := rank[r]; !ok || r == RoleExec {
+	if _, ok := rank[r]; !ok || r == RoleExec || r == RoleIngest {
 		return RoleNone, fmt.Errorf("unknown role %q (viewer, proposer, approver, executor, admin)", s)
 	}
 	return r, nil
@@ -129,12 +132,13 @@ type LocalUser struct {
 }
 
 type Auth struct {
-	key     []byte
-	execKey []byte
-	secret  []byte
-	users   map[string]LocalUser
-	oidc    *oidcState
-	now     func() time.Time
+	key       []byte
+	execKey   []byte
+	ingestKey []byte
+	secret    []byte
+	users     map[string]LocalUser
+	oidc      *oidcState
+	now       func() time.Time
 }
 
 // New returns an Auth. With no apiKey, local users or OIDC the API is open.
@@ -156,6 +160,10 @@ func (a *Auth) SetSessionSecret(s string) {
 		a.secret = []byte(s)
 	}
 }
+
+// SetIngestToken sets the bearer token gateways use to post to webhook-in
+// channels. It grants nothing else.
+func (a *Auth) SetIngestToken(s string) { a.ingestKey = []byte(s) }
 
 // SetUsers enables local accounts.
 func (a *Auth) SetUsers(users []LocalUser) {
@@ -275,6 +283,8 @@ func (a *Auth) Identify(r *http.Request) Identity {
 			return newIdentity("admin", "bearer", RoleAdmin)
 		case secureEq(a.execKey, []byte(tok)):
 			return newIdentity("keep-broker", "exec-token", RoleExec)
+		case secureEq(a.ingestKey, []byte(tok)):
+			return newIdentity("ingest", "ingest-token", RoleIngest)
 		}
 		return Identity{}
 	}

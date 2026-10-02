@@ -30,6 +30,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/freshness"
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/inputs"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/policy"
 	"github.com/zyvorai/zyntra/internal/sim"
@@ -75,6 +76,8 @@ type Options struct {
 	Store    *approvals.Store
 	Executor *executor.Executor
 	Keep     KeepBridge
+	// Inputs holds webhook-in documents and manual KPI values.
+	Inputs *inputs.Store
 	// Policy sets approval quorums, expiry, maintenance windows and Keep
 	// requirements; nil keeps the defaults.
 	Policy *policy.Policy
@@ -140,6 +143,10 @@ func New(o Options) *Server {
 	if o.Policy == nil {
 		o.Policy, _ = policy.Load("")
 	}
+	o.Policy.UseModel(o.Model)
+	if o.Inputs == nil {
+		o.Inputs, _ = inputs.Open("")
+	}
 	if o.Signer == nil {
 		path := ""
 		if o.StateDir != "" {
@@ -172,11 +179,16 @@ func (s *Server) sourceStatus() []adapters.Status {
 	return append([]adapters.Status(nil), s.sources...)
 }
 
-func (s *Server) aiSnapshot() ai.Snapshot {
+func (s *Server) aiSnapshot(owner ...string) ai.Snapshot {
 	m, _ := s.snapshot()
 	plan, _, _ := s.plan(m)
+	g := gaps.Detect(m)
+	if len(owner) > 0 && owner[0] != "" {
+		plan = planner.ForOwner(m, plan, owner[0])
+		g = gaps.ForOwner(g, owner[0])
+	}
 	return ai.Snapshot{
-		Model: m, Gaps: gaps.Detect(m), Severity: gaps.Total(m, nil), Plan: plan.Recommendations,
+		Model: m, Gaps: g, Severity: gaps.Total(m, nil), Plan: plan.Recommendations,
 		Anomalies: ai.Anomalies(m, s.opt.History), Forecasts: ai.Forecasts(m, s.opt.History),
 		Sources: s.sourceStatus(),
 	}
@@ -210,6 +222,7 @@ func (s *Server) RefreshOnce(ctx context.Context) {
 	m, _ := s.snapshot()
 	var st []adapters.Status
 	now := time.Now()
+	held := map[string]bool{}
 	if s.opt.Refresh != nil {
 		rep, err := s.opt.Refresh(ctx, m)
 		if err != nil {
@@ -220,6 +233,9 @@ func (s *Server) RefreshOnce(ctx context.Context) {
 			switch {
 			case u.OK:
 				s.fresh.Success(id, now)
+			case u.Held:
+				s.fresh.Held(id)
+				held[id] = true
 			case u.Warming:
 				s.fresh.Warming(id)
 			default:
@@ -233,7 +249,7 @@ func (s *Server) RefreshOnce(ctx context.Context) {
 		s.sources = st
 	}
 	s.mu.Unlock()
-	s.opt.History.Record(m, now)
+	s.opt.History.Record(m, now, held)
 }
 
 func (s *Server) historyPath() string {
@@ -293,6 +309,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/freshness", read(s.handleFreshness))
 	mux.Handle("GET /api/v1/events", read(s.handleEvents))
 	mux.Handle("GET /api/v1/kpis/{id}/history", read(s.handleKPIHistory))
+	mux.Handle("POST /api/v1/kpis/{id}/value", propose(s.handleManualValue))
+	mux.Handle("GET /api/v1/inputs", read(s.handleInputs))
+	mux.Handle("POST /api/v1/ingest/{name}", s.opt.Auth.Require(http.HandlerFunc(s.handleIngest), auth.Ingesters...))
 
 	mux.Handle("GET /api/v1/ai/status", read(s.handleAIStatus))
 	mux.Handle("GET /api/v1/ai/digest", read(s.handleAIDigest))
@@ -382,7 +401,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	}
 	m, _ := s.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"product": "Zyntra", "version": s.opt.Version, "host": s.opt.Host, "model": m.Name,
+		"product": "Zyntra", "version": s.opt.Version, "host": s.opt.Host, "model": m.Name, "pack": m.Pack,
 		"auth_required": s.opt.Auth.Required(), "auth_methods": s.opt.Auth.Methods(),
 		"sources":       map[string]int{"total": len(src), "healthy": healthy},
 		"approval_mode": s.opt.ApprovalMode, "execute_mode": s.opt.Executor.Mode,
@@ -394,7 +413,7 @@ func (s *Server) handleGraph(w http.ResponseWriter, _ *http.Request) {
 	m, at := s.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"model": m, "refreshed_at": at, "version": m.Version(),
-		"constraints": m.AllConstraints(), "freshness": s.freshness(m),
+		"constraints": m.AllConstraints(), "freshness": s.freshness(m), "owners": m.Owners(),
 	})
 }
 
@@ -408,13 +427,13 @@ func (s *Server) handleFreshness(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"kpis": st, "unusable": unusable, "refreshed_at": at})
 }
 
-func (s *Server) handleGaps(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleGaps(w http.ResponseWriter, r *http.Request) {
 	m, _ := s.snapshot()
-	g := gaps.Detect(m)
+	g := gaps.ForOwner(gaps.Detect(m), r.URL.Query().Get("owner"))
 	if g == nil {
 		g = []gaps.Gap{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"gaps": g, "severity_total": gaps.Total(m, nil)})
+	writeJSON(w, http.StatusOK, map[string]any{"gaps": g, "severity_total": gaps.Total(m, nil), "owners": m.Owners()})
 }
 
 // plan ranks actions for m using the current freshness.
@@ -424,20 +443,21 @@ func (s *Server) plan(m *graph.Model) (planner.Result, []freshness.State, error)
 	return r, st, err
 }
 
-func (s *Server) handlePlan(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handlePlan(w http.ResponseWriter, req *http.Request) {
 	m, _ := s.snapshot()
 	r, st, err := s.plan(m)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	r = planner.ForOwner(m, r, req.URL.Query().Get("owner"))
 	unusable := freshness.Unusable(st)
 	if unusable == nil {
 		unusable = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"recommendations": r.Recommendations, "blocked": r.Blocked,
-		"unusable_inputs": unusable, "model_version": m.Version(),
+		"unusable_inputs": unusable, "model_version": m.Version(), "owners": m.Owners(),
 	})
 }
 
@@ -576,7 +596,7 @@ func (s *Server) handleAIStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAIDigest(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.opt.AI.Digest(r.Context(), s.aiSnapshot()))
+	writeJSON(w, http.StatusOK, s.opt.AI.Digest(r.Context(), s.aiSnapshot(r.URL.Query().Get("owner"))))
 }
 
 func (s *Server) handleAIInsights(w http.ResponseWriter, _ *http.Request) {

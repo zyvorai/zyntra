@@ -210,6 +210,30 @@ export default function Decision() {
                   {p.outcome.guardrails?.length ? ` · guardrails ${p.outcome.guardrails.join(', ')} (±${(p.outcome.tolerance * 100).toFixed(0)}%)` : ''}
                 </p>
                 {p.outcome.reasons?.length ? <p className="small">{p.outcome.reasons.join('; ')}</p> : null}
+                {p.outcome.accuracy?.length ? (
+                  <table className="table compact">
+                    <thead>
+                      <tr>
+                        <th>KPI</th>
+                        <th className="num">Before</th>
+                        <th className="num">Predicted</th>
+                        <th className="num">Actual</th>
+                        <th>Prediction</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {p.outcome.accuracy.map((a) => (
+                        <tr key={a.kpi}>
+                          <td className="mono">{a.kpi}</td>
+                          <td className="num">{fmt(a.baseline)}</td>
+                          <td className="num">{fmt(a.predicted)}</td>
+                          <td className="num">{fmt(a.actual)}</td>
+                          <td>{a.hit ? <Pill tone="ok">hit</Pill> : <Pill tone="warn">off by {fmt(a.abs_error)}</Pill>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : null}
                 {p.outcome.samples.length ? (
                   <table className="table compact">
                     <thead>

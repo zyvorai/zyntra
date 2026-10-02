@@ -74,6 +74,9 @@ type Result struct {
 	GapsClosed         []string          `json:"gaps_closed"`
 	GapsOpened         []string          `json:"gaps_opened"`
 	Violations         []graph.Violation `json:"violations,omitempty"`
+	// PreconditionFailures say why the action cannot be approved right now.
+	// Preconditions fail closed: a stale input fails its precondition.
+	PreconditionFailures []string `json:"precondition_failures,omitempty"`
 	// StaleInputs are stale or missing KPIs that this prediction depends on.
 	StaleInputs  []string       `json:"stale_inputs,omitempty"`
 	SettlesAfter graph.Duration `json:"settles_after,omitempty"`
@@ -336,7 +339,51 @@ func ApplyPlan(m *graph.Model, actions []graph.Action, opt Options) (Result, err
 			}
 		}
 	}
+	for _, a := range actions {
+		for _, iv := range a.Invariants {
+			k, _ := m.KPI(iv.KPI)
+			if v, bad := invariant(a.ID, iv, *k, nominal[iv.KPI]); bad {
+				res.Violations = append(res.Violations, v)
+			} else if v, bad := invariant(a.ID, iv, *k, worst[iv.KPI]); bad {
+				v.Text += " in the pessimistic case"
+				res.Violations = append(res.Violations, v)
+			}
+		}
+		for _, p := range a.Preconditions {
+			k, _ := m.KPI(p.KPI)
+			switch {
+			case opt.Unusable[p.KPI]:
+				res.PreconditionFailures = append(res.PreconditionFailures,
+					fmt.Sprintf("%s: precondition on %s cannot be checked because the input is stale", a.ID, p.KPI))
+			case !p.Holds(*k, k.Value):
+				res.PreconditionFailures = append(res.PreconditionFailures,
+					fmt.Sprintf("%s: precondition not met: %s (now %.4g)", a.ID, p.Text(), k.Value))
+			}
+		}
+	}
 	return res, nil
+}
+
+// invariant checks that moving k to after worsens it by no more than the
+// invariant allows.
+func invariant(action string, iv graph.Invariant, k graph.KPI, after float64) (graph.Violation, bool) {
+	before := k.Value
+	if !k.Worse(before, after) {
+		return graph.Violation{}, false
+	}
+	rel := math.Abs(after-before) / math.Max(math.Abs(before), 1e-9)
+	if rel <= iv.MaxWorsen+1e-9 {
+		return graph.Violation{}, false
+	}
+	why := ""
+	if iv.Why != "" {
+		why = " (" + iv.Why + ")"
+	}
+	return graph.Violation{
+		KPI: iv.KPI, Value: after, Limit: iv.MaxWorsen, Kind: "invariant",
+		Text: fmt.Sprintf("%s would worsen %s by %.1f%% (%.4g -> %.4g), more than its %.1f%% invariant%s",
+			action, iv.KPI, rel*100, before, after, iv.MaxWorsen*100, why),
+	}, true
 }
 
 // Pct formats a relative change, keeping precision for sub-1% moves.

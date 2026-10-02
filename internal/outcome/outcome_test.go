@@ -127,3 +127,42 @@ func TestWindowEndMissedOrInconclusive(t *testing.T) {
 		t.Fatalf("stale at window end: %s", r.State)
 	}
 }
+
+func TestAccuracy(t *testing.T) {
+	cases := []struct {
+		b, p, a float64
+		hit     bool
+	}{
+		{10, 6, 6.5, true},  // close to the prediction
+		{10, 6, 8.5, false}, // right way, too far off
+		{10, 6, 11, false},  // wrong way
+		{10, 10, 10, true},  // no change predicted, none seen
+	}
+	for _, c := range cases {
+		if got := Score("k", c.b, c.p, c.a); got.Hit != c.hit {
+			t.Errorf("Score(%v,%v,%v).Hit = %v, want %v", c.b, c.p, c.a, got.Hit, c.hit)
+		}
+	}
+	m, err := graph.Parse([]byte(`
+name: t
+kpis:
+  - {id: wait, value: 6.5, target: 7, direction: lower}
+edges: []
+actions: []
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	rec := Start(Spec{Window: time.Minute, Samples: 1, Success: []graph.Criterion{{KPI: "wait", Op: "met"}},
+		Predicted: map[string]float64{"wait": 6}}, map[string]float64{"wait": 10}, at)
+	if !rec.Observe(m, nil, at.Add(10*time.Second)) || rec.State != Verified {
+		t.Fatalf("state %s", rec.State)
+	}
+	if len(rec.Accuracy) != 1 || !rec.Accuracy[0].Hit || rec.Accuracy[0].AbsError != 0.5 {
+		t.Fatalf("accuracy %+v", rec.Accuracy)
+	}
+	if r, ok := rec.HitRate(); !ok || r != 1 {
+		t.Fatalf("hit rate %v %v", r, ok)
+	}
+}

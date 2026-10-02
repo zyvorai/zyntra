@@ -180,6 +180,46 @@ zyntra gaps -f examples/prometheus-kpis.yaml -prometheus http://prometheus:9090 
 
 Fields support `a.b.0`, `list.#` (count), `list.#(k=v)` (count matches), `list.#(k=v).f` (field of the first match) and `list.*.f`, plus `scale`, `agg: sum|avg|max|min` and `rate`. See [examples/lab-kpis.yaml](examples/lab-kpis.yaml) for a full lab model (20 KPIs) that uses every v0.3 field.
 
+## Packs (any industry)
+
+The engine knows nothing about GPUs or shops. A **pack** is a directory of files: `pack.yaml` (id, owners, timezone, calendars), `kpis.yaml`, `sources.example.yaml`, a README and a `fixture/` of sample exports. [packs/shop](packs/shop) runs a shop from CSV exports with no Kubernetes in the loop:
+
+```bash
+zyntra pack list
+zyntra pack validate packs/shop
+zyntra plan -f packs/shop                                   # ranks a reorder, refuses a markdown that breaks the margin invariant
+zyntra simulate -f packs/shop -action reorder_fast_movers   # prints the dry-run purchase order
+zyntra gaps -f packs/shop -owner floor
+```
+
+**Generic sources.** `file` (CSV, JSON, YAML or Prometheus text, reloaded on change), `http` and `sheet` (the same over HTTP), `webhook-in` (a gateway POSTs JSON to `/api/v1/ingest/<channel>` with `ZYNTRA_INGEST_TOKEN`) and `manual` (entered in the console, audited). Rows can be filtered, aggregated and divided:
+
+```yaml
+- id: stockout_rate               # share of SKUs with nothing on hand
+  unitClass: ratio
+  source: {kind: file, file: fixture/stock.csv, field: "#(on_hand=0)", denominator: "#"}
+- id: daily_sales
+  currency: INR
+  calendar: shop-hours            # outside the window the last in-window value is held
+  source: {kind: file, file: fixture/pos.csv, field: "*.amount"}   # summed
+- id: erp_open_pos
+  source: {kind: http, url: "${ZYNTRA_ERP_URL}/po?status=open", headers: {Authorization: "Bearer ${ZYNTRA_ERP_TOKEN}"}, field: "#"}
+```
+
+Every source reports `ok`, `stale`, `error` or `fallback`. Only `${ZYNTRA_*}` variables are expanded, and they stay unexpanded in rendered proposals.
+
+**Generic actions.** Besides kubectl and Keep, an action can be a `webhook` (dry-run prints method, URL, headers and body; apply sends it with an `Idempotency-Key` and records the status and response hash), a `file` (written under `ZYNTRA_OUTPUT_DIR`, never overwritten) or `noop` (people do it; the approval is recorded). Actions can also declare:
+
+```yaml
+  window: buy-hours                                  # approved runs wait for the window
+  approvers: 2                                       # two-person
+  preconditions: [{kpi: stockout_rate, worse_than: 0.02}]   # fail closed: shown, scored, not approvable
+  invariants: [{kpi: gross_margin, max_worsen: 0.03}]       # a simulated break blocks the action
+  compensate: cancel_open_po                         # linked on the proposal as the undo; never auto-run
+```
+
+After an apply, the decision record compares predicted and actual per KPI and marks each a hit or a miss. See [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for the pack catalog and build order.
+
 ## Console
 
 ![Zyntra sign-in](docs/ux/login.png)
@@ -271,6 +311,8 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `ZYNTRA_FABRIC_URL` / `_USER` / `_PASSWORD` or `_TOKEN` | Fabric host metrics (logs in for a token) |
 | `ZYNTRA_ENDPOINT_INSECURE=1` | Accept self-signed certificates on the endpoints above (lab) |
 | `ZYNTRA_EXECUTE` | `dry-run` (default) or `apply` |
+| `ZYNTRA_OUTPUT_DIR` | Where `file` actions write (default `$ZYNTRA_STATE_DIR/out`) |
+| `ZYNTRA_INGEST_TOKEN` | Token that may only POST to `/api/v1/ingest/<channel>` |
 | `ZYNTRA_KUBECONFIG` | kubeconfig for execution and the `-kubectl` adapter |
 | `ZYNTRA_APPROVAL_MODE` | `local` (default) or `keep` |
 | `ZYNTRA_KEEP_URL` / `_TOKEN` | Keep agent runtime (status, sessions, approvals, audit) |
@@ -282,9 +324,10 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | Command | What it does |
 |---------|--------------|
 | `zyntra graph` | KPIs, targets, owners, sources, dependencies and actions |
-| `zyntra gaps` | KPIs missing target, worst first |
+| `zyntra gaps [-owner NAME]` | KPIs missing target, worst first |
 | `zyntra simulate -action ID[+ID]` | Predicted KPI changes with ranges, constraint breaches and the propagation trace |
-| `zyntra plan` | Actions and pairs ranked with confidence, then the ones blocked by constraints |
+| `zyntra plan [-owner NAME]` | Actions and pairs ranked with confidence, then those waiting on a precondition and those blocked by constraints or invariants |
+| `zyntra pack list\|validate [DIR]` | List packs under `packs/`, or check one against its fixture |
 | `zyntra serve [-policy FILE]` | Console, REST API and SSE pulse |
 | `zyntra verify-decision FILE` | Check a signed decision export offline |
 | `zyntra hash-password < pw` | bcrypt hash for a local account in the policy file |
@@ -292,7 +335,7 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `zyntra fake-sources` | Fake Netra/Gravia/Fabric/Keep endpoints for development |
 | `zyntra exec-token` | Random token for `ZYNTRA_EXEC_TOKEN` |
 
-Common flags: `-f FILE`, `-o text|json`, `-prometheus URL`, `-kubectl`, `-kubeconfig FILE`. `serve` also takes `-addr`, `-interval` and `-policy`.
+Common flags: `-f FILE|PACK_DIR`, `-o text|json`, `-prometheus URL`, `-kubectl`, `-kubeconfig FILE`. `serve` also takes `-addr`, `-interval` and `-policy`.
 
 ## API
 
@@ -304,9 +347,12 @@ All routes except `/healthz`, `/api/v1/meta`, sign-in and the OIDC redirects nee
 | `GET` | `/api/v1/meta` | — | Version, host, model, source health, modes and sign-in methods |
 | `POST`/`DELETE` | `/api/v1/session` | — | Sign in (`{operator, token}` or `{username, password}`) and out; `GET /api/v1/whoami` returns subject and roles |
 | `GET` | `/api/v1/auth/oidc/login`, `/callback` | — | OIDC sign-in redirects (when configured) |
-| `GET` | `/api/v1/graph`, `/gaps`, `/plan`, `/sources`, `/freshness`, `/policy` | viewer | Model with version and constraints, gaps, ranked and blocked actions, source health, per-KPI freshness, effective policy |
+| `GET` | `/api/v1/graph`, `/gaps`, `/plan`, `/sources`, `/freshness`, `/policy` | viewer | Model with version and constraints, gaps, ranked and blocked actions, source health, per-KPI freshness, effective policy. `/gaps` and `/plan` take `?owner=` |
 | `POST` | `/api/v1/simulate` | viewer | `{"action":"a"}`, `{"action":"a+b"}`, `{"actions":[…]}` or `{"custom":{...}}` |
 | `GET` | `/api/v1/kpis/{id}/history` | viewer | Recorded values |
+| `POST` | `/api/v1/kpis/{id}/value` | proposer | Enter a value for a `manual` KPI (`{"value":2,"reason":"..."}`), audited |
+| `GET` | `/api/v1/inputs` | viewer | Manual KPIs and webhook-in channels with their last entry |
+| `POST` | `/api/v1/ingest/{channel}` | ingest | JSON document for a `webhook-in` channel (ingest token or admin) |
 | `GET`/`POST` | `/api/v1/ai/status`, `/digest`, `/insights`, `/ask`, `/explain` | viewer | Grounded AI |
 | `GET` | `/api/v1/proposals`, `/proposals/{id}` | viewer | Approval inbox |
 | `POST` | `/api/v1/proposals` | proposer | Propose `{"action":"a"}` or `{"actions":["a","b"]}` |

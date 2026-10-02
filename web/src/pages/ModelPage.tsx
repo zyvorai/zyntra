@@ -12,7 +12,11 @@ export default function ModelPage() {
       <PageHero
         eyebrow="Model"
         title={m?.name ?? 'Model'}
-        lede="KPIs with targets, weighted cause-and-effect edges between them, and the actions Zyntra may propose."
+        lede={
+          m?.pack
+            ? `Pack ${m.pack.id}${m.pack.version ? ` v${m.pack.version}` : ''}${m.pack.industry ? ` (${m.pack.industry})` : ''}: KPIs with targets, weighted cause-and-effect edges between them, and the actions Zyntra may propose.`
+            : 'KPIs with targets, weighted cause-and-effect edges between them, and the actions Zyntra may propose.'
+        }
       />
       <ErrorNote message={error} />
       {m ? (
@@ -69,7 +73,19 @@ export default function ModelPage() {
                       </span>
                     </div>
                     <div className="pills">
-                      {a.execute ? <Pill tone="info">{a.execute.template}</Pill> : <Pill>advisory</Pill>}
+                      {a.execute ? (
+                        <Pill tone="info">{a.execute.template}</Pill>
+                      ) : a.webhook ? (
+                        <Pill tone="info">webhook</Pill>
+                      ) : a.file ? (
+                        <Pill tone="info">file</Pill>
+                      ) : a.adapter === 'noop' ? (
+                        <Pill>people</Pill>
+                      ) : (
+                        <Pill>advisory</Pill>
+                      )}
+                      {a.window ? <Pill tone="purple">{a.window}</Pill> : null}
+                      {a.invariants?.length ? <Pill tone="warn">invariant</Pill> : null}
                       <Pill tone={riskTone(a.risk)}>{a.risk || 'low'}</Pill>
                     </div>
                   </li>

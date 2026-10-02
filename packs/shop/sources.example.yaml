@@ -1,0 +1,28 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# What to bind before a pilot. Replace the fixture files with your own
+# exports (same columns), and set the variables only when you are ready to
+# send webhooks. Dry-run never needs them.
+variables:
+  - name: ZYNTRA_POS_URL
+    description: POS base URL that accepts markdown requests
+    example: https://pos.example.in/api
+  - name: ZYNTRA_ERP_URL
+    description: ERP base URL for purchase order cancellations
+    example: https://erp.example.in/api
+  - name: ZYNTRA_ERP_TOKEN
+    description: Bearer token for the ERP
+    example: change-me
+
+files:
+  - path: fixture/stock.csv
+    description: "Stock export: sku, class (fast|slow), on_hand, cover_days, days_since_sale"
+  - path: fixture/pos.csv
+    description: "Bills for the day: bill, time, tender, amount, profit"
+  - path: fixture/counter.csv
+    description: "Queue wait samples: time, counter, wait_min"
+  - path: fixture/settlement.csv
+    description: "UPI, card and cash settlement: channel, gross, fees, net"
+  - path: fixture/suppliers.csv
+    description: "Supplier lead times: supplier, lead_days, fill_rate"

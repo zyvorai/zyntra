@@ -11,11 +11,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zyvorai/zyntra/internal/calendar"
 )
 
 // Duration is a time.Duration written as "15m" in YAML and JSON.
@@ -201,9 +205,15 @@ const (
 // Source binds a KPI to a live data source. Empty Kind means the value in the
 // model file is used as-is.
 //
-// Kinds: prometheus (Query), kubernetes (Metric), metrics (scrape a Prometheus
-// text endpoint: Endpoint, Path, Metric, Labels, Agg), and json or the
-// aliases gravia|netra|fabric (Endpoint, Path, Field).
+// Product kinds: prometheus (Query), kubernetes (Metric), metrics (scrape a
+// Prometheus text endpoint: Endpoint, Path, Metric, Labels, Agg), and json
+// or the aliases gravia|netra|fabric (Endpoint, Path, Field).
+//
+// Generic kinds: file (File: CSV, JSON, YAML or Prometheus text on disk),
+// http (URL), sheet (CSV over HTTP), webhook-in (Name: last document POSTed
+// to /api/v1/ingest/NAME) and manual (typed in the console). Documents are
+// read with Field, optionally filtered by Where, combined with Agg and
+// divided by Denominator.
 type Source struct {
 	Kind     string            `yaml:"kind" json:"kind"`
 	Query    string            `yaml:"query,omitempty" json:"query,omitempty"`
@@ -216,6 +226,133 @@ type Source struct {
 	Scale    float64           `yaml:"scale,omitempty" json:"scale,omitempty"`
 	// Rate turns a cumulative counter into a per-second rate between refreshes.
 	Rate bool `yaml:"rate,omitempty" json:"rate,omitempty"`
+
+	File   string `yaml:"file,omitempty" json:"file,omitempty"`
+	URL    string `yaml:"url,omitempty" json:"url,omitempty"`
+	Format string `yaml:"format,omitempty" json:"format,omitempty"`
+	// Headers are sent with http and sheet requests. ${ZYNTRA_*} variables
+	// are expanded from the environment.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	// Name is the webhook-in channel.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Where keeps only rows whose columns equal these values.
+	Where map[string]string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Denominator is a second field on the same document; the KPI is
+	// Field / Denominator.
+	Denominator string `yaml:"denominator,omitempty" json:"denominator,omitempty"`
+	// StaleAfter marks webhook-in and manual values stale once they are this
+	// old.
+	StaleAfter Duration `yaml:"staleAfter,omitempty" json:"stale_after,omitempty"`
+}
+
+// Generic source kinds.
+const (
+	SourceFile      = "file"
+	SourceHTTP      = "http"
+	SourceSheet     = "sheet"
+	SourceWebhookIn = "webhook-in"
+	SourceManual    = "manual"
+)
+
+var sourceKinds = map[string]bool{
+	"": true, "prometheus": true, "kubernetes": true, "metrics": true, "json": true,
+	"gravia": true, "netra": true, "fabric": true, "keep": true,
+	SourceFile: true, SourceHTTP: true, SourceSheet: true, SourceWebhookIn: true, SourceManual: true,
+}
+
+var sourceFormats = map[string]bool{"": true, "csv": true, "json": true, "yaml": true, "prometheus": true}
+
+// Generic reports whether the source is read without a product adapter.
+func (s Source) Generic() bool {
+	switch s.Kind {
+	case SourceFile, SourceHTTP, SourceSheet, SourceWebhookIn, SourceManual:
+		return true
+	}
+	return false
+}
+
+// Unit classes.
+const (
+	UnitPercent  = "percent"
+	UnitCount    = "count"
+	UnitCurrency = "currency"
+	UnitDuration = "duration"
+	UnitRatio    = "ratio"
+)
+
+var unitClasses = map[string]bool{"": true, UnitPercent: true, UnitCount: true, UnitCurrency: true, UnitDuration: true, UnitRatio: true}
+
+// Precondition must hold, on fresh data, before an action can be approved.
+// WorseThan holds when the KPI is worse than the value in its direction (the
+// problem is real); BetterThan holds when it is better (the asset is fit).
+type Precondition struct {
+	KPI        string   `yaml:"kpi" json:"kpi"`
+	WorseThan  *float64 `yaml:"worse_than,omitempty" json:"worse_than,omitempty"`
+	BetterThan *float64 `yaml:"better_than,omitempty" json:"better_than,omitempty"`
+	Why        string   `yaml:"why,omitempty" json:"why,omitempty"`
+}
+
+// Holds reports whether v satisfies p for kpi k.
+func (p Precondition) Holds(k KPI, v float64) bool {
+	ok := true
+	if p.WorseThan != nil {
+		ok = ok && worseThan(k, v, *p.WorseThan)
+	}
+	if p.BetterThan != nil {
+		ok = ok && worseThan(k, *p.BetterThan, v)
+	}
+	return ok
+}
+
+// worseThan reports whether a is strictly worse than b for k.
+func worseThan(k KPI, a, b float64) bool {
+	if k.Direction == HigherIsBetter {
+		return a < b
+	}
+	return a > b
+}
+
+// Text describes the precondition.
+func (p Precondition) Text() string {
+	var parts []string
+	if p.WorseThan != nil {
+		parts = append(parts, fmt.Sprintf("%s worse than %.4g", p.KPI, *p.WorseThan))
+	}
+	if p.BetterThan != nil {
+		parts = append(parts, fmt.Sprintf("%s better than %.4g", p.KPI, *p.BetterThan))
+	}
+	t := strings.Join(parts, " and ")
+	if p.Why != "" {
+		t += " (" + p.Why + ")"
+	}
+	return t
+}
+
+// Invariant limits how much an action may worsen a KPI in simulation.
+// MaxWorsen is a fraction of the current value (0.03 = 3%).
+type Invariant struct {
+	KPI       string  `yaml:"kpi" json:"kpi"`
+	MaxWorsen float64 `yaml:"max_worsen" json:"max_worsen"`
+	Why       string  `yaml:"why,omitempty" json:"why,omitempty"`
+}
+
+// Webhook is an HTTP call an approved action makes. URL and header values
+// may use ${ZYNTRA_*} variables. Body string values "kpi:ID" and "gap:ID"
+// are replaced with the KPI's value or a gap summary when rendered.
+type Webhook struct {
+	Method  string            `yaml:"method,omitempty" json:"method,omitempty"`
+	URL     string            `yaml:"url" json:"url"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Body    map[string]any    `yaml:"body,omitempty" json:"body,omitempty"`
+}
+
+// FileOut is a file an approved action writes, such as a purchase order or
+// a work order. Path is relative to the output directory. Path and Content
+// are Go text/templates over the rendered context (.Action, .KPIs, .Gaps,
+// .Date, .Time, .Stamp).
+type FileOut struct {
+	Path    string `yaml:"path" json:"path"`
+	Content string `yaml:"content" json:"content"`
 }
 
 type KPI struct {
@@ -231,6 +368,22 @@ type KPI struct {
 	Max         *float64    `yaml:"max,omitempty" json:"max,omitempty"`
 	Freshness   *Freshness  `yaml:"freshness,omitempty" json:"freshness,omitempty"`
 	Source      *Source     `yaml:"source,omitempty" json:"source,omitempty"`
+	// UnitClass is percent, count, currency, duration or ratio; currency
+	// KPIs carry an ISO code. Gap math is relative to target, so classes
+	// only affect display and validation.
+	UnitClass string `yaml:"unitClass,omitempty" json:"unit_class,omitempty"`
+	Currency  string `yaml:"currency,omitempty" json:"currency,omitempty"`
+	// Calendar names the window whose samples count for this KPI; outside
+	// it the last in-window value is held. Defaults to the model calendar.
+	Calendar string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+}
+
+// DisplayUnit is the currency code for currency KPIs, otherwise Unit.
+func (k KPI) DisplayUnit() string {
+	if k.Currency != "" {
+		return k.Currency
+	}
+	return k.Unit
 }
 
 // Weight is the criticality multiplier applied to this KPI's gap severity.
@@ -323,6 +476,7 @@ type Execute struct {
 type Action struct {
 	ID          string   `yaml:"id" json:"id"`
 	Name        string   `yaml:"name" json:"name"`
+	Title       string   `yaml:"title,omitempty" json:"-"`
 	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
 	Adapter     string   `yaml:"adapter,omitempty" json:"adapter,omitempty"`
 	Risk        Risk     `yaml:"risk,omitempty" json:"risk,omitempty"`
@@ -332,6 +486,50 @@ type Action struct {
 	Rollback *Execute      `yaml:"rollback,omitempty" json:"rollback,omitempty"`
 	Outcome  *Outcome      `yaml:"outcome,omitempty" json:"outcome,omitempty"`
 	Policy   *ActionPolicy `yaml:"policy,omitempty" json:"policy,omitempty"`
+	// Window is the calendar window the action may run in.
+	Window string `yaml:"window,omitempty" json:"window,omitempty"`
+	// Approvers is how many distinct people must approve (2 = two-person).
+	Approvers     int            `yaml:"approvers,omitempty" json:"approvers,omitempty"`
+	Preconditions []Precondition `yaml:"preconditions,omitempty" json:"preconditions,omitempty"`
+	Invariants    []Invariant    `yaml:"invariants,omitempty" json:"invariants,omitempty"`
+	// Compensate names the action that undoes this one. It is linked on
+	// the proposal and never run automatically.
+	Compensate string   `yaml:"compensate,omitempty" json:"compensate,omitempty"`
+	Webhook    *Webhook `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	File       *FileOut `yaml:"file,omitempty" json:"file,omitempty"`
+}
+
+// Action kinds an executor can run.
+const (
+	KindKubectl = "kubectl"
+	KindWebhook = "webhook"
+	KindFile    = "file"
+	KindNoop    = "noop"
+)
+
+// Kind is what running the action does: kubectl, webhook, file, noop, or
+// "" for an advisory action with nothing to run.
+func (a Action) Kind() string {
+	switch {
+	case a.Webhook != nil:
+		return KindWebhook
+	case a.File != nil:
+		return KindFile
+	case a.Execute != nil:
+		return KindKubectl
+	case a.Adapter == KindNoop:
+		return KindNoop
+	}
+	return ""
+}
+
+// PackInfo describes the pack a model was loaded from.
+type PackInfo struct {
+	ID       string   `yaml:"id" json:"id"`
+	Title    string   `yaml:"title,omitempty" json:"title,omitempty"`
+	Industry string   `yaml:"industry,omitempty" json:"industry,omitempty"`
+	Version  string   `yaml:"version,omitempty" json:"version,omitempty"`
+	Owners   []string `yaml:"owners,omitempty" json:"owners,omitempty"`
 }
 
 type Model struct {
@@ -340,8 +538,47 @@ type Model struct {
 	Edges       []Edge       `yaml:"edges" json:"edges"`
 	Actions     []Action     `yaml:"actions" json:"actions"`
 	Constraints []Constraint `yaml:"constraints,omitempty" json:"constraints,omitempty"`
+	// Timezone applies to calendars without their own timezone.
+	Timezone string `yaml:"timezone,omitempty" json:"timezone,omitempty"`
+	// Calendar is the default sampling window for KPIs.
+	Calendar  string       `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	Calendars calendar.Set `yaml:"calendars,omitempty" json:"calendars,omitempty"`
+
+	// Pack is set when the model was loaded from a pack directory.
+	Pack *PackInfo `yaml:"-" json:"pack,omitempty"`
+	// Dir is the directory relative file paths resolve against.
+	Dir string `yaml:"-" json:"-"`
 
 	index map[string]int
+}
+
+// CalendarFor returns the sampling window for k, if any.
+func (m *Model) CalendarFor(k KPI) (calendar.Window, bool) {
+	name := k.Calendar
+	if name == "" {
+		name = m.Calendar
+	}
+	if name == "" {
+		return calendar.Window{}, false
+	}
+	w, ok := m.Calendars[name]
+	return w, ok
+}
+
+// Owners returns the pack owners, or the distinct KPI owners in model order.
+func (m *Model) Owners() []string {
+	if m.Pack != nil && len(m.Pack.Owners) > 0 {
+		return append([]string(nil), m.Pack.Owners...)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, k := range m.KPIs {
+		if k.Owner != "" && !seen[k.Owner] {
+			seen[k.Owner] = true
+			out = append(out, k.Owner)
+		}
+	}
+	return out
 }
 
 // AllConstraints returns the declared constraints plus one implicit
@@ -438,16 +675,31 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(b)
+	m, err := Parse(b)
+	if err != nil {
+		return nil, err
+	}
+	m.Dir = filepath.Dir(path)
+	return m, nil
 }
 
 func Parse(b []byte) (*Model, error) {
-	var m Model
-	if err := yaml.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("parse model: %w", err)
+	m, err := Decode(b)
+	if err != nil {
+		return nil, err
 	}
 	if err := m.Validate(); err != nil {
 		return nil, err
+	}
+	return m, nil
+}
+
+// Decode reads a model without validating it, for callers that merge more
+// configuration (a pack manifest) before calling Validate.
+func Decode(b []byte) (*Model, error) {
+	var m Model
+	if err := yaml.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("parse model: %w", err)
 	}
 	return &m, nil
 }
@@ -481,7 +733,41 @@ func (m *Model) Validate() error {
 		if k.Min != nil && k.Max != nil && *k.Min > *k.Max {
 			return fmt.Errorf("kpi %q: min %v is above max %v", k.ID, *k.Min, *k.Max)
 		}
+		if k.Currency != "" && k.UnitClass == "" {
+			k.UnitClass = UnitCurrency
+		}
+		if !unitClasses[k.UnitClass] {
+			return fmt.Errorf("kpi %q: unitClass must be percent, count, currency, duration or ratio", k.ID)
+		}
+		if k.UnitClass == UnitCurrency && !currencyCode.MatchString(k.Currency) {
+			return fmt.Errorf("kpi %q: currency KPIs need a three-letter code such as INR or USD", k.ID)
+		}
+		if err := validSource(k); err != nil {
+			return err
+		}
 		m.index[k.ID] = i
+	}
+	var loc *time.Location
+	if m.Timezone != "" {
+		var err error
+		if loc, err = time.LoadLocation(m.Timezone); err != nil {
+			return fmt.Errorf("timezone: %w", err)
+		}
+	}
+	if err := m.Calendars.Compile(loc); err != nil {
+		return fmt.Errorf("calendars: %w", err)
+	}
+	for _, k := range m.KPIs {
+		if c := k.Calendar; c != "" {
+			if _, ok := m.Calendars[c]; !ok {
+				return fmt.Errorf("kpi %q: unknown calendar %q", k.ID, c)
+			}
+		}
+	}
+	if m.Calendar != "" {
+		if _, ok := m.Calendars[m.Calendar]; !ok {
+			return fmt.Errorf("unknown default calendar %q", m.Calendar)
+		}
 	}
 	for _, c := range m.Constraints {
 		k, ok := m.index[c.KPI]
@@ -518,7 +804,7 @@ func (m *Model) Validate() error {
 		}
 	}
 	seen := map[string]bool{}
-	for _, a := range m.Actions {
+	for ai, a := range m.Actions {
 		if a.ID == "" {
 			return fmt.Errorf("action %q: missing id", a.Name)
 		}
@@ -526,6 +812,9 @@ func (m *Model) Validate() error {
 			return fmt.Errorf("action %q: duplicate id", a.ID)
 		}
 		seen[a.ID] = true
+		if a.Name == "" {
+			m.Actions[ai].Name = a.Title
+		}
 		switch a.Risk {
 		case "", RiskLow, RiskMedium, RiskHigh:
 		default:
@@ -579,9 +868,132 @@ func (m *Model) Validate() error {
 				return fmt.Errorf("action %q: keep must be required, preferred or off", a.ID)
 			}
 		}
+		if err := m.validateAction(a); err != nil {
+			return err
+		}
+	}
+	for _, a := range m.Actions {
+		if c := a.Compensate; c != "" {
+			if c == a.ID {
+				return fmt.Errorf("action %q: cannot compensate itself", a.ID)
+			}
+			if !seen[c] {
+				return fmt.Errorf("action %q: unknown compensate action %q", a.ID, c)
+			}
+		}
 	}
 	if _, err := m.TopoOrder(); err != nil {
 		return err
+	}
+	return nil
+}
+
+var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
+
+func validSource(k *KPI) error {
+	s := k.Source
+	if s == nil {
+		return nil
+	}
+	if !sourceKinds[s.Kind] {
+		return fmt.Errorf("kpi %q: unknown source kind %q", k.ID, s.Kind)
+	}
+	if !sourceFormats[s.Format] {
+		return fmt.Errorf("kpi %q: source format must be csv, json, yaml or prometheus", k.ID)
+	}
+	switch s.Kind {
+	case SourceFile:
+		if s.File == "" {
+			return fmt.Errorf("kpi %q: file source needs file", k.ID)
+		}
+	case SourceHTTP, SourceSheet:
+		if s.URL == "" {
+			return fmt.Errorf("kpi %q: %s source needs url", k.ID, s.Kind)
+		}
+	case SourceWebhookIn:
+		if !channelName.MatchString(s.Name) {
+			return fmt.Errorf("kpi %q: webhook-in source needs a name of letters, digits, - or _", k.ID)
+		}
+	}
+	return nil
+}
+
+var channelName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+var webhookMethods = map[string]bool{"": true, "GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
+
+func (m *Model) validateAction(a Action) error {
+	n := 0
+	for _, set := range []bool{a.Execute != nil, a.Webhook != nil, a.File != nil} {
+		if set {
+			n++
+		}
+	}
+	if n > 1 {
+		return fmt.Errorf("action %q: set only one of execute, webhook or file", a.ID)
+	}
+	switch a.Adapter {
+	case KindWebhook:
+		if a.Webhook == nil {
+			return fmt.Errorf("action %q: adapter webhook needs a webhook block", a.ID)
+		}
+	case KindFile:
+		if a.File == nil {
+			return fmt.Errorf("action %q: adapter file needs a file block", a.ID)
+		}
+	case KindNoop:
+		if n > 0 {
+			return fmt.Errorf("action %q: adapter noop must not run anything", a.ID)
+		}
+	}
+	if w := a.Webhook; w != nil {
+		if !webhookMethods[strings.ToUpper(w.Method)] {
+			return fmt.Errorf("action %q: webhook method must be GET, POST, PUT, PATCH or DELETE", a.ID)
+		}
+		u := strings.ToLower(w.URL)
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "${") {
+			return fmt.Errorf("action %q: webhook url must start with http://, https:// or a ${ZYNTRA_*} variable", a.ID)
+		}
+	}
+	if f := a.File; f != nil {
+		if strings.TrimSpace(f.Path) == "" {
+			return fmt.Errorf("action %q: file needs a path", a.ID)
+		}
+		if filepath.IsAbs(f.Path) || strings.Contains(filepath.ToSlash(f.Path), "../") || strings.HasPrefix(f.Path, "..") {
+			return fmt.Errorf("action %q: file path must stay inside the output directory", a.ID)
+		}
+	}
+	if a.Approvers < 0 {
+		return fmt.Errorf("action %q: approvers must not be negative", a.ID)
+	}
+	if a.Window != "" && len(m.Calendars) > 0 {
+		if _, ok := m.Calendars[a.Window]; !ok {
+			return fmt.Errorf("action %q: unknown window %q", a.ID, a.Window)
+		}
+	}
+	for _, p := range a.Preconditions {
+		k, ok := m.index[p.KPI]
+		if !ok {
+			return fmt.Errorf("action %q: precondition on unknown kpi %q", a.ID, p.KPI)
+		}
+		if p.WorseThan == nil && p.BetterThan == nil {
+			return fmt.Errorf("action %q: precondition on %q needs worse_than or better_than", a.ID, p.KPI)
+		}
+		if m.KPIs[k].Direction == "" {
+			return fmt.Errorf("action %q: precondition on %q needs the kpi to have a direction", a.ID, p.KPI)
+		}
+	}
+	for _, iv := range a.Invariants {
+		k, ok := m.index[iv.KPI]
+		if !ok {
+			return fmt.Errorf("action %q: invariant on unknown kpi %q", a.ID, iv.KPI)
+		}
+		if iv.MaxWorsen < 0 {
+			return fmt.Errorf("action %q: invariant max_worsen must not be negative", a.ID)
+		}
+		if m.KPIs[k].Direction == "" {
+			return fmt.Errorf("action %q: invariant on %q needs the kpi to have a direction", a.ID, iv.KPI)
+		}
 	}
 	return nil
 }
@@ -654,6 +1066,17 @@ func cloneF(p *float64) *float64 {
 	return &v
 }
 
+func cloneMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 func cloneExec(e *Execute) *Execute {
 	if e == nil {
 		return nil
@@ -671,7 +1094,19 @@ func cloneExec(e *Execute) *Execute {
 
 // Clone returns a deep copy so simulations never mutate the live model.
 func (m *Model) Clone() *Model {
-	c := &Model{Name: m.Name}
+	c := &Model{Name: m.Name, Timezone: m.Timezone, Calendar: m.Calendar, Dir: m.Dir}
+	if m.Calendars != nil {
+		c.Calendars = make(calendar.Set, len(m.Calendars))
+		for n, w := range m.Calendars {
+			w.Days = append([]string(nil), w.Days...)
+			c.Calendars[n] = w
+		}
+	}
+	if m.Pack != nil {
+		p := *m.Pack
+		p.Owners = append([]string(nil), m.Pack.Owners...)
+		c.Pack = &p
+	}
 	c.KPIs = make([]KPI, len(m.KPIs))
 	for i, k := range m.KPIs {
 		k.Target, k.Min, k.Max = cloneF(k.Target), cloneF(k.Min), cloneF(k.Max)
@@ -681,13 +1116,7 @@ func (m *Model) Clone() *Model {
 		}
 		if k.Source != nil {
 			s := *k.Source
-			if s.Labels != nil {
-				l := make(map[string]string, len(s.Labels))
-				for lk, lv := range s.Labels {
-					l[lk] = lv
-				}
-				s.Labels = l
-			}
+			s.Labels, s.Headers, s.Where = cloneMap(s.Labels), cloneMap(s.Headers), cloneMap(s.Where)
 			k.Source = &s
 		}
 		c.KPIs[i] = k
@@ -697,6 +1126,24 @@ func (m *Model) Clone() *Model {
 	for i, a := range m.Actions {
 		a.Effects = append([]Effect(nil), a.Effects...)
 		a.Execute, a.Rollback = cloneExec(a.Execute), cloneExec(a.Rollback)
+		a.Invariants = append([]Invariant(nil), a.Invariants...)
+		if a.Preconditions != nil {
+			pc := make([]Precondition, len(a.Preconditions))
+			for j, p := range a.Preconditions {
+				p.WorseThan, p.BetterThan = cloneF(p.WorseThan), cloneF(p.BetterThan)
+				pc[j] = p
+			}
+			a.Preconditions = pc
+		}
+		if a.Webhook != nil {
+			w := *a.Webhook
+			w.Headers = cloneMap(a.Webhook.Headers)
+			a.Webhook = &w
+		}
+		if a.File != nil {
+			f := *a.File
+			a.File = &f
+		}
 		if a.Outcome != nil {
 			o := *a.Outcome
 			o.Success = make([]Criterion, len(a.Outcome.Success))
