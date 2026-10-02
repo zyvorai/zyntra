@@ -39,7 +39,8 @@ func tenantAllowed(method, path string) bool {
 	case strings.HasPrefix(path, "/api/v1/ontology/"):
 		return !(method == http.MethodPost && path == "/api/v1/ontology/refresh") &&
 			!strings.HasPrefix(path, "/api/v1/ontology/ingest/") &&
-			!strings.HasPrefix(path, "/api/v1/ontology/connectors")
+			!strings.HasPrefix(path, "/api/v1/ontology/connectors") &&
+			path != "/api/v1/ontology/stats"
 	case path == "/api/v1/proposals":
 		return method == http.MethodGet || method == http.MethodPost
 	case strings.HasPrefix(path, "/api/v1/proposals/"):

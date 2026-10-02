@@ -67,6 +67,9 @@ func (s *Store) IngestSnapshot(source, by string, recs []Record, now time.Time) 
 
 func (s *Store) ingest(source, by string, recs []Record, now time.Time, prune bool) (_ IngestReport, err error) {
 	rep := IngestReport{Source: source}
+	if err := s.checkLimit(recs); err != nil {
+		return rep, err
+	}
 	seen := make(map[string]bool, len(recs))
 	s.beginBatch()
 	defer func() {

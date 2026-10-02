@@ -219,7 +219,10 @@ func (s *Store) putRedirect(from, to string) {
 func (s *Store) addChange(c Change) {
 	if !s.extHistory {
 		s.s.History = append(s.s.History, c)
-		if n := len(s.s.History); n > maxHistory {
+		// Trim in chunks: let the log reach twice the cap, then cut it back
+		// to the cap in one copy. Trimming on every change would copy the
+		// whole log each time once it is full.
+		if n := len(s.s.History); n >= 2*maxHistory {
 			s.s.History = append([]Change(nil), s.s.History[n-maxHistory:]...)
 		}
 	}

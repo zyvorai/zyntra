@@ -118,7 +118,7 @@ func TestTenantGateIsDenyByDefault(t *testing.T) {
 		{"GET", "/api/v1/sources"}, {"GET", "/api/v1/freshness"}, {"GET", "/api/v1/events"}, {"GET", "/api/v1/inputs"},
 		{"GET", "/api/v1/policy"}, {"GET", "/api/v1/audit/verify"}, {"GET", "/api/v1/ai/digest"}, {"GET", "/api/v1/ai/insights"},
 		{"POST", "/api/v1/ai/explain"}, {"GET", "/api/v1/similar"}, {"GET", "/api/v1/scenarios"}, {"POST", "/api/v1/scenarios"},
-		{"GET", "/api/v1/ai/calibration"}, {"POST", "/api/v1/ontology/refresh"}, {"POST", "/api/v1/ontology/ingest/alpha"}, {"GET", "/api/v1/keep/status"},
+		{"GET", "/api/v1/ai/calibration"}, {"GET", "/api/v1/ontology/stats"}, {"POST", "/api/v1/ontology/refresh"}, {"POST", "/api/v1/ontology/ingest/alpha"}, {"GET", "/api/v1/keep/status"},
 		{"POST", "/api/v1/exec/x"}, {"GET", "/api/v1/decisions/x/export"}, {"GET", "/api/v1/proposals/x/explanation"},
 		{"GET", "/api/v1/proposals/x/similar"}, {"POST", "/api/v1/kpis/queue/value"}, {"DELETE", "/api/v1/proposals/x"},
 	}

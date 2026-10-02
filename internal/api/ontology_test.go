@@ -506,3 +506,18 @@ func TestRolloutContractWithDeploymentTooling(t *testing.T) {
 		}
 	}
 }
+
+func TestOntologyStatsEndpoint(t *testing.T) {
+	f := ontSetup(t, nil)
+	f.s.opt.Ontology.Store.SetMaxObjects(500)
+	var st ontology.Stats
+	if c := f.as(t, "GET", "/api/v1/ontology/stats", "boss", approver, "", &st); c != 200 || st.Objects != 3 || st.Limit != 500 || st.ByType["Cluster"] != 2 {
+		t.Fatalf("stats = %d %+v", c, st)
+	}
+	if c := f.as(t, "GET", "/api/v1/ontology/stats", "v", viewer, "", nil); c != 403 {
+		t.Errorf("viewer stats = %d", c)
+	}
+	if c := f.asTenant(t, "GET", "/api/v1/ontology/stats", "ann", "alpha", approver, "", nil); c != 403 {
+		t.Errorf("tenant stats = %d", c)
+	}
+}

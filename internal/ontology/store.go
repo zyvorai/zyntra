@@ -108,6 +108,8 @@ type Store struct {
 	ix         index
 	dirty      []op
 	batch      int
+	// maxObjects caps the number of objects held; 0 means no cap.
+	maxObjects int
 	// Audit, when set, is told about every ingest and merge so the
 	// decision audit chain covers ontology changes.
 	Audit func(subject, by, note string)
@@ -451,4 +453,66 @@ func (s *Store) Digest(refs []ObjectRef) string {
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ErrObjectLimit is returned when a batch would take the store past its cap.
+var ErrObjectLimit = errors.New("ontology object limit reached")
+
+// SetMaxObjects caps how many objects the store will hold (0 removes the
+// cap). The store keeps every object in memory, so the cap is what stops a
+// runaway connector from exhausting the host: an ingest that would exceed it
+// is refused whole, before anything is written.
+func (s *Store) SetMaxObjects(n int) {
+	s.mu.Lock()
+	s.maxObjects = n
+	s.mu.Unlock()
+}
+
+// Stats is a cheap summary of what the store holds.
+type Stats struct {
+	Objects    int            `json:"objects"`
+	Links      int            `json:"links"`
+	Candidates int            `json:"pending_candidates"`
+	ByType     map[string]int `json:"by_type"`
+	Limit      int            `json:"object_limit,omitempty"`
+}
+
+// Stats counts objects, links and pending identity candidates.
+func (s *Store) Stats() Stats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st := Stats{Objects: len(s.s.Objects), Links: len(s.s.Links), ByType: map[string]int{}, Limit: s.maxObjects}
+	for _, o := range s.s.Objects {
+		st.ByType[o.Type]++
+	}
+	for _, c := range s.s.Candidates {
+		if c.Status == "pending" {
+			st.Candidates++
+		}
+	}
+	return st
+}
+
+// checkLimit refuses a batch that would add more objects than the cap allows.
+func (s *Store) checkLimit(recs []Record) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.maxObjects <= 0 {
+		return nil
+	}
+	fresh := map[string]bool{}
+	for _, r := range recs {
+		if r.Type == "" || r.Namespace == "" || r.Key == "" {
+			continue
+		}
+		id := MakeID(r.Type, r.Namespace, r.Key)
+		if _, have := s.s.Objects[id]; !have {
+			fresh[id] = true
+		}
+	}
+	if have := len(s.s.Objects); have+len(fresh) > s.maxObjects {
+		return fmt.Errorf("%w: the store holds %d objects, this batch adds %d, the limit is %d (raise ZYNTRA_ONTOLOGY_MAX_OBJECTS if the host has the memory, or narrow the source)",
+			ErrObjectLimit, have, len(fresh), s.maxObjects)
+	}
+	return nil
 }

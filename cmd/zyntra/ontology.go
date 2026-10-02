@@ -46,6 +46,17 @@ func buildOntology(path string, m *graph.Model, pol *policy.Policy, stateDir str
 	if err != nil {
 		return api.OntologyOptions{}, fmt.Errorf("ontology: %w", err)
 	}
+	// Objects live in memory (about 1.4 KB each with a link), so a cap stops a
+	// runaway source from exhausting the host. 1,000,000 is roughly 1.5 GB.
+	maxObjects := 1_000_000
+	if v := env("ZYNTRA_ONTOLOGY_MAX_OBJECTS", ""); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			return api.OntologyOptions{}, fmt.Errorf("ZYNTRA_ONTOLOGY_MAX_OBJECTS must be a number (0 for no cap), got %q", v)
+		}
+		maxObjects = n
+	}
+	st.SetMaxObjects(maxObjects)
 	ac := &ontology.Access{Schema: def.Schema()}
 	if pol != nil {
 		ac.Rules = pol.Access

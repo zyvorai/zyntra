@@ -368,6 +368,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/ontology/resolution/{id}/reject", approve(s.decideCandidate(false)))
 	mux.Handle("POST /api/v1/ontology/refresh", propose(s.handleOntRefresh))
 	mux.Handle("GET /api/v1/ontology/connectors", approve(s.handleConnectors))
+	mux.Handle("GET /api/v1/ontology/stats", approve(s.handleOntStats))
 	mux.Handle("POST /api/v1/ontology/connectors/{name}/run", s.opt.Auth.Require(http.HandlerFunc(s.handleConnectorRun), auth.Admins...))
 	mux.Handle("POST /api/v1/ai/propose", propose(s.handleAIPropose))
 	if s.opt.Ontology.Scenarios != nil {
