@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -37,7 +38,8 @@ type Definition struct {
 
 // ConnectorSpec configures one connector. Kind is exec (a program writing
 // JSON-lines records, enabled only when ZYNTRA_CONNECTOR_EXEC=1), http (a
-// GET returning a JSON array of records), kubernetes or sql.
+// GET returning a JSON array of records), kubernetes, sql or rest (a paged
+// JSON API mapped like kubernetes and sql).
 type ConnectorSpec struct {
 	Name    string   `yaml:"name" json:"name"`
 	Kind    string   `yaml:"kind" json:"kind"`
@@ -78,7 +80,26 @@ type ConnectorSpec struct {
 	// Off by default.
 	Prune bool `yaml:"prune,omitempty" json:"prune,omitempty"`
 
-	// Mapping turns rows (kubernetes, sql) into objects; its Source is unused.
+	// rest: GET URL, read the list at Items (a dotted path; empty means the
+	// body is the list), flatten each item with Fields and map it. Paging is
+	// either Next (a dotted path to the next page's URL; a dot inside a key is escaped, so
+	// OData's is written @odata\.nextLink)
+	// or PageParam (a query parameter counted from 1, with PageSize items).
+	// SinceParam, when set, is a query parameter that receives the last
+	// successful run's time. The bearer token is TokenEnv; for basic auth use
+	// UserEnv and PassEnv. Follow-up URLs must stay on the host of URL.
+	Items     string `yaml:"items,omitempty" json:"items,omitempty"`
+	Next      string `yaml:"next,omitempty" json:"next,omitempty"`
+	PageParam string `yaml:"page_param,omitempty" json:"page_param,omitempty"`
+	PageSize  int    `yaml:"page_size,omitempty" json:"page_size,omitempty"`
+	// PageSizeParam names the query parameter that carries PageSize (default
+	// "limit"; OData uses "$top", many APIs "per_page").
+	PageSizeParam string `yaml:"page_size_param,omitempty" json:"page_size_param,omitempty"`
+	SinceParam    string `yaml:"since_param,omitempty" json:"since_param,omitempty"`
+	UserEnv       string `yaml:"user_env,omitempty" json:"user_env,omitempty"`
+	PassEnv       string `yaml:"pass_env,omitempty" json:"pass_env,omitempty"`
+
+	// Mapping turns rows (kubernetes, sql, rest) into objects; its Source is unused.
 	Mapping *Mapping `yaml:"mapping,omitempty" json:"mapping,omitempty"`
 }
 
@@ -311,6 +332,27 @@ func (d *Definition) Validate() error {
 					errs = append(errs, fmt.Errorf("%s: selector %q has characters a kubernetes selector never uses", label, sel))
 				}
 			}
+		case "rest":
+			if u, err := url.Parse(c.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				errs = append(errs, fmt.Errorf("%s: rest needs an http(s) url", label))
+			}
+			if len(c.Fields) == 0 || c.Mapping == nil {
+				errs = append(errs, fmt.Errorf("%s: rest needs fields and a mapping", label))
+			}
+			if c.Next != "" && c.PageParam != "" {
+				errs = append(errs, fmt.Errorf("%s: use next or page_param, not both", label))
+			}
+			for _, pn := range []string{c.PageParam, c.SinceParam, c.PageSizeParam} {
+				if pn != "" && !paramName.MatchString(pn) {
+					errs = append(errs, fmt.Errorf("%s: %q is not a plain query parameter name", label, pn))
+				}
+			}
+			if c.PageSize < 0 || c.PageSize > 10000 {
+				errs = append(errs, fmt.Errorf("%s: page_size must be 0-10000", label))
+			}
+			if (c.UserEnv == "") != (c.PassEnv == "") || (c.TokenEnv != "" && c.UserEnv != "") {
+				errs = append(errs, fmt.Errorf("%s: give a token_env, or user_env with pass_env, not both", label))
+			}
 		case "sql":
 			if c.Driver != "postgres" && c.Driver != "sqlite" {
 				errs = append(errs, fmt.Errorf("%s: driver must be postgres or sqlite", label))
@@ -325,8 +367,10 @@ func (d *Definition) Validate() error {
 			errs = append(errs, fmt.Errorf("%s: unknown kind %q", label, c.Kind))
 		}
 		switch {
-		case c.Prune && c.Kind != "kubernetes" && c.Kind != "sql":
-			errs = append(errs, fmt.Errorf("%s: prune is only meaningful for a full listing (kubernetes or sql)", label))
+		case c.Prune && c.Kind != "kubernetes" && c.Kind != "sql" && c.Kind != "rest":
+			errs = append(errs, fmt.Errorf("%s: prune is only meaningful for a full listing (kubernetes, sql or rest)", label))
+		case c.Prune && c.Kind == "rest" && c.SinceParam != "":
+			errs = append(errs, fmt.Errorf("%s: prune needs a full listing, but since_param asks for changes only", label))
 		case c.Prune && c.Kind == "sql" && QueryHasParam(c.Query):
 			errs = append(errs, fmt.Errorf("%s: prune needs a full listing, but the query filters on the last-run time; remove the parameter", label))
 		}
@@ -389,6 +433,7 @@ type ObjectRef struct {
 const PackFilesJob = "pack-files"
 
 var selectorText = regexp.MustCompile(`^[A-Za-z0-9_./=!, ()-]{0,200}$`)
+var paramName = regexp.MustCompile(`^[A-Za-z$@_][A-Za-z0-9_.$@-]{0,63}$`)
 var kubeName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,62}$`)
 
 // CheckReadOnlyQuery refuses anything but a single SELECT or WITH statement.

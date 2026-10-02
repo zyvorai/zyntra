@@ -180,6 +180,8 @@ func FromSpec(c ontology.ConnectorSpec, schema *ontology.Schema, o Options) (Con
 		return Kubernetes{Spec: c, Run: run, Schema: schema}, nil
 	case "sql":
 		return &SQL{Spec: c, Schema: schema, Open: o.OpenSQL}, nil
+	case "rest":
+		return REST{Spec: c, Schema: schema}, nil
 	}
 	return nil, fmt.Errorf("connector %s: unknown kind %q", c.Name, c.Kind)
 }
