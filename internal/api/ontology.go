@@ -104,16 +104,52 @@ func (s *Server) handleOntSchema(w http.ResponseWriter, r *http.Request) {
 		// Object types name the provider KPIs that measure them; a tenant
 		// keeps only its own tenant's.
 		m, _ := s.snapshot()
-		d.Objects = append([]ontology.ObjectType(nil), d.Objects...)
-		for i := range d.Objects {
+		// Offer only the object types this account can actually see, so the
+		// provider's type names are not listed to a tenant that has none.
+		visible := map[string]bool{}
+		for _, t := range s.reader(r).VisibleTypes() {
+			visible[t] = true
+		}
+		var types []ontology.ObjectType
+		for _, ot := range d.Objects {
+			if !visible[ot.Name] {
+				continue
+			}
 			var own []string
-			for _, id := range d.Objects[i].KPIs {
+			for _, id := range ot.KPIs {
 				if k, ok := m.KPI(id); ok && k.Tenant == tenant {
 					own = append(own, id)
 				}
 			}
-			d.Objects[i].KPIs = own
+			ot.KPIs = own
+			types = append(types, ot)
 		}
+		d.Objects = types
+		var links []ontology.LinkType
+		for _, l := range d.Links {
+			if visible[l.From] && visible[l.To] {
+				links = append(links, l)
+			}
+		}
+		d.Links = links
+		var views []ontology.ViewSpec
+		for _, v := range d.Views {
+			if visible[v.Type] {
+				views = append(views, v)
+			}
+		}
+		d.Views = views
+		var acts []ontology.ActionType
+		for _, a := range d.Actions {
+			ok := true
+			for _, in := range a.Inputs {
+				ok = ok && visible[in.ObjectType]
+			}
+			if ok {
+				acts = append(acts, a)
+			}
+		}
+		d.Actions = acts
 	}
 	writeJSON(w, http.StatusOK, d)
 }

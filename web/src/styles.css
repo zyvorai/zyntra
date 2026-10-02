@@ -830,9 +830,11 @@ input, select, textarea {
   padding: 6px 14px;
   border: 0;
   font-size: 13px;
-  text-transform: capitalize;
+  /* Capitalise the first letter only: "Orders and deadline exposure", not "Orders And ...". */
+  text-transform: none;
   color: var(--text-secondary);
 }
+.segmented button::first-letter { text-transform: uppercase; }
 .segmented button:hover { background: var(--hover-fill); }
 .segmented button[aria-selected="true"] { background: var(--apple-blue); color: #fff; box-shadow: var(--shadow-1); font-weight: 500; }
 .segmented .count { margin-left: 4px; font-size: 11px; color: var(--text-tertiary); }
@@ -1091,3 +1093,9 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .check { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
 .linklike.active { font-weight: 600; text-decoration: underline; }
+
+/* Breathing room where controls sit side by side. */
+.segmented { margin-right: 12px; }
+.table td button + button { margin-left: 8px; }
+.check { margin-right: 18px; }
+.chips { gap: 8px; }

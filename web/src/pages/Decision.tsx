@@ -265,7 +265,7 @@ export default function Decision() {
                   ))}
                 </details>
               ) : null}
-              {prec?.items.length ? (
+              {prec?.items?.length ? (
                 <details className="trace" open>
                   <summary>Similar past decisions</summary>
                   <p className="small">{prec.text}</p>
@@ -415,7 +415,7 @@ export default function Decision() {
           </ol>
 
           {data?.decision.rollout ? <RolloutPanel id={data.decision.id} /> : null}
-          <Card title="Audit trail" aside={<Pill>{data?.audit.length ?? 0} events</Pill>}>
+          <Card title="Audit trail" aside={<Pill>{data?.audit?.length ?? 0} events</Pill>}>
             <table className="table compact">
               <thead>
                 <tr>
@@ -428,7 +428,7 @@ export default function Decision() {
                 </tr>
               </thead>
               <tbody>
-                {data?.audit.map((e) => (
+                {data?.audit?.map((e) => (
                   <tr key={e.seq ?? e.at}>
                     <td className="mono">{e.seq}</td>
                     <td title={e.at}>{ago(e.at)}</td>

@@ -445,3 +445,79 @@ func TestProviderKPIsAreHiddenBehindAGenericLabel(t *testing.T) {
 		}
 	}
 }
+
+const providerDef = `
+objects:
+  - name: Order
+    properties: [{name: name, type: string}]
+  - name: Machine
+    properties: [{name: name, type: string}]
+  - name: Factory
+    properties: [{name: name, type: string}]
+links:
+  - {name: made_on, from: Order, to: Machine}
+  - {name: sited_at, from: Machine, to: Factory}
+actions:
+  - id: add_gpus
+    inputs: [{name: machine, object_type: Machine, required: true}]
+  - id: free_action
+    inputs: [{name: order, object_type: Order, required: true}]
+views:
+  - {id: orders, title: Orders, type: Order, columns: [name]}
+  - {id: machines, title: Machines, type: Machine, columns: [name]}
+`
+
+// A tenant that owns only Orders must not be told that Machines, Factories, a
+// machine view or a machine action exist: those are the provider's.
+func TestTenantSchemaOffersOnlyVisibleTypesViewsAndActions(t *testing.T) {
+	def, err := ontology.ParseDefinition([]byte(providerDef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := ontology.Open("", def.Schema())
+	if _, err := st.Ingest("erp", "t", []ontology.Record{
+		{Type: "Order", Namespace: "e", Key: "o1", Tenant: "alpha", Props: map[string]any{"name": "O-1"}},
+		{Type: "Machine", Namespace: "e", Key: "m1", Props: map[string]any{"name": "Press"}},
+		{Type: "Factory", Namespace: "e", Key: "f1", Props: map[string]any{"name": "Plant"}},
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ac := &ontology.Access{Schema: def.Schema()}
+	scn, _ := scenario.Open("")
+	f := setupWith(t, ontModel, func(o *Options) {
+		o.Ontology = OntologyOptions{Def: def, Store: st, Access: ac, Actions: actions.New(def, st, ac), Scenarios: scn}
+	})
+	type schema struct {
+		Objects []struct {
+			Name string `json:"name"`
+		} `json:"objects"`
+		Links []struct {
+			Name string `json:"name"`
+		} `json:"links"`
+		Actions []struct {
+			ID string `json:"id"`
+		} `json:"actions"`
+		Views []struct {
+			ID string `json:"id"`
+		} `json:"views"`
+	}
+	var tr schema
+	f.asTenant(t, "GET", "/api/v1/ontology/schema", "ann", "alpha", viewer, "", &tr)
+	if len(tr.Objects) != 1 || tr.Objects[0].Name != "Order" {
+		t.Errorf("a tenant owning only Orders was offered %+v", tr.Objects)
+	}
+	if len(tr.Links) != 0 {
+		t.Errorf("links to hidden types leaked: %+v", tr.Links)
+	}
+	if len(tr.Actions) != 1 || tr.Actions[0].ID != "free_action" {
+		t.Errorf("only the Order action should be offered, got %+v", tr.Actions)
+	}
+	if len(tr.Views) != 1 || tr.Views[0].ID != "orders" {
+		t.Errorf("only the Orders view should be offered, got %+v", tr.Views)
+	}
+	var all schema
+	f.as(t, "GET", "/api/v1/ontology/schema", "root", []auth.Role{auth.RoleAdmin}, "", &all)
+	if len(all.Objects) != 3 || len(all.Links) != 2 || len(all.Actions) != 2 || len(all.Views) != 2 {
+		t.Errorf("the provider's schema must stay whole: %+v", all)
+	}
+}

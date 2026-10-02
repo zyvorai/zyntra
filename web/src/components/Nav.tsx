@@ -73,7 +73,7 @@ export default function Nav({
     };
   }, [openGroup]);
 
-  const gaps = pulse?.gaps.length ?? 0;
+  const gaps = pulse?.gaps?.length ?? 0;
   const pending = pulse?.pending_approvals ?? 0;
   const chipTone = pulse && pulse.severity_total > 0.5 ? 'critical' : gaps > 0 ? 'warning' : '';
 

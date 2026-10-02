@@ -104,10 +104,13 @@ type index struct {
 	// their type or their own "kpis" property): the only objects that can be
 	// at risk, so the risk summary reads these instead of every object.
 	bound map[string]struct{}
+	// tenantTypes counts objects per tenant and type ("" is the tenant-less
+	// space), so the types a tenant can possibly see are known without a scan.
+	tenantTypes map[string]map[string]int
 }
 
 func newIndex() index {
-	return index{adj: map[string]map[string]struct{}{}, alias: map[string]string{}, match: map[string]map[string]struct{}{}, bound: map[string]struct{}{}}
+	return index{adj: map[string]map[string]struct{}{}, alias: map[string]string{}, match: map[string]map[string]struct{}{}, bound: map[string]struct{}{}, tenantTypes: map[string]map[string]int{}}
 }
 
 func aliasKey(tenant string, a Alias) string {
@@ -127,6 +130,12 @@ func (s *Store) matchKey(o Object) (string, bool) {
 }
 
 func (s *Store) indexObject(o Object) {
+	tt := s.ix.tenantTypes[o.Tenant]
+	if tt == nil {
+		tt = map[string]int{}
+		s.ix.tenantTypes[o.Tenant] = tt
+	}
+	tt[o.Type]++
 	if len(BoundKPIs(s.schema, o)) > 0 {
 		s.ix.bound[o.ID] = struct{}{}
 	}
@@ -144,6 +153,11 @@ func (s *Store) indexObject(o Object) {
 }
 
 func (s *Store) unindexObject(o Object) {
+	if tt := s.ix.tenantTypes[o.Tenant]; tt != nil {
+		if tt[o.Type]--; tt[o.Type] <= 0 {
+			delete(tt, o.Type)
+		}
+	}
 	delete(s.ix.bound, o.ID)
 	for _, a := range o.Aliases {
 		if s.ix.alias[aliasKey(o.Tenant, a)] == o.ID {
