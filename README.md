@@ -443,6 +443,7 @@ zyntra keep credential                   # zyntra-exec descriptor for ZYVOR_AGEN
 | `ZYNTRA_KEEP_URL` / `_TOKEN` | Keep agent runtime (status, sessions, approvals, audit) |
 | `ZYNTRA_EXEC_TOKEN`, `ZYNTRA_EXEC_TLS_ADDR` | Token Keep injects, and the loopback TLS listener it calls |
 | `ZYNTRA_AI_BASE_URL` / `_API_KEY` / `_MODEL` | Optional OpenAI-compatible model for answer rewriting |
+| `ZYNTRA_NOTIFY_URL` / `_TOKEN` / `_ON`, `ZYNTRA_CONSOLE_URL` | Optional webhook (Slack/Teams-compatible `text`) that says a proposal needs a decision; `_ON` lists statuses (default `pending`). Sends action, status and who, never inputs or free text; best effort, never blocks an approval |
 
 ## CLI
 
