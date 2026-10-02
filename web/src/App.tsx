@@ -56,6 +56,14 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         operator={who.identity.subject}
       />
       <main id="main">
+        {who.default_password ? (
+          <div className="banner" role="alert">
+            <span>
+              <strong>{who.identity.subject}</strong> still uses the default password. Set <code>ZYNTRA_ADMIN_PASSWORD</code> or define users in the policy file,
+              then restart Zyntra.
+            </span>
+          </div>
+        ) : null}
         {page === 'overview' && <Overview pulse={pulse} setPage={setPage} />}
         {page === 'gaps' && <Gaps />}
         {page === 'plan' && <Plan setPage={setPage} />}

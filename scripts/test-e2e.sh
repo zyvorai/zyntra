@@ -127,6 +127,10 @@ done
 S="http://127.0.0.1:$SPORT/api/v1"
 json=(-H 'Content-Type: application/json')
 expect "shop meta pack" '"id": "shop"' curl -fsS "$S/meta"
+[ "$(code -X POST "${json[@]}" -d '{"username":"admin","password":"wrong"}' "$S/session")" = 401 ] || fail "wrong password must be refused"
+JAR=$(mktemp)
+curl -fsS -c "$JAR" -X POST "${json[@]}" -d '{"username":"admin","password":"Admin@321"}' "$S/session" >/dev/null || fail "default admin sign-in"
+expect "default password flagged" '"default_password":true' curl -fsS -b "$JAR" "$S/whoami"
 expect "shop file sources" '"state": "ok"' api "$S/sources"
 expect "manual value" '"kpi": "cashiers_open"' api -X POST "${json[@]}" -d '{"value":1,"reason":"e2e"}' "$S/kpis/cashiers_open/value"
 expect "manual audited" 'manual value cashiers_open' api "$S/audit"

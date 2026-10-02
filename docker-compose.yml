@@ -3,7 +3,7 @@
 #
 # Shop pack with a local webhook receiver standing in for the POS and ERP.
 #   ZYNTRA_API_KEY=$(openssl rand -hex 24) docker compose up --build
-# Console: http://127.0.0.1:8080  Receiver inbox: http://127.0.0.1:9099
+# Console: http://127.0.0.1:8080 (admin / Admin@321 unless ZYNTRA_ADMIN_PASSWORD is set)  Receiver inbox: http://127.0.0.1:9099
 # Set ZYNTRA_EXECUTE=apply to send approved webhooks to the receiver;
 # the default dry-run records what would be sent and sends nothing.
 #
@@ -23,6 +23,7 @@ services:
     environment:
       ZYNTRA_API_KEY: ${ZYNTRA_API_KEY:?set ZYNTRA_API_KEY}
       ZYNTRA_SESSION_SECRET: ${ZYNTRA_SESSION_SECRET:-}
+      ZYNTRA_ADMIN_PASSWORD: ${ZYNTRA_ADMIN_PASSWORD:-}
       ZYNTRA_INGEST_TOKEN: ${ZYNTRA_INGEST_TOKEN:-}
       ZYNTRA_EXECUTE: ${ZYNTRA_EXECUTE:-dry-run}
       ZYNTRA_POS_URL: http://receiver:9099/pos

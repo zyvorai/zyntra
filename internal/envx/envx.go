@@ -29,6 +29,7 @@ var reserved = map[string]bool{
 	"ZYNTRA_OIDC_CLIENT_SECRET": true,
 	"ZYNTRA_AI_API_KEY":         true,
 	"ZYNTRA_FABRIC_PASSWORD":    true,
+	"ZYNTRA_ADMIN_PASSWORD":     true,
 }
 
 // Allowed reports whether a pack may read the variable.

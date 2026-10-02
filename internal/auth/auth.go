@@ -123,11 +123,13 @@ func FromContext(ctx context.Context) Identity {
 	return id
 }
 
-// LocalUser is an account checked against a bcrypt hash.
+// LocalUser is an account checked against a bcrypt hash. Default marks the
+// built-in admin whose password is still the shipped one.
 type LocalUser struct {
-	Name  string
-	Hash  string
-	Roles []Role
+	Name    string
+	Hash    string
+	Roles   []Role
+	Default bool
 }
 
 type Auth struct {
@@ -395,7 +397,9 @@ func (a *Auth) Routes(mux *http.ServeMux) {
 			writeErr(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"identity": id, "auth_required": a.Required(), "methods": a.Methods()})
+		u, ok := a.users[id.Subject]
+		writeJSON(w, http.StatusOK, map[string]any{"identity": id, "auth_required": a.Required(), "methods": a.Methods(),
+			"default_password": ok && u.Default && id.Method == "password"})
 	})
 	if a.oidc != nil {
 		mux.HandleFunc("GET /api/v1/auth/oidc/login", a.oidcLogin)

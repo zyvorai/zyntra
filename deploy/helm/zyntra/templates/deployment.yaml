@@ -63,6 +63,8 @@ spec:
               value: {{ .Values.execute | quote }}
             - name: ZYNTRA_APPROVAL_MODE
               value: {{ .Values.approvalMode | quote }}
+            - name: ZYNTRA_ADMIN_USER
+              value: {{ .Values.auth.adminUser | default "admin" | quote }}
             - name: ZYNTRA_HOST
               valueFrom:
                 fieldRef:

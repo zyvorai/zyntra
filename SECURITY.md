@@ -5,7 +5,8 @@ Zyntra reads infrastructure metrics, cluster inventory and, through packs, busin
 ## Safe deployment defaults
 
 - **Nothing runs without approval.** Every proposal needs at least one human approval. Execution is `kubectl --dry-run=server` unless `ZYNTRA_EXECUTE=apply` is set.
-- **Configure sign-in.** With no `ZYNTRA_API_KEY`, OIDC or local users, the API and console are open; this is for development only and Zyntra logs a warning.
+- **Change the default password.** When the policy file defines no users, Zyntra creates a local admin account `admin` with password `Admin@321`, so the console is never open by accident. That password is public. Zyntra logs a warning at start, and the console shows a banner to that account until you set `ZYNTRA_ADMIN_PASSWORD` (Helm: `auth.adminPassword`), or define users in the policy file, which removes the built-in account. Do this before exposing the console. `ZYNTRA_DEFAULT_ADMIN=off` removes the account; with no key, OIDC or users the API is then open, which is for development only.
+- **Configure sign-in.**
   - Prefer OIDC (`ZYNTRA_OIDC_*`). It uses the authorization code flow with PKCE, a nonce, and a signed, short-lived state cookie. Map groups to the narrowest role that works (`viewer`, `proposer`, `approver`, `executor`, `admin`).
   - The access key signs in as `admin`. Keep it as break-glass access, store it like a root credential and rotate it. Set `ZYNTRA_SESSION_SECRET` so rotating the key does not invalidate sessions, and so sessions survive restarts when you run without a key.
   - Local accounts in the policy file store bcrypt hashes only (`zyntra hash-password`). Unknown users take as long to reject as wrong passwords.

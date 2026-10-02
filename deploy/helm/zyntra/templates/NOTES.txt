@@ -4,7 +4,10 @@ Console:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "zyntra.fullname" . }} 8080:{{ .Values.service.port }}
   open http://127.0.0.1:8080
 
-API key:
+Sign in as {{ .Values.auth.adminUser }}{{ if not .Values.auth.adminPassword }} / Admin@321 (the default password: set
+auth.adminPassword, or define users in policy, before anyone else can reach it){{ end }}.
+
+API key (break-glass):
   kubectl -n {{ .Release.Namespace }} get secret {{ include "zyntra.secretName" . }} -o jsonpath='{.data.ZYNTRA_API_KEY}' | base64 -d
 {{- if .Values.receiver.enabled }}
 
