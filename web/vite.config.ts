@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 // ZYNTRA_DEV_API points the dev proxy at a running zyntra serve.
@@ -11,5 +11,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: { '/api': upstream, '/healthz': upstream },
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['src/test/setup.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 });

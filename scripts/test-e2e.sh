@@ -67,7 +67,11 @@ expect "ai digest" '"intent": "digest"' api "http://127.0.0.1:$PORT/api/v1/ai/di
 expect "ai ask" '"intent": "plan"' api -X POST -H 'Content-Type: application/json' \
   -d '{"question":"what should we do first?"}' "http://127.0.0.1:$PORT/api/v1/ai/ask"
 
-prop=$(api -X POST -H 'Content-Type: application/json' -d '{"action":"raise-inference-priority"}' \
+# raise-inference-priority is a typed action in the gpu ontology: it needs the service it acts on.
+[ "$(code -X POST "${auth[@]}" -H 'Content-Type: application/json' -d '{"action":"raise-inference-priority"}' \
+  "http://127.0.0.1:$PORT/api/v1/proposals")" = 422 ] || fail "a typed action without its object input must be refused"
+prop=$(api -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"raise-inference-priority","inputs":{"service":"Service:erp:svc-infer"}}' \
   "http://127.0.0.1:$PORT/api/v1/proposals")
 grep -q 'kind: GryviaPriority' <<<"$prop" || fail "proposal render: $prop"
 id=$(sed -n 's/^  "id": "\([^"]*\)".*/\1/p' <<<"$prop" | head -1)
@@ -94,6 +98,12 @@ grep -q 'event: pulse' <<<"$sse" || fail "sse pulse"
 expect "pack list" 'shop' $BIN pack list
 expect "pack validate shop" 'shop (packs/shop): ok' $BIN pack validate packs/shop
 expect "pack validate gpu" 'gpu (packs/gpu): ok' $BIN pack validate packs/gpu
+for p in packs/*/; do expect "pack validate $p" ': ok' $BIN pack validate "$p"; done
+expect "ontology validate" 'ok: 6 object types' $BIN ontology validate -f packs/manufacturing
+expect "ontology impact" 'Order:erp:O-1001' $BIN ontology impact -f packs/manufacturing Cluster:infra:gpu-a
+expect "scenario compare" 'objects at risk' $BIN scenario compare -f packs/manufacturing a=add_gpu_capacity b=alternate_inspection_site
+expect "calibrate with no history" 'dry-run' $BIN calibrate -f packs/gpu -state "$STATE/none"
+expect "connector token" 'token_sha256:' $BIN connector-token -name e2e -tenant alpha
 expect "shop plan closes stockout" 'reorder_fast_movers' $BIN plan -f packs/shop
 expect "shop invariant blocks markdown" 'markdown_dead_stock' $BIN plan -f packs/shop -o json
 $BIN plan -f packs/shop -o json 2>/dev/null | python3 -c '
