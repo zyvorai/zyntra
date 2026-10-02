@@ -1,6 +1,6 @@
 # Zyntra social and README images
 
-Everything here is rendered from HTML in the Zyvor brand (ink `#111`, signal orange `#ff5a15`, white, Z mark). Nothing is drawn by hand and nothing in the console screenshots is mocked.
+Everything here is rendered from HTML; nothing is drawn by hand and nothing in the console screenshots is mocked. The social card keeps the original look (dark violet-tinted background, violet-to-orange headline, four step cards); the README cards use the Zyvor brand (ink `#111`, signal orange `#ff5a15`, white, Z mark).
 
 ## Social card
 
