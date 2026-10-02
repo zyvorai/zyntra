@@ -457,10 +457,22 @@ On the lab host, Keep sandboxes cannot reach the egress broker, so approved acti
 
 ### Container (Docker or Podman)
 
+Published images: `ghcr.io/zyvorai/zyntra` for linux/amd64 and linux/arm64. `:edge` and `:0.4.0-dev` track `main`, `:sha-<commit>` pins a build, and release tags add `:<version>`, `:<major>.<minor>` and `:latest`. Each image carries an SBOM, SLSA provenance and a keyless cosign signature:
+
+```bash
+docker pull ghcr.io/zyvorai/zyntra:edge
+cosign verify ghcr.io/zyvorai/zyntra:edge \
+  --certificate-identity-regexp 'https://github.com/zyvorai/zyntra/.github/workflows/image.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/zyvorai/zyntra:edge -R zyvorai/zyntra
+```
+
+For an air-gapped site, `docker save` the pinned image and load it on the inside; nothing in it calls out.
+
 ```bash
 make docker                                          # zyntra:<version>, docker or podman
-docker run --rm -p 8080:8080 -e ZYNTRA_API_KEY=dev zyntra:0.4.0-dev                 # shop pack
-docker run --rm -p 8080:8080 -e ZYNTRA_API_KEY=dev zyntra:0.4.0-dev serve -f packs/gpu
+docker run --rm -p 8080:8080 -e ZYNTRA_API_KEY=dev ghcr.io/zyvorai/zyntra:edge                 # shop pack
+docker run --rm -p 8080:8080 -e ZYNTRA_API_KEY=dev ghcr.io/zyvorai/zyntra:edge serve -f packs/gpu
 ZYNTRA_API_KEY=$(openssl rand -hex 24) docker compose up --build                    # shop + test receiver
 ```
 
@@ -471,8 +483,9 @@ The image is distroless, runs as uid 65532, and keeps state (proposals, audit ch
 ### Kubernetes (Helm or plain manifest)
 
 ```bash
-helm upgrade --install zyntra deploy/helm/zyntra -n zyntra --create-namespace \
-  --set image.repository=registry.example/zyntra --set image.tag=0.4.0-dev --set pack=shop
+helm upgrade --install zyntra oci://ghcr.io/zyvorai/charts/zyntra --version 0.4.0 \
+  -n zyntra --create-namespace --set pack=shop            # image ghcr.io/zyvorai/zyntra:0.4.0-dev
+# or from a checkout: helm upgrade --install zyntra deploy/helm/zyntra ... --set image.repository=registry.internal/zyntra
 kubectl -n zyntra port-forward svc/zyntra 8080:8080
 kubectl -n zyntra get secret zyntra-auth -o jsonpath='{.data.ZYNTRA_API_KEY}' | base64 -d
 ```

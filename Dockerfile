@@ -4,15 +4,17 @@
 # The image carries packs and HTTP/file sources only. kubectl is not in the
 # image, so kubectl actions and the Kubernetes adapters need the binary
 # install (scripts/deploy-remote.sh) or a sidecar that provides it.
-FROM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web ./
 RUN npm run build
 
-FROM golang:1.27-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG VERSION=0.4.0-dev
+ARG TARGETOS=linux
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,8 +24,9 @@ COPY keep ./keep
 COPY examples ./examples
 COPY web ./web
 COPY --from=web /web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/zyntra ./cmd/zyntra \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/zyntra-receiver ./examples/receiver \
+RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+ && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/zyntra ./cmd/zyntra \
+ && go build -trimpath -ldflags="-s -w" -o /out/zyntra-receiver ./examples/receiver \
  && mkdir -p /out/state/out /out/inbox
 
 FROM gcr.io/distroless/static-debian12:nonroot

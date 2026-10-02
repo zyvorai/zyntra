@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 image:
-  repository: zyntra
+  repository: ghcr.io/zyvorai/zyntra
   tag: ""            # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 imagePullSecrets: []
