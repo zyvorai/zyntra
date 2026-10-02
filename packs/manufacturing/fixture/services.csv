@@ -1,0 +1,3 @@
+service_id,name,cluster_id
+vision-qa,Vision QA (plant A),gpu-a
+vision-qa-overflow,Vision QA (overflow),gpu-b

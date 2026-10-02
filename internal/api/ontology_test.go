@@ -12,6 +12,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/ai"
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/decisions"
 	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/scenario"
 )
@@ -149,6 +150,13 @@ func TestTypedActionContract(t *testing.T) {
 	}
 	if len(p.Objects) != 1 || p.Objects[0].ID != "Cluster:x:c1" || p.Rollout == nil || p.ActionInputs["cluster"] != "Cluster:x:c1" {
 		t.Fatalf("proposal lacks objects/rollout: %+v", p)
+	}
+	var ex decisions.Export
+	if c := f.as(t, "GET", "/api/v1/decisions/"+p.ID+"/export", "boss", approver, "", &ex); c != 200 || ex.Decision.Rollout == nil || ex.Decision.Rollout.Stages[0].Name != "canary" {
+		t.Fatalf("the signed decision must carry the rollout shape: %d %+v", c, ex.Decision.Rollout)
+	}
+	if err := decisions.Verify(ex); err != nil {
+		t.Errorf("export does not verify: %v", err)
 	}
 	// An untyped action is not affected by the contract.
 	if c := post("p", proposer, `{"action":"free_action"}`, nil); c != 201 {

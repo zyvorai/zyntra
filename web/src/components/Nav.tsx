@@ -14,6 +14,7 @@ export default function Nav({
   onLogout,
   pulse,
   operator,
+  ontology,
 }: {
   page: Page;
   setPage: (p: Page) => void;
@@ -22,6 +23,7 @@ export default function Nav({
   onLogout?: () => void;
   pulse: Pulse | null;
   operator: string;
+  ontology?: boolean;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,7 +83,7 @@ export default function Nav({
           Zyntra
         </button>
         <div className="navlinks">
-          {navGroups.map((g) =>
+          {navGroups.filter((g) => !g.ontology || ontology).map((g) =>
             g.children ? (
               <div key={g.label} className="navgroup" onMouseEnter={() => scheduleOpen(g.label)} onMouseLeave={scheduleClose}>
                 <button

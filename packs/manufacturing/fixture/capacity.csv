@@ -1,0 +1,3 @@
+service,gpus,cost_day
+vision-qa,8,1800
+vision-qa-overflow,2,400

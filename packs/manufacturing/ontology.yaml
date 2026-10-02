@@ -1,0 +1,113 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Business objects for the manufacturing pack. A link says an order depends on
+# a line, a line on an inspection service, a service on a cluster. It does not
+# say by how much: only kpis.yaml predicts.
+name: manufacturing-operations
+
+objects:
+  - name: Factory
+    properties:
+      - {name: name, type: string, required: true}
+  - name: Line
+    properties:
+      - {name: name, type: string, required: true}
+  - name: Machine
+    match: name
+    properties:
+      - {name: name, type: string, required: true}
+  - name: Order
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: customer, type: string, sensitive: true}
+      - {name: due, type: time}
+      - {name: qty, type: number}
+  - name: InspectionService
+    kpis: [inspection_backlog, inspection_turnaround_h]
+    properties:
+      - {name: name, type: string, required: true}
+  - name: Cluster
+    kpis: [gpu_capacity]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: gpus, type: number}
+      - {name: status, type: string}
+
+links:
+  - {name: part_of, from: Line, to: Factory}
+  - {name: on_line, from: Machine, to: Line}
+  - {name: produced_on, from: Order, to: Line}
+  - {name: inspected_by, from: Line, to: InspectionService}
+  - {name: runs_on, from: InspectionService, to: Cluster}
+
+mappings:
+  - {source: fixture/factories.csv, type: Factory, namespace: erp, key: site_id, props: {name: name}}
+  - source: fixture/clusters.csv
+    type: Cluster
+    namespace: infra
+    key: cluster_id
+    props: {name: name, gpus: gpus, status: status}
+  - source: fixture/services.csv
+    type: InspectionService
+    namespace: infra
+    key: service_id
+    props: {name: name}
+    links: [{type: runs_on, column: cluster_id, to: Cluster}]
+  - source: fixture/lines.csv
+    type: Line
+    namespace: erp
+    key: line_id
+    props: {name: name}
+    links:
+      - {type: part_of, column: site_id, to: Factory}
+      - {type: inspected_by, column: service_id, to: InspectionService, namespace: infra}
+  - source: fixture/orders.csv
+    type: Order
+    namespace: erp
+    key: order_id
+    props: {name: order_id, customer: customer, due: due, qty: qty}
+    links: [{type: produced_on, column: line_id, to: Line}]
+  - source: fixture/machines_erp.csv
+    type: Machine
+    namespace: erp
+    key: asset_id
+    props: {name: name}
+    aliases: [{system: erp, column: asset_id}]
+    links: [{type: on_line, column: line_id, to: Line}]
+  - source: fixture/machines_mes.csv
+    type: Machine
+    namespace: mes
+    key: device_id
+    props: {name: name}
+    aliases: [{system: mes, column: device_id}]
+
+actions:
+  - id: add_gpu_capacity
+    inputs: [{name: service, object_type: InspectionService, required: true}]
+    affects: [InspectionService, Order]
+    permissions: [approver]
+    outcome: [{object_type: InspectionService, must_be_safe: true}]
+  - id: reschedule_training
+    inputs: [{name: cluster, object_type: Cluster, required: true}]
+    requires: [{input: cluster, property: status, equals: active}]
+    affects: [Cluster]
+    outcome: [{object_type: Cluster, must_be_safe: true}]
+  - id: alternate_inspection_site
+    inputs: [{name: service, object_type: InspectionService, required: true}]
+    affects: [InspectionService, Order]
+    permissions: [approver]
+    outcome: [{object_type: InspectionService, must_be_safe: true}]
+
+views:
+  - {id: orders, title: Orders and deadline exposure, type: Order, columns: [name, qty, due], exposed: true}
+  - {id: inspection, title: Inspection services, type: InspectionService, columns: [name], actions: [add_gpu_capacity, alternate_inspection_site]}
+
+rollout:
+  stages:
+    - name: pilot-line
+      sites: [site-a]
+      gates:
+        - {kpi: inspection_turnaround_h, max: 8}
+    - name: all-plants
+      sites: [site-b]

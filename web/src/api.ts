@@ -178,6 +178,7 @@ export interface Answer {
   text: string;
   intent: string;
   grounding: string[] | null;
+  citations?: Citation[];
   mode: 'heuristic' | 'llm';
   model?: string;
   llm_error?: string;
@@ -271,6 +272,9 @@ export interface ExecResult {
 export interface KeepRef { mode: string; session_id?: string; approval_id?: string; receipt_id?: string; error?: string }
 export interface Proposal {
   id: string;
+  objects?: { input: string; id: string; type: string }[];
+  object_outcome?: { checked_at: string; safe: boolean; still_at_risk?: ScenarioRisk[] };
+  rollout?: { stages: { name: string; sites: string[] }[] };
   action: string;
   action_name: string;
   risk?: string;
@@ -390,6 +394,7 @@ export interface Meta {
   approval_mode: string;
   execute_mode: string;
   ai_mode: string;
+  ontology?: boolean;
 }
 
 export interface Pulse {
@@ -519,4 +524,71 @@ export function renderLabel(kinds?: string[], template?: string): string {
   if (!k.length) return 'Advisory (nothing to run)';
   const names: Record<string, string> = { kubectl: 'Gravia resource (kubectl)', webhook: 'Webhook request', file: 'File to write', noop: 'Done by people (no system call)' };
   return Array.from(new Set(k)).map((x) => names[x] ?? x).join(' + ');
+}
+
+// Business ontology.
+
+export interface Prov { source: string; source_id?: string; observed_at: string; ingested_at: string; transform?: string[] }
+export interface OntObject {
+  id: string;
+  type: string;
+  tenant?: string;
+  props: Record<string, { v: string | number | boolean; prov: Prov }>;
+  aliases?: { system: string; external_id: string }[];
+}
+export interface OntLink { id: string; type: string; from: string; to: string; prov: Prov }
+export interface OntImpact { object: OntObject; depth: number; via: string }
+export interface OntObjectDetail {
+  object: OntObject;
+  links: { link: OntLink; other: OntObject; out: boolean }[];
+  impact: OntImpact[];
+  bound_kpis: string[] | null;
+  failing_kpis: string[] | null;
+}
+export interface OntInput { name: string; object_type: string; required?: boolean }
+export interface OntActionType { id: string; inputs?: OntInput[]; affects?: string[]; permissions?: string[] }
+export interface OntViewSpec { id: string; title: string; type: string; columns: string[]; actions?: string[]; exposed?: boolean }
+export interface OntSchema {
+  name?: string;
+  objects: { name: string; properties: { name: string; type: string; sensitive?: boolean }[]; kpis?: string[] }[];
+  links: { name: string; from: string; to: string }[];
+  actions?: OntActionType[];
+  views?: OntViewSpec[];
+}
+export interface OntViewRow { id: string; cells: Record<string, string | number | boolean>; failing_kpis?: string[]; exposed_by?: string[] }
+export interface Candidate { id: string; a: string; b: string; reason: string; status: string; decided_by?: string }
+export interface Citation { object: string; property: string; value: string | number | boolean; source: string; observed_at: string }
+export interface Draft { action?: string; inputs?: Record<string, string>; valid: boolean; problems?: string[] }
+
+export interface ScenarioRisk { id: string; type: string; kpis: string[] }
+export interface Scenario {
+  id: string;
+  name: string;
+  actions: string[];
+  assumptions?: Record<string, number>;
+  notes?: string;
+  created_by: string;
+  created_at: string;
+  model_version?: string;
+  data_version?: string;
+  ran_at?: string;
+  result?: {
+    kpis: { kpi: string; name: string; before: number; after: number; met_after: boolean; has_target: boolean }[];
+    weighted_before: number;
+    weighted_after: number;
+    gaps_closed: string[] | null;
+    gaps_opened: string[] | null;
+    blocked?: string[];
+    at_risk_before: ScenarioRisk[] | null;
+    at_risk_after: ScenarioRisk[] | null;
+    exposed_before: { id: string; type: string }[] | null;
+    exposed_after: { id: string; type: string }[] | null;
+  };
+}
+export interface Comparison {
+  scenarios: string[];
+  rows: { kpi: string; name: string; unit?: string; before: number; after: number[]; met: boolean[] }[];
+  weighted_after: number[];
+  objects_at_risk_after: number[];
+  objects_exposed_after: number[];
 }

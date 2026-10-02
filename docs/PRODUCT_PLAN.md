@@ -137,6 +137,17 @@ No new product surface; the existing pages are extended.
 - **Ask (B):** same contract; grounding facts start with `pack:<id>@<version>`.
 - **Plan (B):** worst-case column, optimistic-only and works-against-itself pills. **Decision record (B):** payload and response hashes on audit events.
 
+## 2b. Business ontology (Phase E, in development)
+
+An ontology layer for business objects, kept separate from the KPI simulator. Delivered on branch `feat/ontology`:
+
+1. **Objects and provenance:** `internal/ontology` (schema, store, stable ids, impact traversal), `ontology.yaml` in packs, resolution queue, console Objects page.
+2. **Permission-aware AI and typed actions:** access rules in the policy file, `internal/actions`, Ask citations, `/ai/propose`.
+3. **Scenarios, workflows, verified outcomes:** `internal/scenario`, declarative views, object-level outcome checks.
+4. **Packs, connector SDK, fleet shape:** `packs/manufacturing`, `internal/connector`, rollout in the signed decision, `make eval`.
+
+Still open: a database-backed object store, an MES/ERP connector catalogue, true tenant isolation, and fleet delivery itself (belongs to the deployment tooling, not Zyntra).
+
 ## 3. Pack catalog
 
 Each pack is a file set, not a fork. The first wave is the one a buyer can feed with a CSV this week; the second needs a live system. Weights are starting points, marked editable, not truth.

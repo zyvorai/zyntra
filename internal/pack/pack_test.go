@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/zyntra/internal/adapters"
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/sim"
 )
@@ -138,5 +140,35 @@ func TestManifestErrors(t *testing.T) {
 	write(Manifest, "id: x\ntitle: X\nowners: [cook]\nsurprise: 1\n")
 	if _, err := Load(dir); err == nil {
 		t.Fatal("unknown manifest field should fail")
+	}
+}
+
+func TestManufacturingOntologyLinksOrdersToCompute(t *testing.T) {
+	m, err := Load(root + "/manufacturing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, dir, err := LoadOntology(root+"/manufacturing", m)
+	if err != nil || def == nil {
+		t.Fatalf("ontology: %v", err)
+	}
+	st, _ := ontology.Open("", def.Schema())
+	if _, err := st.IngestMappings(def, dir, "test", adapters.NewFileCache().Load, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, i := range st.Impact("Cluster:infra:gpu-a", 0) {
+		got[i.Object.ID] = true
+	}
+	for _, want := range []string{"InspectionService:infra:vision-qa", "Line:erp:L1", "Order:erp:O-1001"} {
+		if !got[want] {
+			t.Errorf("a cluster failure should reach %s", want)
+		}
+	}
+	if got["Order:erp:O-1007"] {
+		t.Error("line 3 inspects on the overflow cluster; its orders do not depend on cluster A")
+	}
+	if len(st.Candidates()) != 1 {
+		t.Errorf("the ERP and MES press should be one pending identity candidate, got %d", len(st.Candidates()))
 	}
 }

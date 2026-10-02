@@ -435,7 +435,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 		"auth_required": s.opt.Auth.Required(), "auth_methods": s.opt.Auth.Methods(),
 		"sources":       map[string]int{"total": len(src), "healthy": healthy},
 		"approval_mode": s.opt.ApprovalMode, "execute_mode": s.opt.Executor.Mode,
-		"ai_mode": s.opt.AI.Status().Mode,
+		"ai_mode": s.opt.AI.Status().Mode, "ontology": s.opt.Ontology.Store != nil,
 	})
 }
 

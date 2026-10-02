@@ -16,6 +16,9 @@ import Insights from './pages/Insights';
 import Ask from './pages/Ask';
 import ModelPage from './pages/ModelPage';
 import Decision from './pages/Decision';
+import Objects from './pages/Objects';
+import Workflows from './pages/Workflows';
+import Scenarios from './pages/Scenarios';
 import { WhoContext } from './session';
 
 type Session = { state: 'loading' } | { state: 'anon' } | { state: 'in'; who: WhoAmI };
@@ -54,6 +57,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         onLogout={onLogout}
         pulse={pulse}
         operator={who.identity.subject}
+        ontology={meta?.ontology}
       />
       <main id="main">
         {who.default_password ? (
@@ -74,6 +78,9 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         {page === 'insights' && <Insights setPage={setPage} />}
         {page === 'ask' && <Ask />}
         {page === 'model' && <ModelPage />}
+        {page === 'objects' && <Objects />}
+        {page === 'workflows' && <Workflows setPage={setPage} />}
+        {page === 'scenarios' && <Scenarios />}
         {page === 'decision' && <Decision />}
       </main>
       <footer className="app-footer">

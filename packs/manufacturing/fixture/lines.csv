@@ -1,0 +1,4 @@
+line_id,name,site_id,service_id
+L1,Line 1 (brake assemblies),site-a,vision-qa
+L2,Line 2 (housings),site-a,vision-qa
+L3,Line 3 (wheel hubs),site-b,vision-qa-overflow
