@@ -26,4 +26,4 @@ cat <<'EOF'
 EOF
 helm template zyntra deploy/helm/zyntra --namespace zyntra \
   --set auth.existingSecret=zyntra-auth \
-  | sed -e '/^# Source:/d' -e '/helm.sh\/chart:/d' -e '/app.kubernetes.io\/managed-by:/d'
+  | sed -e '/^# Source:/d' -e '/helm.sh\/chart:/d' -e '/app.kubernetes.io\/managed-by:/d' -e '/^[[:space:]]*$/d'

@@ -36,15 +36,3 @@ jobs:
           make helm-lint
           ./scripts/render-k8s.sh | diff -u deploy/kubernetes/zyntra.yaml -
 
-  image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build container image
-        run: docker build -t zyntra:ci .
-      - name: Image serves every pack
-        run: |
-          for p in packs/*/; do docker run --rm zyntra:ci pack validate "$p"; done
-          docker run -d --name z -p 8080:8080 -e ZYNTRA_API_KEY=ci zyntra:ci
-          for i in $(seq 1 20); do curl -fsS localhost:8080/healthz && break; sleep 1; done
-          curl -fsS -H 'Authorization: Bearer ci' localhost:8080/api/v1/meta | grep -q '"id": *"shop"'

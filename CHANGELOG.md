@@ -21,6 +21,7 @@ Phases A and B of the packs plan: one engine, and every industry is a pack. A sh
 - **Ask names the pack:** grounding facts start with `pack:<id>@<version>`.
 - **Test webhook receiver** (`examples/receiver`, `bin/zyntra-receiver`): stores deliveries, answers a repeated `Idempotency-Key` with 200 and `duplicate: true`, redacts credentials. `make run-shop` wires the shop pack to it.
 - **Container image** with `packs/`, `examples/` and the receiver; state in the `/var/lib/zyntra` volume, read-only root, uid 65532, OCI labels, `VERSION` build arg. `docker-compose.yml` runs the shop pack with the receiver.
+- **Published images** on `ghcr.io/zyvorai/zyntra` (amd64 and arm64; `edge`, version, `sha-` and semver tags) with SBOM, provenance attestation and a cosign keyless signature; the chart is published to `oci://ghcr.io/zyvorai/charts/zyntra`.
 - **Helm chart** (`deploy/helm/zyntra`): single-writer Deployment, generated-once or existing Secret, PVC, probes, policy ConfigMap, optional Ingress, NetworkPolicy and receiver. Rendered manifest in `deploy/kubernetes/zyntra.yaml`.
 - **`scripts/deploy-k8s.sh`** builds the image on a k3s host with podman, imports it, installs the chart and runs the smoke test. Makefile targets `docker`, `compose-up`, `helm-lint`, `k8s-manifest`, `deploy-k8s`.
 - **`deploy-remote.sh --pack NAME`** validates and ships `packs/` and serves the chosen pack (default `gpu`); it generates an ingest token.
