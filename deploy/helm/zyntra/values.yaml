@@ -1,6 +1,10 @@
 # Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
+# Names every object (Service, Deployment, Secret) instead of <release>-zyntra,
+# so a parent chart can give other services a fixed URL.
+fullnameOverride: ""
+
 image:
   repository: ghcr.io/zyvorai/zyntra
   tag: ""            # defaults to the chart appVersion
