@@ -1,28 +1,21 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Zyntra safety</title>
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
-     1600x560. Rendered by ./build.sh to docs/ux/readme-safety.jpg. Claims are the README's own. -->
-<link rel="stylesheet" href="card.css">
-<style>
-  body { height:560px; }
-  .flow { margin-top:24px; grid-template-columns:repeat(4,1fr); }
-  .flow .card { min-height:230px; }
-  .flow .card:not(:last-child)::after { content:""; position:absolute; right:-31px; top:50%; margin-top:-11px;
-    border-left:16px solid var(--soft); border-top:11px solid transparent; border-bottom:11px solid transparent; }
-  .lease { margin-top:24px; display:flex; align-items:center; gap:16px; background:var(--ink); color:#efeaf8; border-radius:12px; padding:14px 22px; font-family:var(--mono); font-size:21px; }
-  .lease .tag { color:#ff8a55; font-weight:700; letter-spacing:.1em; font-size:15px; }
-</style></head><body>
-<div class="bar"></div>
-<div class="wrap">
-  <div class="top"><img src="../../../web/public/zyvor-mark.svg" alt=""><b>Zyvor</b><span>&middot;</span><span>Zyntra</span><span class="r">Approval lane</span></div>
-  <h1>Propose. Approve. Execute. <em>Audit everything.</em></h1>
-  <div class="row flow">
-    <div class="card a"><span class="lane">PROPOSE</span><h3>Prediction stored</h3><p>The baseline, the predicted KPIs and the rendered change (a Gravia CRD, webhook or file) are saved with the proposal.</p></div>
-    <div class="card k"><span class="lane">APPROVE</span><h3>A named human</h3><p>Approve or reject in the inbox, with quorum and windows. Name and reason are recorded and signed.</p></div>
-    <div class="card or"><span class="lane">EXECUTE</span><h3>Keep sandbox</h3><p>A signed <b>zyntra-executor</b> runs in a FluxVM and calls back over loopback TLS with a brokered credential.</p></div>
-    <div class="card o"><span class="lane">VERIFY</span><h3>Predicted vs actual</h3><p>Keep receipt, hash-chained audit entry, and the real KPI change once values refresh.</p></div>
-  </div>
-  <div class="lease"><span class="tag">GUARANTEES</span><span>Sources are read-only &middot; dry-run by default &middot; the signer seed never leaves your workstation.</span></div>
-  <div class="foot"><b>zyvor.dev/zyntra</b><span class="r">ZYNTRA_APPROVAL_MODE=keep</span></div>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra — Safety model</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<link rel="stylesheet" href="brand.css">
+<style>.rail{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-top:34px}
+.s{position:relative;background:#fff;border:2px solid var(--rule);border-radius:16px;padding:20px 16px;min-height:236px}.s.hot{background:var(--ink);color:#fff;border-color:var(--ink)}.s.hot p{color:#d8d2ca}
+.s h3{margin:8px 0 6px;font-family:var(--display);font-size:32px;font-weight:800}.s p{margin:0;font-size:18px;line-height:1.36;color:var(--grey)}
+.s:not(:last-child)::after{content:"";position:absolute;right:-14px;top:50%;width:13px;height:13px;border-top:4px solid var(--signal);border-right:4px solid var(--signal);transform:translateY(-50%) rotate(45deg)}
+.proof{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:28px}.proof div{border-left:6px solid var(--signal);padding:4px 0 4px 18px;font-size:21px;line-height:1.38;color:var(--grey)}.proof b{color:var(--ink)}</style></head>
+<body>
+<div class="topbar"><img src="zyvor-mark.svg" alt=""><span class="name">Zyvor <b>Zyntra</b></span><span class="r">Safety model</span></div>
+<div class="main">
+<div class="eyebrow">Nothing runs on its own</div>
+<h1>A human approves. <em>Every</em> step is logged.</h1>
+<p class="lede">Zyntra is built so that an automated suggestion can never become an unreviewed change.</p>
+<div class="rail"><div class="s"><div class="num">1</div><h3>Propose</h3><p>A person or a service with the proposer role puts one action forward.</p></div><div class="s hot"><div class="num">2</div><h3>Approve</h3><p>Named approvers. Quorum, roles and change windows from policy.</p></div><div class="s"><div class="num">3</div><h3>Revalidate</h3><p>The prediction is re-checked against live values right before it runs.</p></div><div class="s"><div class="num">4</div><h3>Execute</h3><p>Dry-run by default. A kubectl apply, a webhook, a file, or a task for a person.</p></div><div class="s"><div class="num">5</div><h3>Verify</h3><p>The affected service must be back within target, or it is flagged.</p></div><div class="s"><div class="num">6</div><h3>Roll back</h3><p>The recorded undo runs, with the same approval and audit trail.</p></div></div>
+<div class="proof"><div><b>Hash-chained audit.</b> Edits and deletions are detectable.</div><div><b>Signed decision records.</b> Ed25519 exports that verify offline.</div><div><b>No LLM in the decision path.</b> AI explains and drafts, never approves.</div></div>
 </div>
+<div class="foot"><span><b>Zyvor</b> · decision intelligence</span><span class="r">github.com/zyvorai/zyntra</span></div>
 </body></html>

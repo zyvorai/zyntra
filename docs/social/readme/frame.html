@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1600">
+<title>Zyntra console frame</title>
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- Frames a real console capture. Query: ?img=_captures/plan.png&label=Plan&title=...&sub=... -->
+<link rel="stylesheet" href="brand.css">
+<style>
+.main{padding-bottom:0}
+.shot{margin:34px 0 0;border-radius:18px;overflow:hidden;border:2px solid var(--ink);box-shadow:0 26px 60px rgba(17,17,17,.22),0 0 0 10px #fff}
+.shot img{display:block;width:100%}
+.cap{display:flex;gap:18px;align-items:baseline}
+h1{font-size:64px}
+</style></head>
+<body>
+<div class="topbar"><img src="zyvor-mark.svg" alt=""><span class="name">Zyvor <b>Zyntra</b></span><span class="r" id="label"></span></div>
+<div class="main"><div class="eyebrow" id="eyebrow">Real console, real data</div><h1 id="title"></h1><p class="lede" id="sub"></p>
+<div class="shot"><img id="img" alt=""></div><div style="height:46px"></div></div>
+<div class="foot" style="margin-top:0"><span><b>Zyvor</b> · decision intelligence</span><span class="r">github.com/zyvorai/zyntra</span></div>
+<script>
+const q=new URLSearchParams(location.search);
+document.getElementById('img').src=q.get('img');
+document.getElementById('label').textContent=q.get('label')||'';
+document.getElementById('title').innerHTML=q.get('title')||'';
+document.getElementById('sub').textContent=q.get('sub')||'';
+if(q.get('eyebrow'))document.getElementById('eyebrow').textContent=q.get('eyebrow');
+</script></body></html>
