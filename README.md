@@ -289,6 +289,32 @@ After an apply, the decision record compares predicted and actual per KPI and ma
 
 **Test inbox.** `examples/receiver` (built as `bin/zyntra-receiver`) accepts webhook deliveries, stores one JSON file per delivery, answers a repeated `Idempotency-Key` with `200 {"duplicate":true}` instead of recording it twice, and redacts `Authorization`, `Cookie` and `X-Api-Key`. Point a pack's URLs at it during a pilot (`make run-shop` does) and open `http://127.0.0.1:9099` to see what landed. See [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for the pack catalog and build order.
 
+## Business ontology (new, v0.4 in development)
+
+The KPI graph says how numbers move. The ontology says which business things sit behind them: which orders depend on an inspection service, which customers on a cluster. A pack adds an `ontology.yaml` next to `kpis.yaml`:
+
+```yaml
+objects:
+  - {name: Cluster, kpis: [gpu_queue_wait_min], properties: [{name: name, type: string}]}
+  - {name: Service, properties: [{name: name, type: string}]}
+links:
+  - {name: runs_on, from: Service, to: Cluster}
+mappings:
+  - {source: fixture/services.csv, type: Service, namespace: erp, key: service_id,
+     props: {name: name}, links: [{type: runs_on, column: cluster_id, to: Cluster, namespace: erp}]}
+```
+
+```bash
+./bin/zyntra ontology impact -f packs/manufacturing Cluster:infra:gpu-a   # what depends on this cluster
+./bin/zyntra scenario compare -f packs/manufacturing gpus=add_gpu_capacity site=alternate_inspection_site
+```
+
+- **Separate from the simulator.** Links never carry numbers. An object points at the KPIs that measure it; only declared KPI edges predict.
+- **Provenance on every fact.** Source, observed time, ingest time and transforms; Ask cites them.
+- **Permissions on every read.** Object types, tenants, properties and typed actions per role, enforced in retrieval, so an answer cannot cite what you could not open.
+- **Typed actions** take objects as inputs, are checked for role and object state, still need approval and run dry by default.
+- **Honest limits:** the object store is a JSON file (fine for thousands of objects, not millions); entity resolution is deterministic aliases plus a human review queue, not ML; the rollout shape is exported in the signed decision and delivery stays in your deployment tooling; Kubernetes is not yet a connector.
+
 ## Console
 
 ![Zyntra sign-in](docs/ux/login.png)

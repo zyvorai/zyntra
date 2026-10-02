@@ -1,0 +1,90 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Business objects for the GPU pack. These links say what depends on what;
+# they never carry numbers into the simulator. The KPI graph in kpis.yaml is
+# the only thing that predicts.
+name: gpu-operations
+
+objects:
+  - name: Cluster
+    match: name
+    kpis: [gpu_utilization, gravia_available_gpus, gpu_queue_wait_min]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: site, type: string}
+      - {name: gpus, type: number}
+      - {name: status, type: string}
+  - name: Service
+    kpis: [service_latency_p99_ms, app_availability]
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: tier, type: string}
+  - name: Customer
+    properties:
+      - {name: name, type: string, required: true}
+      - {name: plan, type: string}
+      - {name: contact, type: string, sensitive: true}
+
+links:
+  - {name: runs_on, from: Service, to: Cluster, cardinality: many-to-many}
+  - {name: consumes, from: Customer, to: Service, cardinality: many-to-many}
+
+mappings:
+  - source: fixture/clusters.csv
+    type: Cluster
+    namespace: erp
+    key: asset_id
+    props: {name: name, site: site, gpus: gpus, status: status}
+    aliases: [{system: erp, column: asset_id}]
+  - source: fixture/monitoring.csv
+    type: Cluster
+    namespace: netra
+    key: device_id
+    props: {name: hostname, gpus: gpus}
+    aliases: [{system: netra, column: device_id}]
+  - source: fixture/services.csv
+    type: Service
+    namespace: erp
+    key: service_id
+    props: {name: name, tier: tier}
+    links: [{type: runs_on, column: asset_id, to: Cluster}]
+  - source: fixture/customers.csv
+    type: Customer
+    namespace: crm
+    key: customer_id
+    tenant: ""
+    props: {name: name, plan: plan, contact: contact}
+    links: [{type: consumes, column: service_id, to: Service, namespace: erp}]
+
+actions:
+  - id: raise-inference-priority
+    inputs:
+      - {name: service, object_type: Service, required: true}
+    requires:
+      - {input: service, property: tier, equals: inference}
+    affects: [Service]
+    outcome:
+      - {object_type: Service, must_be_safe: true}
+  - id: enable-mig-sharing
+    inputs:
+      - {name: cluster, object_type: Cluster, required: true}
+    requires:
+      - {input: cluster, property: status, equals: active}
+    affects: [Cluster]
+    permissions: [approver]
+    outcome:
+      - {object_type: Cluster, must_be_safe: true}
+
+views:
+  - {id: services, title: Services, type: Service, columns: [name, tier], exposed: true, actions: [raise-inference-priority]}
+  - {id: customers-at-risk, title: Customers at risk, type: Customer, columns: [name, plan], exposed: true}
+
+rollout:
+  stages:
+    - name: canary
+      sites: [site-a]
+      gates:
+        - {kpi: gpu_queue_wait_min, max: 30}
+    - name: fleet
+      sites: [site-b, site-c]

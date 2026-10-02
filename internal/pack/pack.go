@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/envx"
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/planner"
 	"github.com/zyvorai/zyntra/internal/sim"
 )
@@ -46,6 +48,28 @@ type Pack struct {
 	Timezone  string       `yaml:"timezone,omitempty"`
 	Calendar  string       `yaml:"calendar,omitempty"`
 	Calendars calendar.Set `yaml:"calendars,omitempty"`
+}
+
+// LoadOntology reads the pack's ontology.yaml and checks it against the
+// model. It returns nil, nil for a pack with no ontology or a plain model
+// file. The second result is the pack directory the mappings are relative to.
+func LoadOntology(path string, m *graph.Model) (*ontology.Definition, string, error) {
+	dir := path
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(path)
+	}
+	d, err := ontology.LoadDefinition(dir)
+	if err != nil || d == nil {
+		return nil, dir, err
+	}
+	if m != nil {
+		err := d.CheckModel(func(id string) bool { _, ok := m.KPI(id); return ok },
+			func(id string) bool { _, ok := m.Action(id); return ok })
+		if err != nil {
+			return nil, dir, fmt.Errorf("%s: %w", ontology.FileName, err)
+		}
+	}
+	return d, dir, nil
 }
 
 // Sources is sources.example.yaml: what an installer must bind.
@@ -304,6 +328,7 @@ func Validate(ctx context.Context, dir string) Report {
 			r.errf("action %s: render: %v", a.ID, err)
 		}
 	}
+	r.checkOntology(dir, m, files)
 	if res, err := planner.PlanWith(probe, planner.Options{}); err != nil {
 		r.errf("plan: %v", err)
 	} else {
@@ -334,4 +359,40 @@ func modelRefs(m *graph.Model) []string {
 		}
 	}
 	return envx.Refs(s...)
+}
+
+// checkOntology validates ontology.yaml, reads every mapped file into a
+// throwaway store and reports what it would create.
+func (r *Report) checkOntology(dir string, m *graph.Model, listed map[string]bool) {
+	d, _, err := LoadOntology(dir, m)
+	if err != nil {
+		r.errf("%v", err)
+		return
+	}
+	if d == nil {
+		return
+	}
+	r.okf("ontology: %d object types, %d link types, %d typed actions, %d views", len(d.Objects), len(d.Links), len(d.Actions), len(d.Views))
+	for _, mp := range d.Mappings {
+		if len(listed) > 0 && !listed[mp.Source] {
+			r.warnf("ontology file %s is not listed in %s", mp.Source, SourcesExample)
+		}
+	}
+	st, err := ontology.Open("", d.Schema())
+	if err != nil {
+		r.errf("%v", err)
+		return
+	}
+	files := adapters.NewFileCache()
+	reps, err := st.IngestMappings(d, dir, "pack validate", files.Load, time.Now())
+	if err != nil {
+		r.errf("ontology: %v", err)
+		return
+	}
+	for _, rep := range reps {
+		for _, s := range rep.Skipped {
+			r.errf("ontology: %s", s)
+		}
+		r.okf("ontology fixture: %d objects, %d links, %d identity candidates", rep.Objects, rep.Links, rep.Candidates)
+	}
 }

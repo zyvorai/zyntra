@@ -1,0 +1,98 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Inspection capacity against order deadlines. Orders come from the ERP,
+# production status from the MES and inspection throughput from the compute
+# that runs the vision models. Weights are starting points, not truth: edit
+# them as you learn. The business objects in ontology.yaml explain which
+# orders sit behind a failing KPI; they never move these numbers.
+name: manufacturing-inspection
+
+kpis:
+  - id: inspection_backlog
+    name: Items waiting for inspection
+    unit: items
+    owner: quality
+    value: 0
+    target: 20
+    direction: lower
+    criticality: high
+    min: 0
+    source: {kind: file, file: fixture/inspection.csv, field: "#(status=queued)"}
+
+  - id: inspection_turnaround_h
+    name: Inspection turnaround
+    unit: h
+    unitClass: duration
+    owner: quality
+    value: 0
+    target: 4
+    direction: lower
+    criticality: high
+    min: 0
+    source: {kind: file, file: fixture/inspection.csv, field: "*.turnaround_h", agg: avg}
+
+  - id: gpu_capacity
+    name: GPUs available to inspection
+    unit: gpus
+    owner: platform
+    value: 0
+    target: 12
+    direction: higher
+    min: 0
+    source: {kind: file, file: fixture/capacity.csv, field: "*.gpus"}
+
+  - id: orders_at_risk_ratio
+    name: Orders at risk of missing their deadline
+    unitClass: ratio
+    owner: plant
+    value: 0
+    target: 0.05
+    direction: lower
+    criticality: critical
+    min: 0
+    max: 1
+    source: {kind: file, file: fixture/orders.csv, field: "#(deadline_risk=high)", denominator: "#"}
+
+  - id: inspection_cost_day
+    name: Inspection compute and transport cost
+    unit: USD
+    owner: finops
+    value: 0
+    target: 2500
+    direction: lower
+    min: 0
+    source: {kind: file, file: fixture/capacity.csv, field: "*.cost_day"}
+
+edges:
+  - {from: gpu_capacity, to: inspection_turnaround_h, weight: -0.5, confidence: 0.5, why: more GPUs drain the queue faster}
+  - {from: inspection_backlog, to: inspection_turnaround_h, weight: 0.4, confidence: 0.6, why: a longer queue means a longer wait}
+  - {from: inspection_turnaround_h, to: orders_at_risk_ratio, weight: 0.3, confidence: 0.4, why: late inspection pushes orders past their ship date}
+  - {from: gpu_capacity, to: inspection_cost_day, weight: 0.6, confidence: 0.7, why: GPUs are billed by the day}
+
+actions:
+  - id: add_gpu_capacity
+    title: Add GPU capacity to the inspection service
+    description: Lease extra GPUs for the inspection service until the backlog clears.
+    adapter: noop
+    risk: medium
+    effects:
+      - {kpi: gpu_capacity, change: 0.5, uncertainty: 0.15}
+      - {kpi: inspection_backlog, change: -0.1}
+
+  - id: reschedule_training
+    title: Reschedule model training off the inspection cluster
+    description: Pause batch training for the shift and give its GPUs to inspection.
+    adapter: noop
+    risk: low
+    effects:
+      - {kpi: gpu_capacity, change: 0.25, uncertainty: 0.2}
+
+  - id: alternate_inspection_site
+    title: Route a share of inspection to the alternate site
+    description: Send overflow batches to the sister plant's inspection cell.
+    adapter: noop
+    risk: medium
+    effects:
+      - {kpi: inspection_backlog, change: -0.4, uncertainty: 0.25}
+      - {kpi: inspection_cost_day, change: 0.2}

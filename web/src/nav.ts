@@ -9,10 +9,13 @@ export type Page =
   | 'insights'
   | 'ask'
   | 'model'
+  | 'objects'
+  | 'workflows'
+  | 'scenarios'
   | 'decision';
 
 export interface NavChild { page: Page; label: string; blurb: string }
-export interface NavGroup { label: string; page?: Page; children?: NavChild[] }
+export interface NavGroup { label: string; page?: Page; children?: NavChild[]; ontology?: boolean }
 
 export const navGroups: NavGroup[] = [
   { label: 'Overview', page: 'overview' },
@@ -29,6 +32,15 @@ export const navGroups: NavGroup[] = [
     children: [
       { page: 'approvals', label: 'Approvals', blurb: 'Quorum approvals, revalidation and outcomes for each proposal.' },
       { page: 'audit', label: 'Audit', blurb: 'Hash-chained decision trail, plus Fabric Keep receipts.' },
+    ],
+  },
+  {
+    label: 'Business',
+    ontology: true,
+    children: [
+      { page: 'objects', label: 'Objects', blurb: 'Business objects, links and where each fact came from.' },
+      { page: 'workflows', label: 'Workflows', blurb: 'What is exposed to a failing KPI, and the typed actions to fix it.' },
+      { page: 'scenarios', label: 'Scenarios', blurb: 'Saved what-if plans compared side by side.' },
     ],
   },
   { label: 'Signals', page: 'signals' },
@@ -53,6 +65,9 @@ export const pageTitles: Record<Page, string> = {
   insights: 'Insights',
   ask: 'Ask Zyntra',
   model: 'Model',
+  objects: 'Objects',
+  workflows: 'Workflows',
+  scenarios: 'Scenarios',
   decision: 'Decision',
 };
 
@@ -69,4 +84,14 @@ export function decisionFromHash(): string {
 
 export const openDecision = (id: string) => {
   window.location.hash = `/decision/${encodeURIComponent(id)}`;
+};
+
+/** The object id in #/objects/<id>. */
+export function objectFromHash(): string {
+  const [page, id] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return page === 'objects' && id ? decodeURIComponent(id) : '';
+}
+
+export const openObject = (id: string) => {
+  window.location.hash = `/objects/${encodeURIComponent(id)}`;
 };

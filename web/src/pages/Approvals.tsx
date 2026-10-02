@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { ago, api, can, fmt, sev, until, renderLabel, type Precedents, type Proposal, type ProposalStatus } from '../api';
 import { useApi } from '../hooks';
-import { openDecision } from '../nav';
+import { openDecision, openObject } from '../nav';
 import { useWho } from '../session';
 import { Card, Empty, ErrorNote, PageHero, Pill, riskTone } from '../components/ui';
 import { phaseTone } from './Decision';
@@ -159,6 +159,22 @@ export default function Approvals() {
                 decision record
               </button>
             </p>
+            {p.objects?.length ? (
+              <p className="small">
+                Works on:{' '}
+                {p.objects.map((o) => (
+                  <button key={o.id} className="linklike mono" onClick={() => openObject(o.id)}>
+                    {o.input}={o.id}{' '}
+                  </button>
+                ))}
+                {p.rollout ? <span className="muted"> · rollout {p.rollout.stages.map((st) => `${st.name} (${st.sites.join(', ')})`).join(' → ')}</span> : null}
+                {p.object_outcome ? (
+                  <Pill tone={p.object_outcome.safe ? 'ok' : 'bad'}>
+                    {p.object_outcome.safe ? 'objects safe' : `${p.object_outcome.still_at_risk?.length ?? 0} object(s) still failing`}
+                  </Pill>
+                ) : null}
+              </p>
+            ) : null}
 
             {p.status === 'pending' || p.approvals?.length ? (
               <div className="quorum">

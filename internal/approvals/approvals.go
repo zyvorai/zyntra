@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +25,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/adapters"
 	"github.com/zyvorai/zyntra/internal/executor"
 	"github.com/zyvorai/zyntra/internal/freshness"
+	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/outcome"
 	"github.com/zyvorai/zyntra/internal/policy"
 	"github.com/zyvorai/zyntra/internal/sim"
@@ -176,6 +178,17 @@ type Proposal struct {
 	Execution        *executor.Result `json:"execution,omitempty"`
 	ExecutedAt       *time.Time       `json:"executed_at,omitempty"`
 	Outcome          *outcome.Record  `json:"outcome,omitempty"`
+	// Objects and ActionInputs record what a typed action works on.
+	Objects      []ontology.ObjectRef `json:"objects,omitempty"`
+	ActionInputs map[string]string    `json:"action_inputs,omitempty"`
+	// ScenarioID links the proposal to the saved scenario it came from.
+	ScenarioID string `json:"scenario_id,omitempty"`
+	// Rollout is the staged-delivery shape the deployment tooling should
+	// follow; it is part of the signed decision record.
+	Rollout *ontology.Rollout `json:"rollout,omitempty"`
+	// ObjectOutcome is the object-level verdict, set when the outcome is
+	// decided: business objects still failing a bound KPI.
+	ObjectOutcome *ObjectOutcome `json:"object_outcome,omitempty"`
 	// Explanation says why the outcome matched the prediction or not.
 	Explanation *outcome.Explanation `json:"explanation,omitempty"`
 	Keep        *KeepRef             `json:"keep,omitempty"`
@@ -381,7 +394,7 @@ func (s *Store) Create(p Proposal, by string) (Proposal, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, x := range s.s.Proposals {
-		if x.Action == p.Action && x.Status == Pending {
+		if x.Action == p.Action && x.Status == Pending && maps.Equal(x.ActionInputs, p.ActionInputs) {
 			return clone(x), false, nil
 		}
 	}
@@ -744,4 +757,12 @@ func (s *Store) Observing() []string {
 		}
 	}
 	return ids
+}
+
+// ObjectOutcome says whether the business objects an action targeted are
+// safe after it ran.
+type ObjectOutcome struct {
+	CheckedAt   time.Time       `json:"checked_at"`
+	Safe        bool            `json:"safe"`
+	StillAtRisk []ontology.Risk `json:"still_at_risk,omitempty"`
 }

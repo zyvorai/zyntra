@@ -66,6 +66,10 @@ Usage:
   zyntra pack draft -industry TEXT -sample FILE [-sample FILE] [-id ID] [-out DIR]
                                           draft a pack from sample exports (uses the
                                           ZYNTRA_AI_* model when set; prints otherwise)
+  zyntra ontology validate|dump|impact -f PACK [ID]
+                                          business objects from the pack's ontology.yaml
+  zyntra scenario run|compare -f PACK [-set kpi=v] [name=]a+b ...
+                                          what-if plans with business impact
   zyntra serve    -f kpis.yaml [-policy policy.yaml]
                                           web console, REST API and SSE pulse
   zyntra verify-decision FILE             check a signed decision export offline
@@ -325,6 +329,10 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer) error {
 		return keepCmd(ctx, args, out)
 	case "pack":
 		return packCmd(ctx, args, out)
+	case "ontology":
+		return ontologyCmd(ctx, &c, fs, args, out)
+	case "scenario":
+		return scenarioCmd(ctx, &c, fs, args, out)
 	case "fake-sources":
 		addr := flag.NewFlagSet(cmd, flag.ContinueOnError)
 		a := addr.String("addr", "127.0.0.1:19700", "listen address")
@@ -393,8 +401,16 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 			env("ZYNTRA_AI_LABEL", "Fabric AI gateway"), envBool("ZYNTRA_AI_INSECURE"))
 	}
 	execToken := env("ZYNTRA_EXEC_TOKEN", "")
+	ont, err := buildOntology(c.file, m, pol, stateDir)
+	if err != nil {
+		return err
+	}
+	if ont.Store != nil {
+		ont.Store.Audit = func(subject, by, note string) { _ = store.Note(subject, by, note) }
+	}
 	opts := api.Options{
-		Model: m, Refresh: refresh, Interval: interval, Static: web.FS(),
+		Ontology: ont,
+		Model:    m, Refresh: refresh, Interval: interval, Static: web.FS(),
 		Auth:    authn,
 		Policy:  pol,
 		AI:      engine,
@@ -437,6 +453,15 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 	}
 
 	s := api.New(opts)
+	if ont.Store != nil {
+		if reps, err := s.RefreshOntology(ctx, "zyntra (startup)"); err != nil {
+			log.Printf("ontology: %v", err)
+		} else {
+			for _, r := range reps {
+				log.Printf("ontology: %s: %d objects, %d links, %d identity candidates", r.Source, r.Objects, r.Links, r.Candidates)
+			}
+		}
+	}
 	go s.Run(ctx)
 
 	var servers []*http.Server

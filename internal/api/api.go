@@ -78,6 +78,9 @@ type Options struct {
 	Keep     KeepBridge
 	// Inputs holds webhook-in documents and manual KPI values.
 	Inputs *inputs.Store
+	// Ontology is the pack's business-object layer; the zero value means
+	// the pack has none.
+	Ontology OntologyOptions
 	// Policy sets approval quorums, expiry, maintenance windows and Keep
 	// requirements; nil keeps the defaults.
 	Policy *policy.Policy
@@ -336,6 +339,27 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/decisions/{id}", read(s.handleDecision))
 	mux.Handle("GET /api/v1/decisions/{id}/export", read(s.handleDecisionExport))
 	mux.Handle("GET /api/v1/policy", read(s.handlePolicy))
+
+	mux.Handle("GET /api/v1/ontology/schema", read(s.handleOntSchema))
+	mux.Handle("GET /api/v1/ontology/objects", read(s.handleOntObjects))
+	mux.Handle("GET /api/v1/ontology/objects/{id}", read(s.handleOntObject))
+	mux.Handle("GET /api/v1/ontology/objects/{id}/impact", read(s.handleOntImpact))
+	mux.Handle("GET /api/v1/ontology/risk", read(s.handleOntRisk))
+	mux.Handle("GET /api/v1/ontology/actions", read(s.handleOntActions))
+	mux.Handle("GET /api/v1/ontology/views/{id}", read(s.handleOntView))
+	mux.Handle("GET /api/v1/ontology/resolution", read(s.handleOntCandidates))
+	mux.Handle("POST /api/v1/ontology/resolution/{id}/accept", approve(s.decideCandidate(true)))
+	mux.Handle("POST /api/v1/ontology/resolution/{id}/reject", approve(s.decideCandidate(false)))
+	mux.Handle("POST /api/v1/ontology/refresh", propose(s.handleOntRefresh))
+	mux.Handle("POST /api/v1/ai/propose", propose(s.handleAIPropose))
+	if s.opt.Ontology.Scenarios != nil {
+		mux.Handle("GET /api/v1/scenarios", read(s.handleScenarios))
+		mux.Handle("POST /api/v1/scenarios", propose(s.handleScenarioCreate))
+		mux.Handle("GET /api/v1/scenarios/compare", read(s.handleScenarioCompare))
+		mux.Handle("GET /api/v1/scenarios/{id}", read(s.handleScenario))
+		mux.Handle("POST /api/v1/scenarios/{id}/run", propose(s.handleScenarioRun))
+		mux.Handle("DELETE /api/v1/scenarios/{id}", propose(s.handleScenarioDelete))
+	}
 	mux.Handle("POST /api/v1/exec/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleExec), auth.Executors...))
 
 	mux.Handle("GET /api/v1/keep/status", read(s.handleKeepStatus))
@@ -411,7 +435,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 		"auth_required": s.opt.Auth.Required(), "auth_methods": s.opt.Auth.Methods(),
 		"sources":       map[string]int{"total": len(src), "healthy": healthy},
 		"approval_mode": s.opt.ApprovalMode, "execute_mode": s.opt.Executor.Mode,
-		"ai_mode": s.opt.AI.Status().Mode,
+		"ai_mode": s.opt.AI.Status().Mode, "ontology": s.opt.Ontology.Store != nil,
 	})
 }
 
@@ -642,7 +666,9 @@ func (s *Server) handleAIAsk(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "question must be 1-2000 characters")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.opt.AI.Ask(r.Context(), q, s.aiSnapshot()))
+	snap := s.aiSnapshot()
+	snap.Objects = s.objectContext(r, snap.Model)
+	writeJSON(w, http.StatusOK, s.opt.AI.Ask(r.Context(), q, snap))
 }
 
 func (s *Server) handleAIExplain(w http.ResponseWriter, r *http.Request) {

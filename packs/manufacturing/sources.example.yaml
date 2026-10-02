@@ -1,0 +1,17 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Replace the fixture files with your own exports (same columns). ERP and MES
+# exports land as CSV; live connectors can feed the ontology instead through
+# the connectors section of ontology.yaml.
+variables: []
+files:
+  - {path: fixture/inspection.csv, description: "Inspection queue: item_id, status (queued|done), turnaround_h"}
+  - {path: fixture/capacity.csv, description: "Inspection compute: service, gpus, cost_day"}
+  - {path: fixture/orders.csv, description: "ERP orders: order_id, customer, line_id, due, qty, deadline_risk (high|low) from the MES"}
+  - {path: fixture/factories.csv, description: "Sites: site_id, name"}
+  - {path: fixture/lines.csv, description: "Production lines: line_id, name, site_id, service_id"}
+  - {path: fixture/machines_erp.csv, description: "ERP assets: asset_id, name, line_id"}
+  - {path: fixture/machines_mes.csv, description: "MES devices: device_id, name; matched to ERP assets by review"}
+  - {path: fixture/services.csv, description: "Inspection services: service_id, name, cluster_id"}
+  - {path: fixture/clusters.csv, description: "Compute clusters: cluster_id, name, gpus, status"}

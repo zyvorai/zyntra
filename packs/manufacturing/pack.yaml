@@ -1,0 +1,8 @@
+# Copyright 2026 Zyvor AI Labs · https://zyvor.dev
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+id: manufacturing
+title: Production lines and inspection
+industry: manufacturing
+version: 0.1.0
+owners: [plant, quality, platform, finops]
+timezone: UTC

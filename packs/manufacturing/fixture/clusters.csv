@@ -1,0 +1,3 @@
+cluster_id,name,gpus,status
+gpu-a,Inspection cluster A,8,active
+gpu-b,Inspection cluster B,2,active

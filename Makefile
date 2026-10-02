@@ -3,7 +3,7 @@
 VERSION ?= $(shell sed -n 's/^var version = "\(.*\)"/\1/p' cmd/zyntra/main.go)
 CONTAINER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
 
-.PHONY: build build-go web test vet fmt check run run-lab run-shop test-e2e deploy docker compose-up helm-lint k8s-manifest deploy-k8s
+.PHONY: build build-go web test eval vet fmt check run run-lab run-shop test-e2e deploy docker compose-up helm-lint k8s-manifest deploy-k8s
 
 build: web build-go
 
@@ -18,6 +18,11 @@ web:
 
 test:
 	go test ./...
+
+# eval runs the assistant's golden cases (grounding, permissions, action
+# selection); run it before changing a model, prompt or retrieval path.
+eval:
+	go test ./internal/ai -run TestEval -v
 
 vet:
 	go vet ./...

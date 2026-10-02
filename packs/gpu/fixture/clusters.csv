@@ -1,0 +1,3 @@
+asset_id,name,site,gpus,status
+A-100,GPU Cluster A,site-a,32,active
+B-200,GPU Cluster B,site-b,16,active

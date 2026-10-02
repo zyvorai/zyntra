@@ -25,6 +25,20 @@ type Definition struct {
 	Actions  []ActionType `yaml:"actions,omitempty" json:"actions,omitempty"`
 	Views    []ViewSpec   `yaml:"views,omitempty" json:"views,omitempty"`
 	Rollout  *Rollout     `yaml:"rollout,omitempty" json:"rollout,omitempty"`
+	// Connectors are extra record sources beyond the file mappings.
+	Connectors []ConnectorSpec `yaml:"connectors,omitempty" json:"connectors,omitempty"`
+}
+
+// ConnectorSpec configures one connector. Kind is exec (a program writing
+// JSON-lines records, enabled only when ZYNTRA_CONNECTOR_EXEC=1) or http (a
+// GET returning a JSON array of records).
+type ConnectorSpec struct {
+	Name    string   `yaml:"name" json:"name"`
+	Kind    string   `yaml:"kind" json:"kind"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
+	URL     string   `yaml:"url,omitempty" json:"url,omitempty"`
+	// TokenEnv names the environment variable holding a bearer token.
+	TokenEnv string `yaml:"token_env,omitempty" json:"token_env,omitempty"`
 }
 
 // Schema returns the type system part of the definition.
@@ -218,6 +232,18 @@ func (d *Definition) Validate() error {
 			}
 		}
 	}
+	cseen := map[string]bool{}
+	for _, c := range d.Connectors {
+		switch {
+		case c.Name == "" || cseen[c.Name]:
+			errs = append(errs, fmt.Errorf("connector %q: name missing or duplicated", c.Name))
+		case c.Kind == "exec" && len(c.Command) == 0, c.Kind == "http" && c.URL == "":
+			errs = append(errs, fmt.Errorf("connector %s: %s needs a command or url", c.Name, c.Kind))
+		case c.Kind != "exec" && c.Kind != "http":
+			errs = append(errs, fmt.Errorf("connector %s: unknown kind %q", c.Name, c.Kind))
+		}
+		cseen[c.Name] = true
+	}
 	vseen := map[string]bool{}
 	for _, v := range d.Views {
 		if _, ok := sc.Object(v.Type); !ok || v.ID == "" || vseen[v.ID] {
@@ -254,4 +280,11 @@ func (d *Definition) CheckModel(hasKPI, hasAction func(string) bool) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ObjectRef names an object an action works on, as recorded on a proposal.
+type ObjectRef struct {
+	Input string `json:"input"`
+	ID    string `json:"id"`
+	Type  string `json:"type"`
 }

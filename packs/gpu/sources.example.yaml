@@ -6,7 +6,11 @@
 # ${...} references in the model, so this pack has no variables of its own.
 # `zyntra fake-sources` serves look-alike data for local runs.
 variables: []
-files: []
+files:
+  - {path: fixture/clusters.csv, description: "ERP export of GPU clusters (asset_id, name, site, gpus, status)"}
+  - {path: fixture/monitoring.csv, description: "Monitoring devices (device_id, hostname, gpus); matched to clusters by review"}
+  - {path: fixture/services.csv, description: "Services and the cluster each runs on"}
+  - {path: fixture/customers.csv, description: "CRM export: customer, plan, contact, service consumed"}
 # Endpoints (set on the host, see README "Configuration"):
 #   ZYNTRA_NETRA_URL / ZYNTRA_NETRA_TOKEN     Netra API and /metrics
 #   ZYNTRA_GRAVIA_URL / ZYNTRA_GRAVIA_TOKEN   Gravia API

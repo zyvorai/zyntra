@@ -27,6 +27,9 @@ type Snapshot struct {
 	Anomalies []Anomaly                `json:"anomalies"`
 	Forecasts []Forecast               `json:"forecasts"`
 	Sources   []adapters.Status        `json:"sources"`
+	// Objects, when set, lets Ask answer about business objects. Its reader
+	// is already scoped to the asking principal.
+	Objects *ObjectContext `json:"-"`
 }
 
 // compact is the JSON the LLM sees: no traces or full model, just facts.
@@ -84,9 +87,12 @@ type Answer struct {
 	Text      string   `json:"text"`
 	Intent    string   `json:"intent"`
 	Grounding []string `json:"grounding"`
-	Mode      string   `json:"mode"` // heuristic | llm
-	Model     string   `json:"model,omitempty"`
-	LLMError  string   `json:"llm_error,omitempty"`
+	// Citations name the object properties an answer about business
+	// objects rests on.
+	Citations []Citation `json:"citations,omitempty"`
+	Mode      string     `json:"mode"` // heuristic | llm
+	Model     string     `json:"model,omitempty"`
+	LLMError  string     `json:"llm_error,omitempty"`
 }
 
 type Status struct {
@@ -130,6 +136,11 @@ func (e *Engine) Ask(ctx context.Context, q string, s Snapshot) Answer {
 
 func answer(q string, s Snapshot) Answer {
 	ql := strings.ToLower(q)
+	if s.Objects != nil {
+		if a, ok := answerObjects(ql, s); ok {
+			return a
+		}
+	}
 	has := func(words ...string) bool {
 		for _, w := range words {
 			if strings.Contains(ql, w) {
