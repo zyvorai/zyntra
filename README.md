@@ -10,7 +10,7 @@
 [![30-day PoC](https://img.shields.io/badge/30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=zyntra&utm_campaign=readme_hero)
 [![Pricing](https://img.shields.io/badge/Pricing-7c3aed?style=for-the-badge)](docs/sales/enterprise-pricing.md)
 
-![Zyntra — decision intelligence for infrastructure: live signals, KPI graph, approval gate, Fabric Keep](docs/social/zyntra-share-card.png)
+![Zyntra — decision intelligence for operations: live signals and CSV exports, KPI graph, approval gate, Fabric Keep](docs/social/zyntra-share-card.png)
 
 ### Stop arguing over dashboards. Know the next best action — and why.
 
@@ -44,7 +44,7 @@ Infra teams answer "what should we do next?" with a dozen dashboards and a meeti
 | ![Plan — every action ranked by improvement minus risk](docs/ux/plan.png) | ![Simulate — what-if with before, after and target](docs/ux/simulate.png) |
 | **Plan:** every action ranked; nothing runs until approved | **Simulate:** before/after for each KPI, plus the propagation trace |
 | ![Approvals — proposal with prediction and rendered Gravia CRD](docs/ux/approvals.png) | ![Signals — live Netra, Gravia, Fabric and Keep KPIs](docs/ux/signals.png) |
-| **Approvals:** prediction, baseline and the exact Gravia CRD | **Signals:** live sources with trend and target status |
+| **Approvals:** prediction, baseline and the exact change (Gravia CRD, webhook or file) | **Signals:** live sources with trend and target status |
 | ![Ask Zyntra — grounded answer with sources](docs/ux/ask.png) | ![Overview in dark mode](docs/ux/overview-dark.png) |
 | **Ask:** grounded answers that list their facts | **Dark mode**, styled like Netra |
 
@@ -64,6 +64,14 @@ Try the lab model against fake Netra/Gravia/Fabric/Keep sources:
 
 ```bash
 make run-lab              # http://127.0.0.1:8080, operator: any name, access key: dev
+```
+
+Or run a shop from CSV exports, with no Kubernetes and no live sources:
+
+```bash
+./bin/zyntra plan -f packs/shop
+./bin/zyntra simulate -f packs/shop -action reorder_fast_movers   # prints the dry-run purchase order
+ZYNTRA_API_KEY=dev ./bin/zyntra serve -f packs/shop
 ```
 
 ```text
@@ -108,6 +116,7 @@ actions:
 - **Propagation** runs in topological order with interval arithmetic: every effect and edge carries a low/nominal/high band, so predictions come with a range. Effects are relative (a fraction) or `mode: absolute` (in the KPI's unit, so a KPI at zero can move), can `saturate` and take a `delay`. Results are clamped to `min`/`max`; KPIs without bounds can't drop below zero.
 - **Hard constraints** (`constraints:`) set a floor, ceiling or `mustNotWorsen` on a KPI. Critical KPIs with a target are constraints automatically. An action that would breach one, even at the pessimistic end of its band, is listed as blocked instead of ranked.
 - **Score** = weighted gap reduction − risk penalty (low 0, medium 0.05, high 0.15) − 0.25 × uncertainty − 0.1 per stale input. Zyntra also tries pairs of actions that touch different KPIs and keeps a pair only if it beats both actions alone. Each recommendation has a confidence (high, medium, low).
+- **Preconditions and invariants** (v0.4). An action whose precondition does not hold (or whose input is stale) is ranked after the approvable ones with status `precondition-failed` and cannot be proposed. An action whose simulation worsens an invariant KPI by more than `max_worsen`, at the nominal or pessimistic end, is blocked like a constraint breach.
 
 ### Model reference (v0.3)
 
@@ -141,6 +150,61 @@ actions:
       tolerance: 0.05
     policy: {approvals: 2, keep: required, requireFresh: true, maintenanceWindows: [weeknights]}
 ```
+
+### Model reference (v0.4 additions)
+
+```yaml
+timezone: Asia/Kolkata            # default for calendars (a pack sets it in pack.yaml)
+calendar: shop-hours              # default calendar for every KPI
+calendars:                        # weekly windows; end before start wraps midnight
+  shop-hours: {start: "09:00", end: "21:30"}
+  buy-hours: {days: [mon, tue, wed, thu, fri, sat], start: "10:00", end: "17:00"}
+kpis:
+  - id: daily_sales
+    unitClass: currency           # percent | count | currency | duration | ratio
+    currency: INR                 # ISO code; shown as the unit
+    calendar: shop-hours          # outside the window the last in-window value is held
+    source: {kind: file, file: fixture/pos.csv, field: "*.amount"}
+  - id: cashiers_open
+    source: {kind: manual, staleAfter: 12h}    # entered in the console, audited
+  - id: line_temp
+    source: {kind: webhook-in, name: plant-gateway, field: temp_c, staleAfter: 10m}
+actions:
+  - id: markdown_capped
+    title: Mark down dead stock 10%   # title is an alias for name
+    adapter: webhook                  # webhook | file | noop, or a v0.3 adapter with execute
+    window: evening                   # approved runs wait for this calendar window
+    approvers: 2                      # raises the policy quorum for this action
+    preconditions: [{kpi: stockout_rate, worse_than: 0.02}]   # or better_than
+    invariants: [{kpi: gross_margin, max_worsen: 0.03}]       # relative fraction
+    compensate: reverse_markdown      # linked undo, offered as the rollback; never auto-run
+    webhook:
+      method: POST
+      url: ${ZYNTRA_POS_URL}/markdowns
+      headers: {Authorization: "Bearer ${ZYNTRA_POS_TOKEN}"}
+      body: {percent: 10, gap: "gap:dead_stock_days", now: "kpi:dead_stock_days"}
+  - id: reorder_fast_movers
+    adapter: file
+    file:
+      path: "po/{{.Stamp}}-reorder.md"    # relative, inside ZYNTRA_OUTPUT_DIR
+      content: |
+        Stockout {{pct (index .KPIs "stockout_rate").Value}} on {{.Date}}
+```
+
+| Source field | Meaning |
+|---|---|
+| `kind` | `file`, `http`, `sheet`, `webhook-in`, `manual`, or a v0.3 kind (`prometheus`, `kubernetes`, `metrics`, `json`, `netra`, `gravia`, `fabric`, `keep`) |
+| `file` / `url` | Path relative to the model (or pack) directory / URL; `${ZYNTRA_*}` is expanded |
+| `format` | `csv`, `json`, `yaml` or `prometheus`; guessed from the extension or content type |
+| `field` | Field path into the document, as for `json` sources; `*.amount` collects a column |
+| `where` | Keep only rows whose columns equal these values |
+| `agg` | `sum` (default), `avg`, `min`, `max`, `count`, `first`, `last` |
+| `denominator` | Second field path; the KPI is `field / denominator` |
+| `headers` | Request headers for `http` and `sheet` |
+| `name` | The `webhook-in` channel (`POST /api/v1/ingest/<name>`) |
+| `staleAfter` | Age after which a `webhook-in` or `manual` value is stale |
+
+Webhook bodies resolve `kpi:<id>` to the live value and `gap:<id>` to the gap (value, target, severity). File content is a Go template with `.Action`, `.KPIs`, `.Gaps`, `.Date`, `.Time` and `.Stamp`, plus `pct` and `num`; a missing key is an error, not an empty string.
 
 Edge `confidence` below 1 widens the band; `provenance: learned` marks the relationship as assumed in the trace. A KPI's freshness defaults to three refresh intervals; values older than that are `stale`, never-fetched ones `missing`, and KPIs without a source `static`.
 
@@ -225,6 +289,12 @@ After an apply, the decision record compares predicted and actual per KPI and ma
 ![Zyntra sign-in](docs/ux/login.png)
 
 `zyntra serve` embeds a React console styled like Netra. Its pages are Overview, Gaps, Plan, Simulate, Approvals, Audit, Signals, Insights, Ask and Model, plus a timeline page for each decision, with light and dark themes.
+
+- **Gaps and Plan** have an owner filter, remembered across pages. Plan shows pairs, ranges, actions waiting on a precondition (not proposable) and the list blocked by constraints or invariants.
+- **Approvals** shows what will run: the Gravia CRD, the webhook request (method, URL, headers with `${...}` references, body), the file that would be written, or "done by people" for noop actions, plus the linked compensating action.
+- **Signals** shows each source's state (healthy, stale, fallback, down), a form to enter manual KPI values with a reason, and when each webhook-in channel last received data.
+- **Decision timeline** compares predicted and actual per KPI after an apply and marks each a hit or a miss.
+- **Model** shows the pack, each action's kind, window and invariants.
 
 Sign in with **SSO** (OpenID Connect, authorization code with PKCE), a **local account** from the policy file (bcrypt), or the **access key** (`ZYNTRA_API_KEY`, kept as break-glass admin access). Sign-in sets an HMAC session cookie carrying your name and roles (12 h, or 7 days with "remember me"). Scripts can use `Authorization: Bearer $ZYNTRA_API_KEY`.
 
@@ -344,7 +414,7 @@ All routes except `/healthz`, `/api/v1/meta`, sign-in and the OIDC redirects nee
 | Method | Path | Role | Returns |
 |--------|------|------|---------|
 | `GET` | `/healthz` | — | `{"status":"ok"}` |
-| `GET` | `/api/v1/meta` | — | Version, host, model, source health, modes and sign-in methods |
+| `GET` | `/api/v1/meta` | — | Version, host, model, pack, source health, modes and sign-in methods |
 | `POST`/`DELETE` | `/api/v1/session` | — | Sign in (`{operator, token}` or `{username, password}`) and out; `GET /api/v1/whoami` returns subject and roles |
 | `GET` | `/api/v1/auth/oidc/login`, `/callback` | — | OIDC sign-in redirects (when configured) |
 | `GET` | `/api/v1/graph`, `/gaps`, `/plan`, `/sources`, `/freshness`, `/policy` | viewer | Model with version and constraints, gaps, ranked and blocked actions, source health, per-KPI freshness, effective policy. `/gaps` and `/plan` take `?owner=` |
@@ -353,7 +423,7 @@ All routes except `/healthz`, `/api/v1/meta`, sign-in and the OIDC redirects nee
 | `POST` | `/api/v1/kpis/{id}/value` | proposer | Enter a value for a `manual` KPI (`{"value":2,"reason":"..."}`), audited |
 | `GET` | `/api/v1/inputs` | viewer | Manual KPIs and webhook-in channels with their last entry |
 | `POST` | `/api/v1/ingest/{channel}` | ingest | JSON document for a `webhook-in` channel (ingest token or admin) |
-| `GET`/`POST` | `/api/v1/ai/status`, `/digest`, `/insights`, `/ask`, `/explain` | viewer | Grounded AI |
+| `GET`/`POST` | `/api/v1/ai/status`, `/digest`, `/insights`, `/ask`, `/explain` | viewer | Grounded AI (`/digest?owner=` for one owner) |
 | `GET` | `/api/v1/proposals`, `/proposals/{id}` | viewer | Approval inbox |
 | `POST` | `/api/v1/proposals` | proposer | Propose `{"action":"a"}` or `{"actions":["a","b"]}` |
 | `POST` | `/api/v1/proposals/{id}/approve`, `/reject` | approver | Record an approval (202 until the quorum is met) or reject |

@@ -17,13 +17,13 @@
   <div class="top"><img src="../../../web/public/zyvor-mark.svg" alt=""><b>Zyvor</b><span>&middot;</span><span>Zyntra</span><span class="r">How it works</span></div>
   <h1>Signals in. Ranked actions out. <em>A human decides.</em></h1>
   <div class="row flow">
-    <div class="card c"><span class="lane">SENSE</span><h3>Live sources</h3><p>Netra eBPF, Gravia GPU, Fabric hosts and Keep, plus Prometheus and Kubernetes. All read-only.</p></div>
-    <div class="card a"><span class="lane">MODEL</span><h3>KPI graph</h3><p>KPIs with targets and owners, weighted <b>why</b> edges, and actions with effects. One YAML file.</p></div>
+    <div class="card c"><span class="lane">SENSE</span><h3>Live sources</h3><p>Netra, Gravia, Fabric and Keep, Prometheus, Kubernetes, CSV files, HTTP and webhooks. All read-only.</p></div>
+    <div class="card a"><span class="lane">MODEL</span><h3>KPI graph</h3><p>KPIs with targets and owners, weighted <b>why</b> edges, and actions with effects. One YAML file or a pack.</p></div>
     <div class="card k"><span class="lane">SIMULATE</span><h3>What-if</h3><p>Effects propagate in topological order. Every number has a trace back to its inputs.</p></div>
-    <div class="card o"><span class="lane">RANK</span><h3>Plan</h3><p>Gap closed minus risk penalty. Actions that would <b>open</b> a new gap are flagged.</p></div>
-    <div class="card or"><span class="lane">ACT</span><h3>Approve, then run</h3><p>Gravia CRD via <b>kubectl</b> or a signed Fabric Keep agent. Predicted vs actual afterwards.</p></div>
+    <div class="card o"><span class="lane">RANK</span><h3>Plan</h3><p>Weighted gap closed minus risk. Constraint and invariant breaks are <b>blocked</b>.</p></div>
+    <div class="card or"><span class="lane">ACT</span><h3>Approve, then run</h3><p>Gravia CRD via <b>kubectl</b>, a webhook, a file, or a Keep agent. Predicted vs actual afterwards.</p></div>
   </div>
-  <div class="lease"><span class="tag">SAFETY LANE</span><span>Nothing runs without approval. Execution is <b>--dry-run=server</b> until you set ZYNTRA_EXECUTE=apply.</span></div>
+  <div class="lease"><span class="tag">SAFETY LANE</span><span>Nothing runs without approval. Execution is dry-run (<b>--dry-run=server</b>, webhooks printed, files shown) until you set ZYNTRA_EXECUTE=apply.</span></div>
   <div class="foot"><b>zyvor.dev/zyntra</b><span class="r">Deterministic model &middot; AI explains, never decides</span></div>
 </div>
 </body></html>

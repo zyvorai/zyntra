@@ -8,7 +8,7 @@ Non-production use is free under the Zyvor Production License. Production use re
 
 ![Packaging, Community versus Enterprise, and the recommended entry price](./enterprise-pricing/01-packaging.jpg)
 
-![Enterprise v1 launch scope and what stays in Community](./enterprise-pricing/02-launch-scope.jpg)
+![Enterprise v1 launch scope (SAML/SCIM, auto-approve, multi-cluster, durable history, learned weights, connectors, certified packs) and what stays in Community](./enterprise-pricing/02-launch-scope.jpg)
 
 ![Edition pricing, launch offer, and commercial terms](./enterprise-pricing/03-edition-pricing.jpg)
 
@@ -16,6 +16,6 @@ Non-production use is free under the Zyvor Production License. Production use re
 
 ![Ship plan, release gates, and customer journey](./enterprise-pricing/05-ship-plan.jpg)
 
-Scope basis: Zyntra v0.2.0, reviewed 2 October 2026. Rebuild the sheets and the PDF with `./docs/sales/enterprise-pricing/build.sh`.
+Scope basis: Zyntra v0.4.0-dev (the v0.3 decision engine plus Phase A packs), reviewed 2 October 2026. Everything that ships today, including OIDC, quorum approvals, change windows, signed decision records and packs, stays in Community. Rebuild the sheets and the PDF with `./docs/sales/enterprise-pricing/build.sh`.
 
 Zyvor AI Labs Private Limited · [sales@zyvor.dev](mailto:sales@zyvor.dev) · [zyvor.dev](https://zyvor.dev)

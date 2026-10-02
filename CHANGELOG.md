@@ -8,7 +8,7 @@ Phase A of the packs plan: one engine, and every industry is a pack. A shop runs
 
 - **Packs.** `packs/<id>/` holds `pack.yaml` (id, title, industry, version, owners, timezone, calendars), `kpis.yaml`, `sources.example.yaml`, a README and a fixture. `-f` accepts a pack directory. `zyntra pack list` and `zyntra pack validate DIR` check the manifest, KPI owners, documented variables, fixture reads, and that every action simulates and renders.
 - **Shop pack** (`packs/shop`) with fixture CSVs. On the fixture the plan closes the stockout gap with a purchase-order file and refuses a 30% markdown that would break the margin invariant.
-- **Generic sources:** `file` (CSV, JSON, YAML, Prometheus text; reloaded on change), `http`, `sheet`, `webhook-in` (`POST /api/v1/ingest/{channel}` with `ZYNTRA_INGEST_TOKEN`) and `manual` (`POST /api/v1/kpis/{id}/value`, audited). Row filters (`where`), `agg` (adds `first`, `last`), `denominator` and `stale_after`. Every source reports `ok`, `stale`, `error` or `fallback`. Only `${ZYNTRA_*}` variables are expanded, and URLs are stripped from errors.
+- **Generic sources:** `file` (CSV, JSON, YAML, Prometheus text; reloaded on change), `http`, `sheet`, `webhook-in` (`POST /api/v1/ingest/{channel}` with `ZYNTRA_INGEST_TOKEN`) and `manual` (`POST /api/v1/kpis/{id}/value`, audited). Row filters (`where`), `agg` (adds `first`, `last`), `denominator` and `staleAfter`. Every source reports `ok`, `stale`, `error` or `fallback`. Only `${ZYNTRA_*}` variables are expanded, and URLs are stripped from errors.
 - **Generic actions:** `webhook` (dry-run prints the request; apply sends it with an `Idempotency-Key` and records the status code and response sha256), `file` (written under `ZYNTRA_OUTPUT_DIR`, never overwritten or outside it) and `noop` (the approval is the record).
 - **Action guards:** `preconditions` fail closed (status `precondition-failed`, ranked but not approvable, rechecked before execution), `invariants` (`max_worsen`) block an action whose simulation breaks them, `compensate` links the undo action on the proposal, and per-action `window` and `approvers`.
 - **Units and calendars.** KPI `unitClass` (`percent`, `count`, `currency`, `duration`, `ratio`) and ISO `currency`. One weekly-window calendar shared by KPIs, actions and the approval policy; outside its window a KPI holds its last in-window value (`held`).
@@ -21,6 +21,13 @@ Phase A of the packs plan: one engine, and every industry is a pack. A shop runs
 - `docs/PRODUCT_PLAN.md` is rewritten around packs, with the build order in Phases A to D.
 - Unserved sources now appear in source health as `fallback` instead of being omitted.
 - Policy maintenance windows use the shared calendar; the refusal reads "outside window NAME".
+- Go 1.27 (`go.mod`, CI and the Docker build image), with `go fix` modernizations.
+- README, SECURITY, CONTRIBUTING, the enterprise pricing sheets and PDF, the social cards and the README images now describe packs and the v0.3/v0.4 scope. OIDC, quorum approvals, change windows, signed decision records and packs are listed as Community features.
+
+### Security
+
+- Zyntra's own credentials (`ZYNTRA_API_KEY`, `ZYNTRA_SESSION_SECRET`, exec, ingest, Keep, OIDC client and AI keys, the Fabric password) are never expanded in pack URLs or headers, so a pack cannot send them to another host. `pack validate` reports a pack that references them.
+- `ZYNTRA_INGEST_TOKEN` is a separate role that can only post to `/api/v1/ingest/{channel}`.
 
 ## v0.3.0 — 2026-10-02
 
