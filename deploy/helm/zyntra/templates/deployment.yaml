@@ -32,7 +32,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "zyntra.serviceAccountName" . }}
-      automountServiceAccountToken: {{ or .Values.serviceAccount.automount .Values.kubernetes.inCluster }}
+      automountServiceAccountToken: {{ or .Values.serviceAccount.automount .Values.kubernetes.inCluster .Values.kubernetes.actions }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

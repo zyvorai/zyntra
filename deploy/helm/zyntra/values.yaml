@@ -52,6 +52,12 @@ kubernetes:
   inCluster: false
   # What the role may read. Narrow it to what your connectors list.
   resources: [nodes, pods, namespaces, services, deployments, statefulsets, daemonsets]
+  # Let approved gravia.* actions run with no kubectl in the image: a
+  # ClusterRole that may write exactly what those templates touch (Gryvia
+  # priorities and GPU sharing policies; patch on Gryvia AI jobs). Actions
+  # still need execute: apply to change anything; dry-run uses the API's
+  # server-side dry run.
+  actions: false
 
 # Allow ontology connectors of kind "exec" (they run a command from the pack).
 # Leave off unless the image carries the program and you trust the pack.
