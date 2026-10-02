@@ -291,7 +291,19 @@ func redact(err error, secret string) error {
 }
 
 func (q *SQL) Pull(ctx context.Context, since time.Time) ([]ontology.Record, error) {
-	if err := ontology.CheckReadOnlyQuery(q.Spec.Query); err != nil {
+	return q.run(ctx, q.Spec.Query, since)
+}
+
+// Keys runs ReconcileQuery, a full listing of the rows that still exist, and
+// returns their records. Only the identity of each record (type, namespace,
+// key) is meant to be used: it lets the scheduler find rows deleted at the
+// source, which an incremental query cannot report.
+func (q *SQL) Keys(ctx context.Context) ([]ontology.Record, error) {
+	return q.run(ctx, q.Spec.ReconcileQuery, time.Time{})
+}
+
+func (q *SQL) run(ctx context.Context, query string, since time.Time) ([]ontology.Record, error) {
+	if err := ontology.CheckReadOnlyQuery(query); err != nil {
 		return nil, fmt.Errorf("%s: %w", q.Name(), err)
 	}
 	db, err := q.conn()
@@ -308,10 +320,10 @@ func (q *SQL) Pull(ctx context.Context, since time.Time) ([]ontology.Record, err
 	}
 	// A query with no parameter is a full listing and takes no argument.
 	var args []any
-	if ontology.QueryHasParam(q.Spec.Query) {
+	if ontology.QueryHasParam(query) {
 		args = append(args, since.UTC().Format(time.RFC3339))
 	}
-	rs, err := tx.QueryContext(ctx, q.Spec.Query, args...)
+	rs, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", q.Name(), redact(err, os.Getenv(q.Spec.DSNEnv)))
 	}
