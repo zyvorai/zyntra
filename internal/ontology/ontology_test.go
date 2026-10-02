@@ -336,3 +336,119 @@ func TestAtRiskAndExposed(t *testing.T) {
 		t.Fatalf("override ignored: %+v", r)
 	}
 }
+
+func TestHistoryRecordsOnlyRealChanges(t *testing.T) {
+	st, _ := Open("", testSchema())
+	id := MakeID("Cluster", "lab", "c1")
+	_ = st.Upsert(obj("Cluster", "c1", map[string]any{"name": "a", "gpus": 8.0}))
+	_ = st.Upsert(obj("Cluster", "c1", map[string]any{"name": "a", "gpus": 8.0})) // same values
+	_ = st.Upsert(obj("Cluster", "c1", map[string]any{"gpus": 16.0}))
+	h := st.History(id)
+	if len(h) != 3 {
+		t.Fatalf("want 2 creations and 1 change, got %d: %+v", len(h), h)
+	}
+	last := h[2]
+	if last.Property != "gpus" || last.Before == nil || last.Before.V != 8.0 || last.After.V != 16.0 {
+		t.Fatalf("change = %+v", last)
+	}
+}
+
+func TestHistoryUsesCurrentAccess(t *testing.T) {
+	st, _ := Open("", testSchema())
+	_ = st.Upsert(obj("Customer", "k1", map[string]any{"name": "Acme", "contact": "a@b.c"}))
+	ac := &Access{Schema: st.Schema(), Rules: []Rule{{Roles: []string{"viewer"}, Deny: []string{"name"}}}}
+	id := MakeID("Customer", "lab", "k1")
+	viewer := st.As(ac, Principal{Roles: []string{"viewer"}})
+	admin := st.As(ac, Principal{Roles: []string{"admin"}})
+	if got := viewer.History(id); len(got) != 0 {
+		t.Fatalf("viewer saw denied or sensitive history: %+v", got)
+	}
+	if got := admin.History(id); len(got) != 2 {
+		// the deny rule names viewers only; the admin sees name and contact
+		t.Fatalf("admin history = %+v", got)
+	}
+}
+
+func TestDigestTracksValuesNotTimes(t *testing.T) {
+	st, _ := Open("", testSchema())
+	_ = st.Upsert(obj("Cluster", "c1", map[string]any{"name": "a"}))
+	refs := []ObjectRef{{Input: "cluster", ID: MakeID("Cluster", "lab", "c1"), Type: "Cluster"}}
+	d1 := st.Digest(refs)
+	o := obj("Cluster", "c1", map[string]any{"name": "a"})
+	v := o.Props["name"]
+	v.Prov.ObservedAt = v.Prov.ObservedAt.Add(time.Hour)
+	o.Props["name"] = v
+	_ = st.Upsert(o)
+	if st.Digest(refs) != d1 {
+		t.Error("a later observation of the same value changed the digest")
+	}
+	_ = st.Upsert(obj("Cluster", "c1", map[string]any{"name": "b"}))
+	if st.Digest(refs) == d1 {
+		t.Error("a different value did not change the digest")
+	}
+}
+
+func TestIngestScopedIsTenantBoundAndAtomic(t *testing.T) {
+	st, _ := Open("", testSchema())
+	now := time.Now()
+	other := Record{Type: "Cluster", Namespace: "x", Key: "theirs", Tenant: "beta", Props: map[string]any{"name": "Beta cluster"}}
+	if _, err := st.IngestScoped("beta", "crm", "t", []Record{other}, now); err != nil {
+		t.Fatal(err)
+	}
+	// alpha cannot overwrite beta's object, even inside an otherwise valid batch.
+	batch := []Record{
+		{Type: "Cluster", Namespace: "x", Key: "mine", Props: map[string]any{"name": "Alpha cluster"}},
+		{Type: "Cluster", Namespace: "x", Key: "theirs", Props: map[string]any{"name": "hijacked"}},
+	}
+	if _, err := st.IngestScoped("alpha", "crm", "t", batch, now); err == nil || !strings.Contains(err.Error(), "another tenant") {
+		t.Fatalf("want a cross-tenant refusal, got %v", err)
+	}
+	if _, ok := st.Get(MakeID("Cluster", "x", "mine")); ok {
+		t.Error("a rejected batch left a record behind")
+	}
+	if o, _ := st.Get(MakeID("Cluster", "x", "theirs")); o.Props["name"].V != "Beta cluster" {
+		t.Error("the other tenant's object was changed")
+	}
+	// An alias must not pin onto another tenant's object either.
+	_ = st.Upsert(Object{ID: MakeID("Cluster", "x", "aliased"), Type: "Cluster", Tenant: "beta",
+		Props: map[string]Value{"name": {V: "n", Prov: prov()}}, Aliases: []Alias{{"erp", "A1"}}})
+	via := Record{Type: "Cluster", Namespace: "y", Key: "z", Aliases: []Alias{{"erp", "A1"}}, Props: map[string]any{"name": "x"}}
+	if _, err := st.IngestScoped("alpha", "crm", "t", []Record{via}, now); err == nil {
+		t.Error("an alias reached into another tenant")
+	}
+	if _, err := st.IngestScoped("alpha", "crm", "t", []Record{{Type: "Cluster", Namespace: "x", Key: "k", Tenant: "beta"}}, now); err == nil {
+		t.Error("a record naming another tenant was accepted")
+	}
+	if rep, err := st.IngestScoped("alpha", "crm", "t", []Record{{Type: "Cluster", Namespace: "x", Key: "ok", Props: map[string]any{"name": "fine"}}}, now); err != nil || rep.Objects != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if o, _ := st.Get(MakeID("Cluster", "x", "ok")); o.Tenant != "alpha" {
+		t.Errorf("record landed in tenant %q", o.Tenant)
+	}
+}
+
+func TestCanIngest(t *testing.T) {
+	ac := &Access{Rules: []Rule{
+		{Roles: []string{"ingest"}, IngestTenants: []string{"alpha"}},
+		{Roles: []string{"super"}, IngestTenants: []string{"*"}},
+	}}
+	cases := []struct {
+		roles  []string
+		tenant string
+		want   bool
+	}{
+		{[]string{"ingest"}, "alpha", true},
+		{[]string{"ingest"}, "beta", false},
+		{[]string{"super"}, "beta", true},
+		{[]string{"admin"}, "beta", true},
+		{[]string{"approver"}, "alpha", false},
+	}
+	for _, c := range cases {
+		if got := ac.CanIngest(Principal{Roles: c.roles}, c.tenant); got != c.want {
+			t.Errorf("%v into %q = %v, want %v", c.roles, c.tenant, got, c.want)
+		}
+	}
+	if (*Access)(nil).CanIngest(Principal{Roles: []string{"ingest"}}, "alpha") {
+		t.Error("no access rules must mean no ingest for non-admins")
+	}
+}

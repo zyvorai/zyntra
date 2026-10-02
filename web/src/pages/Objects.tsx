@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type Candidate, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
+import { api, type Candidate, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
 import { useApi } from '../hooks';
 import { objectFromHash, openObject } from '../nav';
 import { Card, Empty, ErrorNote, PageHero, Pill } from '../components/ui';
@@ -35,6 +35,39 @@ function Provenance({ o }: { o: OntObject }) {
   );
 }
 
+function History({ id }: { id: string }) {
+  const { data } = useApi<{ changes: OntChange[] }>(`/api/v1/ontology/objects/${encodeURIComponent(id)}/history`);
+  const changes = [...(data?.changes ?? [])].reverse();
+  if (!changes.length) return null;
+  return (
+    <details className="trace">
+      <summary>Change history ({changes.length})</summary>
+      <table className="table compact">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Property</th>
+            <th>Was</th>
+            <th>Now</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {changes.map((c, i) => (
+            <tr key={i}>
+              <td className="small">{when(c.after.prov.ingested_at)}</td>
+              <td className="mono">{c.property}</td>
+              <td>{c.before ? String(c.before.v) : <span className="muted">new</span>}</td>
+              <td>{String(c.after.v)}</td>
+              <td className="mono small">{c.after.prov.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
 function Detail({ id }: { id: string }) {
   const { data, error } = useApi<OntObjectDetail>(`/api/v1/ontology/objects/${encodeURIComponent(id)}`, 15000);
   if (error) return <ErrorNote message={error} />;
@@ -52,6 +85,7 @@ function Detail({ id }: { id: string }) {
     >
       <p className="muted mono small">{o.id}</p>
       <Provenance o={o} />
+      <History id={id} />
       {o.aliases?.length ? (
         <p className="small">
           Also known as:{' '}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/zyvorai/zyntra/internal/gaps"
 	"github.com/zyvorai/zyntra/internal/graph"
+	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/planner"
 )
 
@@ -174,5 +175,37 @@ func TestGroundingNamesPack(t *testing.T) {
 	}
 	if s.compact()["pack"] != "shop@0.1.0" {
 		t.Fatal("the LLM facts must name the pack")
+	}
+}
+
+func TestSelectorCallsModelAndIgnoresBadOutput(t *testing.T) {
+	var reply string
+	var prompt string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Messages []struct{ Content string } }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		prompt = body.Messages[len(body.Messages)-1].Content
+		out, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": reply}}}})
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+	p := NewProvider(srv.URL, "", "m", "t", false)
+	cands := []ontology.Object{{ID: "Service:x:a", Type: "Service"}, {ID: "Service:x:b", Type: "Service"}}
+	sel := p.selector(context.Background())
+
+	reply = `{"ids":["Service:x:b"]}`
+	if got := sel("which?", cands); len(got) != 1 || got[0] != "Service:x:b" {
+		t.Fatalf("selection = %v", got)
+	}
+	if !strings.Contains(prompt, "Service:x:a") || !strings.Contains(prompt, "which?") {
+		t.Errorf("prompt lacks the candidates or question: %s", prompt)
+	}
+	reply = "not json at all"
+	if got := sel("which?", cands); got != nil {
+		t.Errorf("garbage output should select nothing, got %v", got)
+	}
+	srv.Close()
+	if got := sel("which?", cands); got != nil {
+		t.Errorf("an unreachable model should select nothing, got %v", got)
 	}
 }

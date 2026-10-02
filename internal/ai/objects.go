@@ -19,6 +19,39 @@ type ObjectContext struct {
 	Reader  ontology.Reader
 	Schema  *ontology.Schema
 	Failing func(kpi string) bool
+	// Select, when set, narrows candidate objects to the ones relevant to the
+	// question. It may only choose among the candidates it is given and
+	// returns their ids; an empty or invalid result is ignored and every
+	// candidate is kept. Facts and citations are always rendered from the
+	// records, never from the selector's output.
+	Select func(question string, candidates []ontology.Object) []string
+}
+
+// narrow applies Select to candidates, keeping all of them when it fails.
+func (oc *ObjectContext) narrow(question string, cands []ontology.Object) []ontology.Object {
+	if oc.Select == nil || len(cands) < 2 {
+		return cands
+	}
+	allowed := map[string]bool{}
+	for _, o := range cands {
+		allowed[o.ID] = true
+	}
+	keep := map[string]bool{}
+	for _, id := range oc.Select(question, cands) {
+		if allowed[id] {
+			keep[id] = true
+		}
+	}
+	if len(keep) == 0 {
+		return cands
+	}
+	var out []ontology.Object
+	for _, o := range cands {
+		if keep[o.ID] {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // Citation points at one fact on one object.
@@ -68,6 +101,10 @@ func hasAny(q string, words []string) bool {
 // answerObjects answers questions that name a business object or ask which
 // objects are at risk. ql is the lower-cased question.
 func answerObjects(ql string, s Snapshot) (Answer, bool) {
+	return answerObjectsQ(ql, ql, s)
+}
+
+func answerObjectsQ(q, ql string, s Snapshot) (Answer, bool) {
 	oc := s.Objects
 	all := oc.Reader.List("")
 	if len(all) == 0 {
@@ -90,14 +127,14 @@ func answerObjects(ql string, s Snapshot) (Answer, bool) {
 	risky := hasAny(ql, riskWords)
 	switch {
 	case risky && len(mentioned) == 0:
-		return exposureAnswer(wantTypes, oc), true
+		return exposureAnswer(q, wantTypes, oc), true
 	case len(mentioned) > 0:
-		return describeAnswer(mentioned[0], risky, oc), true
+		return describeAnswer(oc.narrow(q, mentioned)[0], risky, oc), true
 	}
 	return Answer{}, false
 }
 
-func exposureAnswer(types []string, oc *ObjectContext) Answer {
+func exposureAnswer(q string, types []string, oc *ObjectContext) Answer {
 	a := Answer{Intent: "objects"}
 	risks := ontology.AtRisk(oc.Reader, oc.Failing)
 	ex := ontology.Exposed(oc.Reader, risks)
@@ -145,6 +182,16 @@ func exposureAnswer(types []string, oc *ObjectContext) Answer {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	if oc.Select != nil {
+		cands := make([]ontology.Object, 0, len(ids))
+		for _, id := range ids {
+			cands = append(cands, rows[id].o)
+		}
+		ids = ids[:0]
+		for _, o := range oc.narrow(q, cands) {
+			ids = append(ids, o.ID)
+		}
+	}
 	var lines []string
 	for _, id := range ids {
 		r := rows[id]
@@ -171,7 +218,7 @@ func exposureAnswer(types []string, oc *ObjectContext) Answer {
 		}
 	}
 	a.Grounding = dedupe(a.Grounding)
-	a.Text = fmt.Sprintf("%d object(s) are exposed. A link means connected, not how badly it will be hurt:\n%s", len(rows), strings.Join(lines, "\n"))
+	a.Text = fmt.Sprintf("%d object(s) are exposed. A link means connected, not how badly it will be hurt:\n%s", len(ids), strings.Join(lines, "\n"))
 	return a
 }
 

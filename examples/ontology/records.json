@@ -1,0 +1,4 @@
+[
+  {"asset_id": "vision-qa", "label": "Vision QA (plant A)", "cluster": "gpu-a"},
+  {"asset_id": "vision-qa-overflow", "label": "Vision QA (overflow)", "cluster": "gpu-b"}
+]

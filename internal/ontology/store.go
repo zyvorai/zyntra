@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,17 @@ type Value struct {
 	V    any  `json:"v"`
 	Prov Prov `json:"prov"`
 }
+
+// Change is one property taking a new value.
+type Change struct {
+	Object   string `json:"object"`
+	Property string `json:"property"`
+	Before   *Value `json:"before,omitempty"`
+	After    Value  `json:"after"`
+}
+
+// maxHistory bounds the change log; the oldest entries are dropped first.
+const maxHistory = 20000
 
 // Alias is an identifier the object has in another system.
 type Alias struct {
@@ -81,6 +93,8 @@ type state struct {
 	Objects    map[string]Object    `json:"objects"`
 	Links      map[string]Link      `json:"links"`
 	Candidates map[string]Candidate `json:"candidates,omitempty"`
+	// History records every property value change, oldest first.
+	History []Change `json:"history,omitempty"`
 	// Redirects maps the id of a merged-away object to the one it became.
 	Redirects map[string]string `json:"redirects,omitempty"`
 }
@@ -151,7 +165,8 @@ func (s *Store) save() error {
 // Upsert adds or merges an object. Properties are replaced per name, so a
 // later observation of one property keeps the others. It rejects unknown
 // types, unknown properties and values of the wrong kind.
-func (s *Store) Upsert(o Object) error {
+// validate checks an object against the schema without storing it.
+func (s *Store) validate(o Object) error {
 	typ, _, _, ok := SplitID(o.ID)
 	if !ok || typ != o.Type {
 		return fmt.Errorf("object id %q is not <type>:<namespace>:<key> for type %q", o.ID, o.Type)
@@ -176,14 +191,33 @@ func (s *Store) Upsert(o Object) error {
 			return fmt.Errorf("%s: property %q has no provenance source", o.ID, name)
 		}
 	}
+	return nil
+}
+
+func (s *Store) Upsert(o Object) error {
+	if err := s.validate(o); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, exists := s.s.Objects[o.ID]
 	if !exists {
 		cur = Object{ID: o.ID, Type: o.Type, Tenant: o.Tenant, Props: map[string]Value{}}
 	}
-	for k, v := range o.Props {
+	for _, k := range sortedKeys(o.Props) {
+		v := o.Props[k]
+		old, had := cur.Props[k]
+		if !had || !reflect.DeepEqual(old.V, v.V) {
+			c := Change{Object: o.ID, Property: k, After: v}
+			if had {
+				c.Before = &old
+			}
+			s.s.History = append(s.s.History, c)
+		}
 		cur.Props[k] = v
+	}
+	if n := len(s.s.History); n > maxHistory {
+		s.s.History = append([]Change(nil), s.s.History[n-maxHistory:]...)
 	}
 	for _, a := range o.Aliases {
 		if !hasAlias(cur.Aliases, a) {
@@ -368,4 +402,46 @@ func kindOK(typ string, v any) bool {
 		}
 	}
 	return false
+}
+
+func sortedKeys(m map[string]Value) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// History returns the changes to one object, oldest first.
+func (s *Store) History(id string) []Change {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id = s.resolveLocked(id)
+	var out []Change
+	for _, c := range s.s.History {
+		if c.Object == id {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Digest fingerprints what an action would act on: each object's id, tenant
+// and property values (not observation times). A proposal records it so the
+// executor can tell the facts changed after approval.
+func (s *Store) Digest(refs []ObjectRef) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h := sha256.New()
+	sorted := append([]ObjectRef(nil), refs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Input < sorted[j].Input })
+	for _, r := range sorted {
+		o, ok := s.s.Objects[s.resolveLocked(r.ID)]
+		fmt.Fprint(h, r.Input, "|", r.ID, "|", ok, "|", o.ID, "|", o.Tenant, "|")
+		for _, k := range sortedKeys(o.Props) {
+			fmt.Fprint(h, k, "=", o.Props[k].V, ";")
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

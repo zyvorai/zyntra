@@ -65,3 +65,22 @@ func TestHTTPConnector(t *testing.T) {
 		t.Error("accepted 401")
 	}
 }
+
+// pythonLine is what examples/ontology/connector.py --jsonl prints.
+const pythonLine = `{"type": "Machine", "namespace": "mes", "key": "vision-qa", "props": {"name": "Vision QA"}, "observed_at": "2026-10-02T00:00:00Z", "source_id": "row:1", "transform": ["column-map"], "aliases": [{"system": "mes", "external_id": "vision-qa"}]}`
+
+func TestPythonConnectorRecordsIngest(t *testing.T) {
+	recs, err := ReadLines(strings.NewReader(pythonLine))
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("%v %v", recs, err)
+	}
+	st, _ := ontology.Open("", schema())
+	if rep, err := st.Ingest("python", "t", recs, time.Now()); err != nil || rep.Objects != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	o, _ := st.Get("Machine:mes:vision-qa")
+	pv := o.Props["name"].Prov
+	if pv.ObservedAt.Year() != 2026 || pv.SourceID != "row:1" || len(pv.Transform) != 1 {
+		t.Fatalf("provenance lost: %+v", pv)
+	}
+}

@@ -181,6 +181,9 @@ type Proposal struct {
 	// Objects and ActionInputs record what a typed action works on.
 	Objects      []ontology.ObjectRef `json:"objects,omitempty"`
 	ActionInputs map[string]string    `json:"action_inputs,omitempty"`
+	// ObjectDigest fingerprints the contract and facts the approval was
+	// given for; the executor refuses to run if they have changed.
+	ObjectDigest string `json:"object_digest,omitempty"`
 	// ScenarioID links the proposal to the saved scenario it came from.
 	ScenarioID string `json:"scenario_id,omitempty"`
 	// Rollout is the staged-delivery shape the deployment tooling should

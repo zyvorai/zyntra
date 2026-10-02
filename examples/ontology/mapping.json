@@ -1,0 +1,8 @@
+{
+  "object_type": "InspectionService",
+  "namespace": "mes",
+  "key_column": "asset_id",
+  "props": {"name": "label"},
+  "aliases": [{"system": "mes", "column": "asset_id"}],
+  "links": [{"type": "runs_on", "to_type": "Cluster", "to_namespace": "infra", "column": "cluster"}]
+}

@@ -272,3 +272,36 @@ func (s *Store) IngestMappings(d *Definition, dir, by string, load Loader, now t
 // Fingerprint identifies the current object and link content, ignoring
 // timestamps. Scenarios record it so a result names the data it ran on.
 func (s *Store) Fingerprint() string { return s.digest() }
+
+// IngestScoped is Ingest for a caller confined to one tenant. It is
+// all-or-nothing: if any record is invalid, or would touch an object that
+// belongs to another tenant (directly or through an alias), nothing is
+// written. Records without a tenant are placed in the caller's tenant.
+func (s *Store) IngestScoped(tenant, source, by string, recs []Record, now time.Time) (IngestReport, error) {
+	scoped := make([]Record, len(recs))
+	for i, r := range recs {
+		if r.Tenant != "" && r.Tenant != tenant {
+			return IngestReport{}, fmt.Errorf("record %d: tenant %q is not %q", i+1, r.Tenant, tenant)
+		}
+		r.Tenant = tenant
+		scoped[i] = r
+		if r.Type == "" || r.Namespace == "" || r.Key == "" {
+			return IngestReport{}, fmt.Errorf("record %d: type, namespace and key are required", i+1)
+		}
+		id := MakeID(r.Type, r.Namespace, r.Key)
+		if owner, ok := s.byAlias(r.Aliases); ok {
+			id = owner
+		}
+		if cur, ok := s.Get(id); ok && cur.Tenant != tenant {
+			return IngestReport{}, fmt.Errorf("record %d: %s belongs to another tenant", i+1, id)
+		}
+		props := map[string]Value{}
+		for k, v := range r.Props {
+			props[k] = Value{V: v, Prov: Prov{Source: source}}
+		}
+		if err := s.validate(Object{ID: id, Type: r.Type, Tenant: tenant, Props: props}); err != nil {
+			return IngestReport{}, fmt.Errorf("record %d: %w", i+1, err)
+		}
+	}
+	return s.Ingest(source, by, scoped, now)
+}

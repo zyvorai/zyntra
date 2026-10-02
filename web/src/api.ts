@@ -273,6 +273,7 @@ export interface KeepRef { mode: string; session_id?: string; approval_id?: stri
 export interface Proposal {
   id: string;
   objects?: { input: string; id: string; type: string }[];
+  object_digest?: string;
   object_outcome?: { checked_at: string; safe: boolean; still_at_risk?: ScenarioRisk[] };
   rollout?: { stages: { name: string; sites: string[] }[] };
   action: string;
@@ -591,4 +592,10 @@ export interface Comparison {
   weighted_after: number[];
   objects_at_risk_after: number[];
   objects_exposed_after: number[];
+}
+export interface OntChange {
+  object: string;
+  property: string;
+  before?: { v: string | number | boolean; prov: Prov };
+  after: { v: string | number | boolean; prov: Prov };
 }
