@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -176,9 +177,12 @@ func (s *Store) byAlias(as []Alias, tenant string) (string, bool) {
 type Loader func(path, format string) (any, error)
 
 // Records turns a mapping's source rows into records. dir is the pack
-// directory the mapping's source is relative to.
+// directory the mapping's source is relative to. A fact with no observed
+// column is dated by the file's modification time, not by the time it was
+// read: re-reading an old file must not make its facts look fresh.
 func (m Mapping) Records(dir string, schema *Schema, load Loader) ([]Record, error) {
-	doc, err := load(filepath.Join(dir, m.Source), m.Format)
+	path := filepath.Join(dir, m.Source)
+	doc, err := load(path, m.Format)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", m.Source, err)
 	}
@@ -186,6 +190,18 @@ func (m Mapping) Records(dir string, schema *Schema, load Loader) ([]Record, err
 	if !ok {
 		return nil, fmt.Errorf("%s: expected a table of rows", m.Source)
 	}
+	var observed time.Time
+	if fi, err := os.Stat(path); err == nil {
+		observed = fi.ModTime().UTC()
+	}
+	return m.FromRows(rows, schema, m.Source, observed)
+}
+
+// FromRows maps already-read rows (a table from a file, a SQL result, a
+// kubectl listing) to records. label names the source in errors and
+// provenance; observed dates facts that have no observed column (zero means
+// the ingest time).
+func (m Mapping) FromRows(rows []any, schema *Schema, label string, observed time.Time) ([]Record, error) {
 	ot, _ := schema.Object(m.Type)
 	kinds := map[string]string{}
 	for _, p := range ot.Properties {
@@ -199,17 +215,17 @@ func (m Mapping) Records(dir string, schema *Schema, load Loader) ([]Record, err
 		}
 		cell := func(col string) string { return strings.TrimSpace(fmt.Sprint(row[col])) }
 		if row[m.Key] == nil || cell(m.Key) == "" {
-			return nil, fmt.Errorf("%s row %d: key column %q is empty", m.Source, i+1, m.Key)
+			return nil, fmt.Errorf("%s row %d: key column %q is empty", label, i+1, m.Key)
 		}
 		r := Record{Type: m.Type, Namespace: m.Namespace, Key: cell(m.Key), Tenant: m.Tenant,
-			Props: map[string]any{}, SourceID: m.Source + "#" + strconv.Itoa(i+1)}
+			Props: map[string]any{}, SourceID: label + "#" + strconv.Itoa(i+1), ObservedAt: observed}
 		for prop, col := range m.Props {
 			if row[col] == nil || cell(col) == "" {
 				continue
 			}
 			v, err := convert(kinds[prop], row[col])
 			if err != nil {
-				return nil, fmt.Errorf("%s row %d: %s: %w", m.Source, i+1, prop, err)
+				return nil, fmt.Errorf("%s row %d: %s: %w", label, i+1, prop, err)
 			}
 			r.Props[prop] = v
 		}

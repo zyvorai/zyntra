@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/ai"
 	"github.com/zyvorai/zyntra/internal/approvals"
 	"github.com/zyvorai/zyntra/internal/auth"
+	"github.com/zyvorai/zyntra/internal/connector"
 	"github.com/zyvorai/zyntra/internal/decisions"
 	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/scenario"
@@ -300,5 +302,101 @@ func TestObjectHistoryEndpoint(t *testing.T) {
 	}
 	if c := f.as(t, "GET", "/api/v1/ontology/objects/Cluster:x:none/history", "boss", approver, "", nil); c != 200 {
 		t.Fatalf("unknown object history = %d", c)
+	}
+}
+
+const liveOntDef = `
+objects:
+  - name: Service
+    properties: [{name: name, type: string}, {name: tier, type: string}]
+links: []
+connectors:
+  - name: k8s-services
+    kind: kubernetes
+    resource: deployments
+    interval: 30s
+    fields: {name: metadata.name, tier: metadata.labels.tier}
+    mapping: {type: Service, namespace: k8s, key: name, props: {name: name, tier: tier}}
+actions:
+  - id: add_gpus
+    inputs: [{name: service, object_type: Service, required: true}]
+    requires: [{input: service, property: tier, equals: inference}]
+    evidence: [{input: service, properties: [tier], max_age: 10m}]
+`
+
+func TestScheduledRefreshUnblocksStaleEvidence(t *testing.T) {
+	def, err := ontology.ParseDefinition([]byte(liveOntDef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := ontology.Open("", def.Schema())
+	// The service was last seen an hour ago.
+	hourAgo := time.Now().Add(-time.Hour)
+	if _, err := st.Ingest("k8s", "t", []ontology.Record{{Type: "Service", Namespace: "k8s", Key: "infer",
+		Props: map[string]any{"name": "infer", "tier": "inference"}, ObservedAt: hourAgo}}, hourAgo); err != nil {
+		t.Fatal(err)
+	}
+	kube := func(context.Context, string, string) ([]byte, error) {
+		return []byte(`{"items":[{"metadata":{"name":"infer","labels":{"tier":"inference"}}}]}`), nil
+	}
+	opt := connector.Options{Kubectl: kube}
+	sched, err := connector.NewScheduler(st, def, t.TempDir(), nil, opt, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := &ontology.Access{Schema: def.Schema()}
+	scn, _ := scenario.Open("")
+	f := setupWith(t, ontModel, func(o *Options) {
+		o.Ontology = OntologyOptions{Def: def, Store: st, Access: ac, Actions: actions.New(def, st, ac), Scenarios: scn, Scheduler: sched, Connector: opt}
+	})
+	body := `{"action":"add_gpus","inputs":{"service":"Service:k8s:infer"}}`
+	var blocked struct {
+		Reasons []string `json:"blocked_reasons"`
+	}
+	if c := f.as(t, "POST", "/api/v1/proposals", "boss", approver, body, &blocked); c != 422 {
+		t.Fatalf("stale evidence = %d, want 422", c)
+	}
+	// (the body is only decoded on success, so read the reason from the registry)
+	if _, problems := f.s.opt.Ontology.Actions.Validate("add_gpus", map[string]string{"service": "Service:k8s:infer"},
+		ontology.Principal{Roles: []string{"admin"}}, func(string) bool { return true }); len(problems) != 1 || !strings.Contains(problems[0], "stale") {
+		t.Fatalf("want one stale-evidence problem, got %v", problems)
+	}
+
+	// Connector status is for approvers and admins, and the run needs an admin.
+	if c := f.as(t, "GET", "/api/v1/ontology/connectors", "v", viewer, "", nil); c != 403 {
+		t.Errorf("viewer connectors = %d", c)
+	}
+	if c := f.as(t, "POST", "/api/v1/ontology/connectors/k8s-services/run", "boss", approver, "", nil); c != 403 {
+		t.Errorf("approver run = %d", c)
+	}
+	if c := f.as(t, "POST", "/api/v1/ontology/connectors/nope/run", "root", []auth.Role{auth.RoleAdmin}, "", nil); c != 404 {
+		t.Errorf("unknown connector = %d", c)
+	}
+	var rep ontology.IngestReport
+	if c := f.as(t, "POST", "/api/v1/ontology/connectors/k8s-services/run", "root", []auth.Role{auth.RoleAdmin}, "", &rep); c != 200 || rep.Objects != 1 {
+		t.Fatalf("run = %d %+v", c, rep)
+	}
+	var created approvals.Proposal
+	if c := f.as(t, "POST", "/api/v1/proposals", "boss", approver, body, &created); c != 201 {
+		t.Fatalf("after the refresh the proposal should be allowed, got %d", c)
+	}
+	var list struct{ Connectors []connector.Status }
+	f.as(t, "GET", "/api/v1/ontology/connectors", "boss", approver, "", &list)
+	if len(list.Connectors) != 1 || !list.Connectors[0].Healthy || list.Connectors[0].Runs != 1 || list.Connectors[0].Kind != "kubernetes" {
+		t.Fatalf("status = %+v", list.Connectors)
+	}
+	// A tenant account cannot see or trigger connectors.
+	for _, m := range []string{"GET", "POST"} {
+		path := "/api/v1/ontology/connectors"
+		if m == "POST" {
+			path += "/k8s-services/run"
+		}
+		if c := f.asTenant(t, m, path, "ann", "alpha", approver, "", nil); c != 403 {
+			t.Errorf("tenant %s %s = %d", m, path, c)
+		}
+	}
+	// The scheduled refresh endpoint now runs through the scheduler.
+	if c := f.as(t, "POST", "/api/v1/ontology/refresh", "p", proposer, "", nil); c != 200 {
+		t.Errorf("refresh = %d", c)
 	}
 }

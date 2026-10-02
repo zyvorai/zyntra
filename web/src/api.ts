@@ -599,3 +599,22 @@ export interface OntChange {
   before?: { v: string | number | boolean; prov: Prov };
   after: { v: string | number | boolean; prov: Prov };
 }
+
+export interface ConnectorStatus {
+  name: string;
+  kind: string;
+  interval: string;
+  last_run?: string;
+  last_success?: string;
+  next_run?: string;
+  last_error?: string;
+  last_objects: number;
+  last_links: number;
+  last_skipped: number;
+  duration_ms: number;
+  runs: number;
+  failures: number;
+  streak: number;
+  running: boolean;
+  healthy: boolean;
+}

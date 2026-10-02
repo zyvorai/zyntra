@@ -32,6 +32,10 @@ type OntologyOptions struct {
 	Actions   *actions.Registry
 	Scenarios *scenario.Store
 	Load      ontology.Loader
+	// Scheduler runs the pack's file mappings and connectors on their
+	// intervals; nil falls back to reading them on demand only.
+	Scheduler *connector.Scheduler
+	Connector connector.Options
 }
 
 func (s *Server) ontOn(w http.ResponseWriter) bool {
@@ -215,13 +219,16 @@ func (s *Server) RefreshOntology(ctx context.Context, by string) ([]ontology.Ing
 	if o.Store == nil {
 		return nil, nil
 	}
+	if o.Scheduler != nil {
+		return o.Scheduler.RunAll(ctx)
+	}
 	now := time.Now().UTC()
 	reps, err := o.Store.IngestMappings(o.Def, o.Dir, by, o.Load, now)
 	if err != nil {
 		return reps, err
 	}
 	for _, spec := range o.Def.Connectors {
-		c, err := connector.FromSpec(spec)
+		c, err := connector.FromSpec(spec, o.Def.Schema(), o.Connector)
 		if err != nil {
 			return reps, err
 		}
@@ -502,4 +509,39 @@ func (s *Server) handleOntIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, rep)
+}
+
+// handleConnectors reports each connector's health. Errors can quote what a
+// source returned, so this is for approvers and admins, not tenants.
+func (s *Server) handleConnectors(w http.ResponseWriter, _ *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	st := []connector.Status{}
+	if sc := s.opt.Ontology.Scheduler; sc != nil {
+		st = sc.Statuses()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connectors": st})
+}
+
+func (s *Server) handleConnectorRun(w http.ResponseWriter, r *http.Request) {
+	if !s.ontOn(w) {
+		return
+	}
+	sc := s.opt.Ontology.Scheduler
+	if sc == nil {
+		writeErr(w, http.StatusNotFound, "no scheduler")
+		return
+	}
+	rep, err := sc.RunNow(r.Context(), r.PathValue("name"))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, rep)
+	case err.Error() == "already running":
+		writeErr(w, http.StatusConflict, err.Error())
+	case strings.HasPrefix(err.Error(), "no connector"):
+		writeErr(w, http.StatusNotFound, err.Error())
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "report": rep})
+	}
 }

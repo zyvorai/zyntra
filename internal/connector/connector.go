@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -155,13 +156,30 @@ func (h HTTP) Pull(ctx context.Context, since time.Time) ([]ontology.Record, err
 	return recs, nil
 }
 
+// Options carry what connectors need from the host.
+type Options struct {
+	Kubeconfig string
+	// Kubectl replaces the real runner; tests use it.
+	Kubectl KubectlGet
+	// OpenSQL replaces sql.Open; tests use it.
+	OpenSQL func(driver, dsn string) (*sql.DB, error)
+}
+
 // FromSpec builds the connector a pack declares.
-func FromSpec(c ontology.ConnectorSpec) (Connector, error) {
+func FromSpec(c ontology.ConnectorSpec, schema *ontology.Schema, o Options) (Connector, error) {
 	switch c.Kind {
 	case "exec":
 		return Exec{Spec: c.Name, Command: c.Command}, nil
 	case "http":
 		return HTTP{Spec: c.Name, URL: c.URL, Token: os.Getenv(c.TokenEnv)}, nil
+	case "kubernetes":
+		run := o.Kubectl
+		if run == nil {
+			run = Kubectl(o.Kubeconfig)
+		}
+		return Kubernetes{Spec: c, Run: run, Schema: schema}, nil
+	case "sql":
+		return &SQL{Spec: c, Schema: schema, Open: o.OpenSQL}, nil
 	}
 	return nil, fmt.Errorf("connector %s: unknown kind %q", c.Name, c.Kind)
 }

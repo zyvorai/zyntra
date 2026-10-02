@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { api, type Candidate, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
+import { api, ago, type Candidate, type ConnectorStatus, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
 import { useApi } from '../hooks';
 import { objectFromHash, openObject } from '../nav';
+import { useWho } from '../session';
 import { Card, Empty, ErrorNote, PageHero, Pill } from '../components/ui';
 
 const nameOf = (o: OntObject) => String(o.props.name?.v ?? o.id);
@@ -166,6 +167,69 @@ function Resolution() {
   );
 }
 
+/** Health of the scheduled sources; hidden for roles that cannot read it. */
+function Connectors() {
+  const { data, error, reload } = useApi<{ connectors: ConnectorStatus[] }>('/api/v1/ontology/connectors', 15000);
+  const who = useWho();
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  if (error || !data?.connectors.length) return null;
+  const admin = !!who && (who.identity.roles?.includes('admin') || who.identity.role === 'admin');
+  const run = async (name: string) => {
+    setBusy(name);
+    setErr('');
+    try {
+      await api(`/api/v1/ontology/connectors/${encodeURIComponent(name)}/run`, { method: 'POST' });
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy('');
+      reload();
+    }
+  };
+  return (
+    <Card title="Sources" aside={<Pill tone={data.connectors.every((c) => c.healthy) ? 'ok' : 'warn'}>{data.connectors.filter((c) => c.healthy).length} of {data.connectors.length} healthy</Pill>}>
+      <ErrorNote message={err} />
+      <table className="table compact">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Kind</th>
+            <th>Every</th>
+            <th>Last success</th>
+            <th className="num">Objects</th>
+            <th>Status</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {data.connectors.map((c) => (
+            <tr key={c.name}>
+              <td className="mono">{c.name}</td>
+              <td>{c.kind}</td>
+              <td>{c.interval}</td>
+              <td className="small">{c.last_success ? ago(c.last_success) : 'never'}</td>
+              <td className="num">{c.last_objects}</td>
+              <td>
+                {c.healthy ? <Pill tone="ok">healthy</Pill> : <Pill tone="bad">{c.last_error ? 'failing' : 'stale'}</Pill>}
+                {c.streak > 1 ? <span className="muted small"> retrying less often ({c.streak} failures)</span> : null}
+                {c.last_error ? <div className="muted small">{c.last_error}</div> : null}
+              </td>
+              <td>
+                {admin ? (
+                  <button className="btn-secondary" disabled={busy === c.name || c.running} onClick={() => run(c.name)}>
+                    {c.running || busy === c.name ? 'Running…' : 'Run now'}
+                  </button>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
 export default function Objects() {
   const schema = useApi<OntSchema>('/api/v1/ontology/schema');
   const [type, setType] = useState('');
@@ -189,6 +253,7 @@ export default function Objects() {
       />
       <ErrorNote message={schema.error} />
       <Resolution />
+      <Connectors />
       <div className="segmented" role="tablist">
         <button role="tab" aria-selected={type === ''} onClick={() => setType('')}>
           All

@@ -18,6 +18,7 @@ import (
 	"github.com/zyvorai/zyntra/internal/actions"
 	"github.com/zyvorai/zyntra/internal/adapters"
 	"github.com/zyvorai/zyntra/internal/api"
+	"github.com/zyvorai/zyntra/internal/connector"
 	"github.com/zyvorai/zyntra/internal/graph"
 	"github.com/zyvorai/zyntra/internal/ontology"
 	"github.com/zyvorai/zyntra/internal/pack"
@@ -53,8 +54,14 @@ func buildOntology(path string, m *graph.Model, pol *policy.Policy, stateDir str
 	if err != nil {
 		return api.OntologyOptions{}, fmt.Errorf("scenarios: %w", err)
 	}
+	load := adapters.NewFileCache().Load
+	opt := connector.Options{Kubeconfig: env("ZYNTRA_KUBECONFIG", "")}
+	sched, err := connector.NewScheduler(st, def, dir, load, opt, filepath.Join(stateDir, "connectors.json"))
+	if err != nil {
+		return api.OntologyOptions{}, fmt.Errorf("connectors: %w", err)
+	}
 	return api.OntologyOptions{Def: def, Store: st, Dir: dir, Access: ac,
-		Actions: actions.New(def, st, ac), Scenarios: scn, Load: adapters.NewFileCache().Load}, nil
+		Actions: actions.New(def, st, ac), Scenarios: scn, Load: load, Scheduler: sched, Connector: opt}, nil
 }
 
 // memoryOntology loads the pack's ontology into a throwaway store.

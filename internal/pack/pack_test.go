@@ -172,3 +172,26 @@ func TestManufacturingOntologyLinksOrdersToCompute(t *testing.T) {
 		t.Errorf("the ERP and MES press should be one pending identity candidate, got %d", len(st.Candidates()))
 	}
 }
+
+// The live example must stay a valid ontology for the gpu pack's model.
+func TestLiveGPUExampleIsValid(t *testing.T) {
+	m, err := Load(root + "/gpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile("../../examples/ontology/gpu-live.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := ontology.ParseDefinition(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = d.CheckModel(func(id string) bool { _, ok := m.KPI(id); return ok }, func(id string) bool { _, ok := m.Action(id); return ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Connectors) != 3 {
+		t.Errorf("connectors = %d", len(d.Connectors))
+	}
+}

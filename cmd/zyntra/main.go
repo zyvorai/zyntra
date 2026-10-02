@@ -469,6 +469,9 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 		}
 	}
 	go s.Run(ctx)
+	if ont.Scheduler != nil {
+		go ont.Scheduler.Run(ctx)
+	}
 
 	var servers []*http.Server
 	if execFiles.CA != "" {
