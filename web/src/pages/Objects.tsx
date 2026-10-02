@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, ago, type Candidate, type ConnectorStatus, type OntStats, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
 import { useApi } from '../hooks';
 import { objectFromHash, openObject } from '../nav';
@@ -247,12 +247,57 @@ function Connectors() {
   );
 }
 
+const PAGE = 100;
+
+/** Pages through the object list by cursor; a new type or search starts over. */
+function useObjectPages(type: string, q: string) {
+  const [items, setItems] = useState<OntObject[]>([]);
+  const [next, setNext] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const seq = useRef(0);
+  const base = `/api/v1/ontology/objects?limit=${PAGE}&type=${encodeURIComponent(type)}&q=${encodeURIComponent(q)}`;
+
+  useEffect(() => {
+    const n = ++seq.current;
+    setLoaded(false);
+    setError('');
+    api<{ objects: OntObject[]; next: string }>(base)
+      .then((r) => {
+        if (n !== seq.current) return; // a newer search superseded this one
+        setItems(r.objects);
+        setNext(r.next);
+        setLoaded(true);
+      })
+      .catch((e) => n === seq.current && setError((e as Error).message));
+  }, [base]);
+
+  const more = async () => {
+    if (!next || busy) return;
+    const n = seq.current;
+    setBusy(true);
+    try {
+      const r = await api<{ objects: OntObject[]; next: string }>(`${base}&after=${encodeURIComponent(next)}`);
+      if (n === seq.current) {
+        setItems((cur) => [...cur, ...r.objects]);
+        setNext(r.next);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { items, hasMore: next !== '', loaded, busy, error, more };
+}
+
 export default function Objects() {
   const schema = useApi<OntSchema>('/api/v1/ontology/schema');
   const [type, setType] = useState('');
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(objectFromHash());
-  const list = useApi<{ objects: OntObject[] }>(`/api/v1/ontology/objects?type=${encodeURIComponent(type)}&q=${encodeURIComponent(q)}`, 30000);
+  const list = useObjectPages(type, q);
 
   useEffect(() => {
     const on = () => setSel(objectFromHash());
@@ -285,11 +330,12 @@ export default function Objects() {
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or id" aria-label="Search objects" maxLength={100} />
       <div className="two-col">
         <Card>
-          {list.data && list.data.objects.length === 0 ? (
+          <ErrorNote message={list.error} />
+          {list.loaded && list.items.length === 0 ? (
             <Empty>No objects match.</Empty>
           ) : (
             <ul className="plain">
-              {list.data?.objects.map((o) => (
+              {list.items.map((o) => (
                 <li key={o.id}>
                   <button className={`linklike${sel === o.id ? ' active' : ''}`} onClick={() => openObject(o.id)}>
                     {nameOf(o)}
@@ -299,6 +345,11 @@ export default function Objects() {
               ))}
             </ul>
           )}
+          {list.hasMore ? (
+            <button className="btn-secondary" disabled={list.busy} onClick={list.more}>
+              {list.busy ? 'Loading…' : 'Load more'}
+            </button>
+          ) : null}
         </Card>
         {sel ? <Detail id={sel} /> : <Card><Empty>Select an object to see its facts, links and dependents.</Empty></Card>}
       </div>

@@ -177,6 +177,8 @@ func (s *Store) linkAdj(l Link) {
 func (s *Store) putObject(o Object) {
 	if old, ok := s.s.Objects[o.ID]; ok {
 		s.unindexObject(old)
+	} else {
+		s.version++ // a new id: the sorted order changes
 	}
 	s.s.Objects[o.ID] = o
 	s.indexObject(o)
@@ -186,6 +188,7 @@ func (s *Store) putObject(o Object) {
 func (s *Store) delObject(id string) {
 	if old, ok := s.s.Objects[id]; ok {
 		s.unindexObject(old)
+		s.version++
 	}
 	delete(s.s.Objects, id)
 	s.dirty = append(s.dirty, op{kind: opDelObject, id: id})

@@ -110,6 +110,12 @@ type Store struct {
 	batch      int
 	// maxObjects caps the number of objects held; 0 means no cap.
 	maxObjects int
+	// version counts changes to the set of objects; the sorted-id cache is
+	// valid for one version.
+	version  uint64
+	sortMu   sync.Mutex
+	sortedAt uint64
+	sorted   []string
 	// Audit, when set, is told about every ingest and merge so the
 	// decision audit chain covers ontology changes.
 	Audit func(subject, by, note string)
@@ -515,4 +521,61 @@ func (s *Store) checkLimit(recs []Record) error {
 			ErrObjectLimit, have, len(fresh), s.maxObjects)
 	}
 	return nil
+}
+
+// sortedIDs returns every object id in order. It is rebuilt only after the
+// set of objects changed, so paging does not sort the store on every request.
+// The caller holds at least the read lock, so the version cannot move.
+func (s *Store) sortedIDs() []string {
+	s.sortMu.Lock()
+	defer s.sortMu.Unlock()
+	if s.sorted != nil && s.sortedAt == s.version {
+		return s.sorted
+	}
+	ids := make([]string, 0, len(s.s.Objects))
+	for id := range s.s.Objects {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	s.sorted, s.sortedAt = ids, s.version
+	return ids
+}
+
+// Page returns up to limit objects in id order, starting after the cursor id
+// (empty for the first page), of the given type ("" for all) and for which
+// keep returns true (nil keeps all). next is the cursor for the following page
+// and is empty when there is none. The cursor is an id, not an offset, so
+// objects added or removed between requests never repeat or skip an item.
+func (s *Store) Page(typ, after string, limit int, keep func(Object) (Object, bool)) (items []Object, next string) {
+	if limit <= 0 {
+		limit = 200
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := s.sortedIDs()
+	start := 0
+	if after != "" {
+		start = sort.SearchStrings(ids, after)
+		if start < len(ids) && ids[start] == after {
+			start++
+		}
+	}
+	for i := start; i < len(ids); i++ {
+		o := s.s.Objects[ids[i]]
+		if typ != "" && o.Type != typ {
+			continue
+		}
+		if keep != nil {
+			var ok bool
+			if o, ok = keep(o); !ok {
+				continue
+			}
+		}
+		if len(items) == limit {
+			// One more match exists, so there is a next page.
+			return items, items[len(items)-1].ID
+		}
+		items = append(items, o)
+	}
+	return items, ""
 }
