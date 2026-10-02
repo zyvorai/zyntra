@@ -16,6 +16,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -438,7 +439,7 @@ func serve(ctx context.Context, c *common, addr string, interval time.Duration, 
 		History: ai.NewHistory(0),
 		Store:   store,
 		Inputs:  in,
-		Executor: &executor.Executor{Mode: mode, Run: executor.Kubectl(c.kubeconfig),
+		Executor: &executor.Executor{Mode: mode, Run: kubeRunner(c.kubeconfig),
 			OutDir: env("ZYNTRA_OUTPUT_DIR", filepath.Join(stateDir, "out"))},
 		StateDir: stateDir, Version: version, Host: env("ZYNTRA_HOST", hostname()),
 		ApprovalMode:       env("ZYNTRA_APPROVAL_MODE", api.ModeLocal),
@@ -990,4 +991,14 @@ func orDefault(s, d string) string {
 		return d
 	}
 	return s
+}
+
+// kubeRunner runs approved Kubernetes actions with kubectl, or through the
+// pod's service account when there is no kubectl and Zyntra runs in a pod.
+func kubeRunner(kubeconfig string) executor.Runner {
+	if _, err := exec.LookPath("kubectl"); err != nil && kubeconfig == "" && executor.InCluster() {
+		log.Printf("actions: no kubectl; running Kubernetes actions through the service account")
+		return executor.KubeAPI()
+	}
+	return executor.Kubectl(kubeconfig)
 }

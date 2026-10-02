@@ -10,7 +10,7 @@ metadata:
   name: {{ include "zyntra.serviceAccountName" . }}
   labels:
     {{- include "zyntra.labels" . | nindent 4 }}
-automountServiceAccountToken: {{ or .Values.serviceAccount.automount .Values.kubernetes.inCluster }}
+automountServiceAccountToken: {{ or .Values.serviceAccount.automount .Values.kubernetes.inCluster .Values.kubernetes.actions }}
 {{- end }}
 {{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
 ---
@@ -132,6 +132,38 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ $fullname }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "zyntra.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.kubernetes.actions }}
+---
+# Approved gravia.* actions, run through the API with no kubectl.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-actions
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [gryvia.io]
+    resources: [gryviapriorities, gryviagpusharingpolicies]
+    verbs: [get, create, patch, delete]
+  - apiGroups: [gryvia.io]
+    resources: [gryviaaijobs]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-actions
+  labels:
+    {{- include "zyntra.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-actions
 subjects:
   - kind: ServiceAccount
     name: {{ include "zyntra.serviceAccountName" . }}
