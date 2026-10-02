@@ -346,6 +346,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/decisions/{id}", read(s.handleDecision))
 	mux.Handle("GET /api/v1/decisions/{id}/export", read(s.handleDecisionExport))
 	mux.Handle("GET /api/v1/policy", read(s.handlePolicy))
+	mux.Handle("GET /api/v1/tenant/kpis", read(s.handleTenantKPIs))
+	mux.Handle("GET /api/v1/tenant/gaps", read(s.handleTenantGaps))
 	mux.Handle("GET /api/v1/rollouts", s.opt.Auth.Require(http.HandlerFunc(s.handleRollouts), auth.RolloutReaders...))
 	mux.Handle("GET /api/v1/rollouts/{id}", s.opt.Auth.Require(http.HandlerFunc(s.handleRollout), auth.RolloutReaders...))
 	mux.Handle("POST /api/v1/rollouts/{id}/report", s.opt.Auth.Require(http.HandlerFunc(s.handleRolloutReport), auth.Deployers...))

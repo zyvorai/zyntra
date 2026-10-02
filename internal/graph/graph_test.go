@@ -214,3 +214,20 @@ func TestCloneRichIsDeep(t *testing.T) {
 		t.Fatal("clone shares state with original")
 	}
 }
+
+func TestTenantKPIs(t *testing.T) {
+	base := "kpis:\n  - {id: a, value: 1, tenant: alpha}\n  - {id: b, value: 1, tenant: beta}\n  - {id: g, value: 1}\n"
+	ok := base + "edges:\n  - {from: g, to: a, weight: 0.1}\n"
+	if _, err := Parse([]byte(ok)); err != nil {
+		t.Fatalf("provider and tenant KPIs may be linked: %v", err)
+	}
+	cases := map[string]string{
+		"cross-tenant edge": base + "edges:\n  - {from: a, to: b, weight: 0.1}\n",
+		"bad tenant id":     "kpis:\n  - {id: a, value: 1, tenant: Alpha.Co}\n",
+	}
+	for name, text := range cases {
+		if _, err := Parse([]byte(text)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

@@ -651,3 +651,14 @@ export interface Rollout {
   current?: string;
   stages: RolloutStage[];
 }
+
+export interface TenantKPI {
+  id: string;
+  name: string;
+  unit?: string;
+  value: number;
+  target?: number;
+  direction?: Direction;
+  met: boolean;
+  stale?: boolean;
+}

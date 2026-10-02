@@ -19,6 +19,7 @@ import Decision from './pages/Decision';
 import Objects from './pages/Objects';
 import Workflows from './pages/Workflows';
 import Scenarios from './pages/Scenarios';
+import ServiceLevels from './pages/ServiceLevels';
 import { WhoContext } from './session';
 
 type Session = { state: 'loading' } | { state: 'anon' } | { state: 'in'; who: WhoAmI };
@@ -27,12 +28,12 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
   const tenant = who.identity.tenant;
   // A tenant-bound account lives in its own workspace pages only.
   const allowed = (p: Page) => !tenant || tenantPages.includes(p);
-  const [page, setPageState] = useState<Page>(() => (allowed(pageFromHash()) ? pageFromHash() : 'objects'));
+  const [page, setPageState] = useState<Page>(() => (allowed(pageFromHash()) ? pageFromHash() : tenant ? 'servicelevels' : 'overview'));
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const pulse = usePulse(!tenant);
 
   useEffect(() => {
-    const onHash = () => setPageState(allowed(pageFromHash()) ? pageFromHash() : 'objects');
+    const onHash = () => setPageState(allowed(pageFromHash()) ? pageFromHash() : tenant ? 'servicelevels' : 'overview');
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,6 +87,7 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
         {page === 'objects' && <Objects />}
         {page === 'workflows' && <Workflows setPage={setPage} />}
         {page === 'scenarios' && <Scenarios />}
+        {page === 'servicelevels' && <ServiceLevels />}
         {page === 'decision' && <Decision />}
       </main>
       <footer className="app-footer">

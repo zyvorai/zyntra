@@ -20,6 +20,10 @@ import (
 	"github.com/zyvorai/zyntra/internal/scenario"
 )
 
+// tenantModel adds each tenant's own service levels to the provider model.
+const tenantModel = ontModel + `
+`
+
 func tenantSetup(t *testing.T) *fixture {
 	t.Helper()
 	def, err := ontology.ParseDefinition([]byte(ontDef))
@@ -44,7 +48,9 @@ func tenantSetup(t *testing.T) *fixture {
 	}
 	ac := &ontology.Access{Schema: def.Schema()}
 	scn, _ := scenario.Open("")
-	return setupWith(t, ontModel, func(o *Options) {
+	return setupWith(t, strings.Replace(ontModel, "edges:", `  - {id: alpha_latency, name: Alpha API latency, unit: ms, value: 250, target: 200, direction: lower, tenant: alpha, owner: ops, source: {kind: manual}}
+  - {id: beta_latency, name: Beta API latency, unit: ms, value: 100, target: 200, direction: lower, tenant: beta, owner: ops}
+edges:`, 1), func(o *Options) {
 		o.Ontology = OntologyOptions{Def: def, Store: st, Access: ac, Actions: actions.New(def, st, ac), Scenarios: scn}
 	})
 }
@@ -334,5 +340,107 @@ func TestConnectorCredentialsAreScoped(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no audit entry for connector:mes-alpha: %+v", audit.Events)
+	}
+}
+
+func TestTenantSeesOnlyItsOwnServiceLevels(t *testing.T) {
+	f := tenantSetup(t)
+	var k struct {
+		Tenant string      `json:"tenant"`
+		KPIs   []tenantKPI `json:"kpis"`
+	}
+	if c := f.asTenant(t, "GET", "/api/v1/tenant/kpis", "ann", "alpha", viewer, "", &k); c != 200 || len(k.KPIs) != 1 || k.KPIs[0].ID != "alpha_latency" || k.KPIs[0].Met {
+		t.Fatalf("alpha kpis = %d %+v", c, k)
+	}
+	raw := map[string]any{}
+	f.asTenant(t, "GET", "/api/v1/tenant/kpis", "ann", "alpha", viewer, "", &raw)
+	for _, leak := range []string{"source", "owner", "queue", "beta"} {
+		if strings.Contains(strings.ToLower(toJSON(raw)), leak) {
+			t.Errorf("the tenant KPI list mentions %q: %s", leak, toJSON(raw))
+		}
+	}
+	var g struct{ Gaps []gapView }
+	f.asTenant(t, "GET", "/api/v1/tenant/gaps", "ann", "alpha", viewer, "", &g)
+	if len(g.Gaps) != 1 || g.Gaps[0].KPI != "alpha_latency" || g.Gaps[0].Owner != "" {
+		t.Errorf("alpha gaps = %+v", g.Gaps)
+	}
+	var b struct{ KPIs []tenantKPI }
+	f.asTenant(t, "GET", "/api/v1/tenant/kpis", "bob", "beta", viewer, "", &b)
+	if len(b.KPIs) != 1 || b.KPIs[0].ID != "beta_latency" || !b.KPIs[0].Met {
+		t.Errorf("beta kpis = %+v", b.KPIs)
+	}
+	// A tenant cannot ask for another tenant's: the query is ignored.
+	f.asTenant(t, "GET", "/api/v1/tenant/kpis?tenant=beta", "ann", "alpha", viewer, "", &k)
+	if k.Tenant != "alpha" || len(k.KPIs) != 1 || k.KPIs[0].ID != "alpha_latency" {
+		t.Errorf("?tenant= overrode the caller's tenant: %+v", k)
+	}
+	// The provider can look at any tenant (support), but must name one.
+	var prov struct{ KPIs []tenantKPI }
+	if c := f.as(t, "GET", "/api/v1/tenant/kpis?tenant=beta", "root", []auth.Role{auth.RoleAdmin}, "", &prov); c != 200 || len(prov.KPIs) != 1 {
+		t.Errorf("admin view of beta = %d %+v", c, prov.KPIs)
+	}
+	if c := f.as(t, "GET", "/api/v1/tenant/kpis", "root", []auth.Role{auth.RoleAdmin}, "", nil); c != 400 {
+		t.Errorf("no tenant named = %d", c)
+	}
+}
+
+type gapView struct {
+	KPI   string `json:"kpi"`
+	Owner string `json:"owner"`
+}
+
+func toJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+func TestProviderKPIsAreHiddenBehindAGenericLabel(t *testing.T) {
+	f := tenantSetup(t)
+	// The pack's Cluster type is measured by the provider's "queue" KPI, which fails.
+	f.s.opt.Ontology.Def.Objects[0].KPIs = []string{"queue"}
+	f.s.opt.Ontology.Store.Schema().Objects[0].KPIs = []string{"queue"}
+	var d struct {
+		Failing []string `json:"failing_kpis"`
+		Bound   []string `json:"bound_kpis"`
+	}
+	f.asTenant(t, "GET", "/api/v1/ontology/objects/Cluster:x:ca", "ann", "alpha", viewer, "", &d)
+	if len(d.Failing) != 1 || d.Failing[0] != providerLabel || len(d.Bound) != 1 || d.Bound[0] != providerLabel {
+		t.Fatalf("tenant view of a failing provider KPI = %+v", d)
+	}
+	var admin struct {
+		Failing []string `json:"failing_kpis"`
+	}
+	f.as(t, "GET", "/api/v1/ontology/objects/Cluster:x:ca", "root", []auth.Role{auth.RoleAdmin}, "", &admin)
+	if len(admin.Failing) != 1 || admin.Failing[0] != "queue" {
+		t.Fatalf("the provider should see the real KPI: %+v", admin)
+	}
+	var risk struct {
+		AtRisk []struct {
+			KPIs []string `json:"kpis"`
+		} `json:"at_risk"`
+	}
+	f.asTenant(t, "GET", "/api/v1/ontology/risk", "ann", "alpha", viewer, "", &risk)
+	for _, r := range risk.AtRisk {
+		for _, k := range r.KPIs {
+			if k != providerLabel {
+				t.Errorf("risk leaks KPI %q", k)
+			}
+		}
+	}
+	var a ai.Answer
+	f.asTenant(t, "POST", "/api/v1/ai/ask", "ann", "alpha", viewer, `{"question":"Which customers are at risk?"}`, &a)
+	if strings.Contains(a.Text, "queue") || strings.Contains(strings.Join(a.Grounding, " "), "queue") {
+		t.Errorf("Ask leaks a provider KPI: %s %v", a.Text, a.Grounding)
+	}
+	if !strings.Contains(a.Text, providerLabel) {
+		t.Errorf("Ask should say why: %s", a.Text)
+	}
+	var schema struct {
+		Objects []struct {
+			KPIs []string `json:"kpis"`
+		} `json:"objects"`
+	}
+	f.asTenant(t, "GET", "/api/v1/ontology/schema", "ann", "alpha", viewer, "", &schema)
+	for _, o := range schema.Objects {
+		if len(o.KPIs) != 0 {
+			t.Errorf("a tenant sees schema KPI bindings: %v", o.KPIs)
+		}
 	}
 }

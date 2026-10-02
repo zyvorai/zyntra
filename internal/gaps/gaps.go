@@ -15,6 +15,7 @@ type Gap struct {
 	KPI       string  `json:"kpi"`
 	Name      string  `json:"name"`
 	Owner     string  `json:"owner,omitempty"`
+	Tenant    string  `json:"tenant,omitempty"`
 	Unit      string  `json:"unit,omitempty"`
 	Value     float64 `json:"value"`
 	Target    float64 `json:"target"`
@@ -56,7 +57,7 @@ func Detect(m *graph.Model) []Gap {
 			continue
 		}
 		out = append(out, Gap{
-			KPI: k.ID, Name: k.Name, Owner: k.Owner, Unit: k.DisplayUnit(),
+			KPI: k.ID, Name: k.Name, Owner: k.Owner, Tenant: k.Tenant, Unit: k.DisplayUnit(),
 			Value: k.Value, Target: *k.Target, Direction: string(k.Direction),
 			Severity: s,
 		})
@@ -101,6 +102,17 @@ func ForOwner(g []Gap, owner string) []Gap {
 	out := []Gap{}
 	for _, x := range g {
 		if x.Owner == owner {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// ForTenant keeps only the gaps of one tenant's own KPIs.
+func ForTenant(g []Gap, tenant string) []Gap {
+	out := []Gap{}
+	for _, x := range g {
+		if tenant != "" && x.Tenant == tenant {
 			out = append(out, x)
 		}
 	}

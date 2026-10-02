@@ -19,6 +19,9 @@ type ObjectContext struct {
 	Reader  ontology.Reader
 	Schema  *ontology.Schema
 	Failing func(kpi string) bool
+	// Label names a KPI in an answer; nil shows ids as they are. A tenant-bound
+	// caller's labeller hides provider KPIs behind a generic name.
+	Label func(kpi string) string
 	// Select, when set, narrows candidate objects to the ones relevant to the
 	// question. It may only choose among the candidates it is given and
 	// returns their ids; an empty or invalid result is ignored and every
@@ -61,6 +64,21 @@ type Citation struct {
 	Value      any       `json:"value"`
 	Source     string    `json:"source"`
 	ObservedAt time.Time `json:"observed_at"`
+}
+
+func (oc *ObjectContext) label(kpi string) string {
+	if oc.Label == nil {
+		return kpi
+	}
+	return oc.Label(kpi)
+}
+
+func (oc *ObjectContext) labels(kpis []string) []string {
+	var out []string
+	for _, k := range kpis {
+		out = append(out, oc.label(k))
+	}
+	return dedupe(out)
 }
 
 func name(o ontology.Object) string {
@@ -158,7 +176,7 @@ func exposureAnswer(q string, types []string, oc *ObjectContext) Answer {
 	rows := map[string]*row{}
 	for _, r := range risks {
 		if o, ok := oc.Reader.Get(r.ID); ok && want(o.Type) {
-			rows[r.ID] = &row{o: o, self: r.KPIs, kpis: r.KPIs}
+			rows[r.ID] = &row{o: o, self: oc.labels(r.KPIs), kpis: oc.labels(r.KPIs)}
 		}
 	}
 	for _, e := range ex {
@@ -171,7 +189,7 @@ func exposureAnswer(q string, types []string, oc *ObjectContext) Answer {
 			r = &row{o: o}
 			rows[e.ID] = r
 		}
-		r.deps, r.kpis = e.DependsOn, mergeStrings(r.kpis, e.KPIs)
+		r.deps, r.kpis = e.DependsOn, mergeStrings(r.kpis, oc.labels(e.KPIs))
 	}
 	if len(rows) == 0 {
 		a.Text = "No visible object of that kind is failing a KPI or depends on something that is."
@@ -213,7 +231,7 @@ func exposureAnswer(q string, types []string, oc *ObjectContext) Answer {
 		lines = append(lines, fmt.Sprintf("- %s (%s): %s", name(r.o), r.o.Type, strings.Join(why, "; ")))
 	}
 	for _, r := range risks {
-		for _, k := range r.KPIs {
+		for _, k := range oc.labels(r.KPIs) {
 			a.Grounding = append(a.Grounding, "kpi:"+k)
 		}
 	}
@@ -249,7 +267,7 @@ func describeAnswer(o ontology.Object, risky bool, oc *ObjectContext) Answer {
 	if len(links) > 0 {
 		text += " Links: " + strings.Join(links, "; ") + "."
 	}
-	if bad := failingOf(o, oc); len(bad) > 0 {
+	if bad := oc.labels(failingOf(o, oc)); len(bad) > 0 {
 		text += " It is failing: " + strings.Join(bad, ", ") + "."
 		for _, k := range bad {
 			a.Grounding = append(a.Grounding, "kpi:"+k)
