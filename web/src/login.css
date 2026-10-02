@@ -436,17 +436,17 @@ a.login-cta-secondary:active {
   font-size: 0.9375rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: hsl(211 100% 45%);
+  color: hsl(0 0% 100%);
   border-radius: 980px;
-  border: 1px solid hsl(211 100% 45%);
-  background: hsl(0 0% 100%);
+  border: 1px solid transparent;
+  background: hsl(211 100% 45%);
   text-decoration: none;
   font-family: inherit;
   transition: background 0.15s ease, transform 0.1s ease;
 }
 
 .login-btn-secondary:hover {
-  background: hsl(211 100% 45% / 0.06);
+  background: #0077ed;
 }
 
 .login-method-toggle {
@@ -742,20 +742,21 @@ main.login-store-scroll {
   padding: 0;
   overflow-x: hidden;
 }
+/* Every button on the sign-in pages is apple.com blue. */
 .login-page[data-tone='violet'] .login-btn-primary,
-.login-page[data-tone='violet'] .login-cta-primary {
-  background: var(--tone-violet);
+.login-page[data-tone='violet'] .login-cta-primary,
+.login-page[data-tone='violet'] .login-cta-secondary,
+.login-page[data-tone='violet'] a.login-cta-secondary {
+  background: #0071e3;
+  border-color: transparent;
+  color: #fff;
 }
 .login-page[data-tone='violet'] .login-btn-primary:hover:not(:disabled),
-.login-page[data-tone='violet'] .login-cta-primary:hover {
-  background: #6d28d9;
-}
-.login-page[data-tone='violet'] .login-cta-secondary {
-  border-color: var(--tone-violet);
-  color: var(--tone-violet);
-}
-.login-page[data-tone='violet'] .login-cta-secondary:hover {
-  background: var(--tone-violet-tint);
+.login-page[data-tone='violet'] .login-cta-primary:hover,
+.login-page[data-tone='violet'] .login-cta-secondary:hover,
+.login-page[data-tone='violet'] a.login-cta-secondary:hover {
+  background: #0077ed;
+  color: #fff;
 }
 .login-page[data-tone='violet'] .login-input:focus {
   border-color: var(--tone-violet);
