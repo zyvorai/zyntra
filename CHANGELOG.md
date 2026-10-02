@@ -2,7 +2,7 @@
 
 ## v0.4.0 — unreleased
 
-Phase A of the packs plan: one engine, and every industry is a pack. A shop runs from CSV exports with no Kubernetes in the loop.
+Phases A and B of the packs plan: one engine, and every industry is a pack. A shop runs from CSV exports with no Kubernetes in the loop. Ranking is pessimistic, and the audit chain covers what was sent and what came back. Runs as a binary, a container or a Helm release.
 
 ### Added
 
@@ -14,11 +14,25 @@ Phase A of the packs plan: one engine, and every industry is a pack. A shop runs
 - **Units and calendars.** KPI `unitClass` (`percent`, `count`, `currency`, `duration`, `ratio`) and ISO `currency`. One weekly-window calendar shared by KPIs, actions and the approval policy; outside its window a KPI holds its last in-window value (`held`).
 - **Owner filter:** `gaps -owner`, `plan -owner`, and `?owner=` on `/gaps`, `/plan` and `/ai/digest`.
 - **Predicted versus actual per KPI** on the outcome record, with absolute error, hit or miss, and a hit rate.
+- **GPU pack** (`packs/gpu`): the lab model moved from `examples/lab-kpis.yaml` and gained a manifest, sources list and README.
+- **Pessimistic ranking.** The score is the pessimistic improvement (every edge at the bad end of its uncertainty) minus risk and staleness. `plan` and the console show nominal gain and worst case. Actions that only win when every edge holds are marked `optimistic_only` and rank below the rest.
+- **Pairs that work against themselves** (members moving one KPI in opposite directions by 1% or more) are listed in `cancels` and drop to medium confidence.
+- **Audit chain covers payloads.** Audit events carry `payload_sha256` (the rendered request, file, command or noop text) and `response_sha256`, inside the hash chain. Executions report `payload_hash`. Older chains still verify.
+- **Ask names the pack:** grounding facts start with `pack:<id>@<version>`.
+- **Test webhook receiver** (`examples/receiver`, `bin/zyntra-receiver`): stores deliveries, answers a repeated `Idempotency-Key` with 200 and `duplicate: true`, redacts credentials. `make run-shop` wires the shop pack to it.
+- **Container image** with `packs/`, `examples/` and the receiver; state in the `/var/lib/zyntra` volume, read-only root, uid 65532, OCI labels, `VERSION` build arg. `docker-compose.yml` runs the shop pack with the receiver.
+- **Helm chart** (`deploy/helm/zyntra`): single-writer Deployment, generated-once or existing Secret, PVC, probes, policy ConfigMap, optional Ingress, NetworkPolicy and receiver. Rendered manifest in `deploy/kubernetes/zyntra.yaml`.
+- **`scripts/deploy-k8s.sh`** builds the image on a k3s host with podman, imports it, installs the chart and runs the smoke test. Makefile targets `docker`, `compose-up`, `helm-lint`, `k8s-manifest`, `deploy-k8s`.
+- **`deploy-remote.sh --pack NAME`** validates and ships `packs/` and serves the chosen pack (default `gpu`); it generates an ingest token.
+- **e2e for the shop pack:** manual value, ingest token scope, owner filter, webhook to the receiver with idempotency, file action, audit verify.
+- **CI** validates every pack, lints the chart, fails on manifest drift, and builds and boots the image.
 - **Console:** webhook, file and noop payloads in Approvals with the compensating action; source states, manual value entry and webhook-in channels in Signals; owner filter and precondition state in Gaps and Plan; predicted versus actual in the decision record; pack and action kinds on the Model page.
 
 ### Changed
 
 - `docs/PRODUCT_PLAN.md` is rewritten around packs, with the build order in Phases A to D.
+- The smoke test prefers actions without a maintenance window and treats a window hold as a pass; it posts missing manual values and reports the pack.
+- The score no longer subtracts 0.25 × uncertainty; uncertainty now acts through the pessimistic case.
 - Unserved sources now appear in source health as `fallback` instead of being omitted.
 - Policy maintenance windows use the shared calendar; the refusal reads "outside window NAME".
 - Go 1.27 (`go.mod`, CI and the Docker build image), with `go fix` modernizations.

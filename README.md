@@ -22,7 +22,7 @@ Zyntra keeps a live graph of the KPIs your infrastructure is judged on (SLOs, la
 
 ![Zyntra console — Overview](docs/ux/overview.png)
 
-> **Maturity (honest):** v0.3 turned the approval inbox into a decision engine: criticality-weighted scoring, hard constraints, prediction ranges, per-KPI freshness, combined actions, quorum approvals with roles and SSO, re-checks right before execution, outcome verification with linked rollbacks, and signed, hash-chained decision records. v0.4 (in development, Phase A of the [plan](docs/PRODUCT_PLAN.md)) adds packs, file/http/sheet/webhook-in/manual sources, webhook/file/noop actions with preconditions and invariants, owner filters and predicted-versus-actual per KPI. One pack ships so far ([shop](packs/shop)); the GPU lab model has not moved to `packs/gpu` yet. Changes still execute **only after human approval** and in dry-run by default. The simulator is a deterministic model over the edge weights and effects you supply; it does not learn them, and its ranges come from the uncertainty you declare, not from data. Sources only read. The AI layer explains and forecasts; it never picks or runs an action.
+> **Maturity (honest):** v0.3 turned the approval inbox into a decision engine: criticality-weighted scoring, hard constraints, prediction ranges, per-KPI freshness, combined actions, quorum approvals with roles and SSO, re-checks right before execution, outcome verification with linked rollbacks, and signed, hash-chained decision records. v0.4 (in development, Phase A of the [plan](docs/PRODUCT_PLAN.md)) adds packs, file/http/sheet/webhook-in/manual sources, webhook/file/noop actions with preconditions and invariants, owner filters and predicted-versus-actual per KPI. Two packs ship: [shop](packs/shop) and [gpu](packs/gpu) (the lab model). Ranking now uses the pessimistic case, pairs that work against themselves are flagged, and the audit chain covers the rendered payload and the response hash. Zyntra runs as a single binary, a container image, or a Helm release. Changes still execute **only after human approval** and in dry-run by default. The simulator is a deterministic model over the edge weights and effects you supply; it does not learn them, and its ranges come from the uncertainty you declare, not from data. Sources only read. The AI layer explains and forecasts; it never picks or runs an action.
 
 ## Why Zyntra
 
@@ -72,6 +72,7 @@ Or run a shop from CSV exports, with no Kubernetes and no live sources:
 ./bin/zyntra plan -f packs/shop
 ./bin/zyntra simulate -f packs/shop -action reorder_fast_movers   # prints the dry-run purchase order
 ZYNTRA_API_KEY=dev ./bin/zyntra serve -f packs/shop
+make run-shop             # same, with webhooks landing in the test receiver on :9099
 ```
 
 ```text
@@ -115,7 +116,7 @@ actions:
 - **Gap severity** is the relative shortfall against target (`0.4` = 40% off), multiplied by the KPI's criticality weight (`critical` 4, `high` 2, `normal` 1, `low` 0.5). The plan minimises the weighted sum.
 - **Propagation** runs in topological order with interval arithmetic: every effect and edge carries a low/nominal/high band, so predictions come with a range. Effects are relative (a fraction) or `mode: absolute` (in the KPI's unit, so a KPI at zero can move), can `saturate` and take a `delay`. Results are clamped to `min`/`max`; KPIs without bounds can't drop below zero.
 - **Hard constraints** (`constraints:`) set a floor, ceiling or `mustNotWorsen` on a KPI. Critical KPIs with a target are constraints automatically. An action that would breach one, even at the pessimistic end of its band, is listed as blocked instead of ranked.
-- **Score** = weighted gap reduction − risk penalty (low 0, medium 0.05, high 0.15) − 0.25 × uncertainty − 0.1 per stale input. Zyntra also tries pairs of actions that touch different KPIs and keeps a pair only if it beats both actions alone. Each recommendation has a confidence (high, medium, low).
+- **Score** = weighted gap reduction in the **pessimistic** case (every edge and effect at the bad end of its declared uncertainty) − risk penalty (low 0, medium 0.05, high 0.15) − 0.1 per stale input. `plan` shows both the nominal gain and the worst case. An action that only wins when every edge holds is marked *optimistic only* and ranks below the ones that win anyway. Zyntra also tries pairs of actions that touch different KPIs and keeps a pair only if it beats both actions alone; a pair whose members push the same KPI in opposite directions (by 1% or more) is flagged *works against itself* and drops to medium confidence. Each recommendation has a confidence (high, medium, low).
 - **Preconditions and invariants** (v0.4). An action whose precondition does not hold (or whose input is stale) is ranked after the approvable ones with status `precondition-failed` and cannot be proposed. An action whose simulation worsens an invariant KPI by more than `max_worsen`, at the nominal or pessimistic end, is blocked like a constraint breach.
 
 ### Model reference (v0.3)
@@ -242,7 +243,7 @@ zyntra gaps -f examples/prometheus-kpis.yaml -prometheus http://prometheus:9090 
   source: {kind: fabric, path: /api/v1/system/info, field: "filesystems.#(mountpoint=/).usage_percent"}
 ```
 
-Fields support `a.b.0`, `list.#` (count), `list.#(k=v)` (count matches), `list.#(k=v).f` (field of the first match) and `list.*.f`, plus `scale`, `agg: sum|avg|max|min` and `rate`. See [examples/lab-kpis.yaml](examples/lab-kpis.yaml) for a full lab model (20 KPIs) that uses every v0.3 field.
+Fields support `a.b.0`, `list.#` (count), `list.#(k=v)` (count matches), `list.#(k=v).f` (field of the first match) and `list.*.f`, plus `scale`, `agg: sum|avg|max|min` and `rate`. See [packs/gpu](packs/gpu) for a full lab model (20 KPIs) that uses every v0.3 field.
 
 ## Packs (any industry)
 
@@ -282,7 +283,9 @@ Every source reports `ok`, `stale`, `error` or `fallback`. Only `${ZYNTRA_*}` va
   compensate: cancel_open_po                         # linked on the proposal as the undo; never auto-run
 ```
 
-After an apply, the decision record compares predicted and actual per KPI and marks each a hit or a miss. See [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for the pack catalog and build order.
+After an apply, the decision record compares predicted and actual per KPI and marks each a hit or a miss. Every audit event for an action also carries `payload_sha256` (what was approved and sent) and, after a webhook, `response_sha256`; both are inside the hash chain, so `GET /api/v1/audit/verify` fails if either is altered.
+
+**Test inbox.** `examples/receiver` (built as `bin/zyntra-receiver`) accepts webhook deliveries, stores one JSON file per delivery, answers a repeated `Idempotency-Key` with `200 {"duplicate":true}` instead of recording it twice, and redacts `Authorization`, `Cookie` and `X-Api-Key`. Point a pack's URLs at it during a pilot (`make run-shop` does) and open `http://127.0.0.1:9099` to see what landed. See [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for the pack catalog and build order.
 
 ## Console
 
@@ -435,17 +438,57 @@ All routes except `/healthz`, `/api/v1/meta`, sign-in and the OIDC redirects nee
 
 ## Deploy
 
+Three ways to run it, same binary inside each. Dry-run is the default everywhere; set `ZYNTRA_EXECUTE=apply` only when the targets are real and approvers are named.
+
+### Binary on a host (systemd)
+
 ```bash
-./scripts/deploy-remote.sh 212.8.248.187 sus     # build, install, configure Keep, deploy agent, smoke
-./scripts/smoke-remote.sh                         # re-run the smoke test against .deploy-last
+./scripts/deploy-remote.sh 212.8.248.187 sus                 # gpu pack, live Netra/Gravia/Fabric/Keep, smoke
+./scripts/deploy-remote.sh 212.8.248.187 sus --pack shop     # any pack in packs/
+./scripts/smoke-remote.sh                                     # re-run the smoke test against .deploy-last
 ./scripts/deploy-remote.sh 212.8.248.187 sus --uninstall
 ```
 
-The deploy script cross-compiles locally and installs `zyntra.service` serving the lab GPU model (`examples/lab-kpis.yaml`) with live Netra, Gravia, Fabric and Keep sources. It writes `/etc/zyntra/zyntra.env` (root:zyntra, 0640) from credentials already on the host: the Netra k8s secret, the Gravia API key, Fabric's admin password and the Keep token. They are never printed. It also adds the `zyntra-exec` credential and exec CA to Keep (after backing up Keep's env file) and signs the executor agent on your workstation. Options: `--port`, `--exec-port`, `--no-keep`, `--skip-web`, `--dry-run`, `--skip-smoke`.
+The script cross-compiles locally, validates the chosen pack, ships `packs/` and `examples/` to `/etc/zyntra`, and installs `zyntra.service` serving `/etc/zyntra/packs/<pack>`. It writes `/etc/zyntra/zyntra.env` (root:zyntra, 0640) from credentials already on the host (the Netra k8s secret, the Gravia API key, Fabric's admin password, the Keep token) and generates an ingest token; none are printed. It also adds the `zyntra-exec` credential and exec CA to Keep (after backing up Keep's env file) and signs the executor agent on your workstation. Options: `--pack`, `--port`, `--exec-port`, `--no-keep`, `--skip-web`, `--dry-run`, `--skip-smoke`. This is the install to use for kubectl actions and the Kubernetes adapters.
 
-The script does not copy `packs/` yet. To run a pack on a host, copy its directory and point `-f` at it, for example `zyntra serve -f /opt/zyntra/packs/shop` with `ZYNTRA_OUTPUT_DIR` for file actions and `ZYNTRA_INGEST_TOKEN` if the pack has webhook-in sources.
+The smoke test logs in, posts any missing manual values, checks sources, gaps, plan and AI, then proposes and approves one action. It prefers an action without a maintenance window; if the action it picks is held for its window, that counts as a pass and it says so.
 
 On the lab host, Keep sandboxes cannot reach the egress broker, so approved actions run locally and the audit records the executor as `zyntra (keep unavailable)`. The smoke test shows this line on purpose; set `keep: required` in the policy to block instead.
+
+### Container (Docker or Podman)
+
+```bash
+make docker                                          # zyntra:<version>, docker or podman
+docker run --rm -p 8080:8080 -e ZYNTRA_API_KEY=dev zyntra:0.4.0-dev                 # shop pack
+docker run --rm -p 8080:8080 -e ZYNTRA_API_KEY=dev zyntra:0.4.0-dev serve -f packs/gpu
+ZYNTRA_API_KEY=$(openssl rand -hex 24) docker compose up --build                    # shop + test receiver
+```
+
+The image is distroless, runs as uid 65532, and keeps state (proposals, audit chain, inputs, file actions) in the `/var/lib/zyntra` volume, so a read-only root filesystem works. It contains `zyntra`, `zyntra-receiver`, `packs/` and `examples/`. It does **not** contain kubectl: kubectl actions and the Netra/Gravia Kubernetes adapters need the binary install. Packs with file, http, sheet, webhook-in and manual sources and webhook, file or noop actions work as is. To run your own pack, mount it and point `-f` at it (`-v $PWD/packs/mine:/app/packs/mine:ro ... serve -f packs/mine`).
+
+[docker-compose.yml](docker-compose.yml) runs the shop pack with the receiver standing in for the POS and ERP (`http://127.0.0.1:9099`), both containers read-only with all capabilities dropped. Add `ZYNTRA_EXECUTE=apply` to watch an approved markdown arrive in the inbox.
+
+### Kubernetes (Helm or plain manifest)
+
+```bash
+helm upgrade --install zyntra deploy/helm/zyntra -n zyntra --create-namespace \
+  --set image.repository=registry.example/zyntra --set image.tag=0.4.0-dev --set pack=shop
+kubectl -n zyntra port-forward svc/zyntra 8080:8080
+kubectl -n zyntra get secret zyntra-auth -o jsonpath='{.data.ZYNTRA_API_KEY}' | base64 -d
+```
+
+The chart ([deploy/helm/zyntra](deploy/helm/zyntra/values.yaml)) runs one replica with a `Recreate` strategy, because proposals and the audit chain are file state with a single writer. It generates the API key, session secret, ingest token and exec token once and keeps them across upgrades, or uses `auth.existingSecret`. It also provides: a PVC for state (kept on uninstall), probes on `/healthz`, a non-root pod with a read-only root filesystem and no service account token, inline `policy`, extra `env`, optional Ingress and NetworkPolicy, and an optional test receiver (`receiver.enabled`). `modelPath` together with `extraVolumes` serves a pack from a ConfigMap or volume instead of the image.
+
+Without Helm, use the rendered [deploy/kubernetes/zyntra.yaml](deploy/kubernetes/zyntra.yaml); its header shows the one `kubectl create secret` it needs. Regenerate it with `make k8s-manifest`; CI fails if it drifts from the chart.
+
+For a k3s host with no registry, `deploy-k8s.sh` builds the image there with podman, imports it into containerd, installs the chart on a NodePort and runs the smoke test:
+
+```bash
+./scripts/deploy-k8s.sh 212.8.248.187 sus --pack shop     # http://212.8.248.187:30962
+make deploy-k8s HOST=212.8.248.187 PACK=shop
+```
+
+Options: `--namespace`, `--node-port`, `--execute dry-run|apply`, `--no-receiver`, `--no-smoke`. The image tag is `<version>-<git sha>`, so each deploy rolls the pod.
 
 ## Where it fits in Zyvor
 
@@ -463,7 +506,8 @@ make check      # gofmt, vet, unit tests, build
 make test-e2e   # CLI + API + console smoke test against fake sources
 zyntra pack validate packs/shop   # check a pack against its fixture
 cd web && ZYNTRA_DEV_API=http://127.0.0.1:8080 npm run dev   # console with hot reload
-docker build -t zyntra .
+make docker     # container image (docker or podman)
+make helm-lint  # lint the chart and render it with every option on
 ```
 
 See [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Social and README images are rebuilt from HTML; see [docs/social](docs/social/README.md).
