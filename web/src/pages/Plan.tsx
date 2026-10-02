@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { api, can, sev, type Answer, type PlanResponse, type Proposal, type Recommendation } from '../api';
-import { useApi } from '../hooks';
+import { useApi, useOwner, withOwner } from '../hooks';
 import type { Page } from '../nav';
 import { useWho } from '../session';
 import SimResultView from '../components/SimResultView';
-import { Card, Empty, ErrorNote, PageHero, Pill, riskTone } from '../components/ui';
+import { Card, Empty, ErrorNote, OwnerFilter, PageHero, Pill, riskTone } from '../components/ui';
 
 const confTone = { high: 'ok', medium: 'warn', low: 'bad' } as const;
 
 export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
-  const { data, error } = useApi<PlanResponse>('/api/v1/plan', 15000);
+  const [owner, setOwner] = useOwner();
+  const { data, error } = useApi<PlanResponse>(withOwner('/api/v1/plan', owner), 15000);
   const [open, setOpen] = useState<string | null>(null);
   const [explain, setExplain] = useState<Record<string, Answer>>({});
   const [busy, setBusy] = useState('');
@@ -64,6 +65,7 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
         lede="Every action, and pairs that work together, simulated against live values. Ranked by criticality-weighted improvement minus risk, uncertainty and stale-input penalties. Anything that would breach a hard constraint is listed separately. Nothing runs until a human approves it."
       />
       <ErrorNote message={error} />
+      <OwnerFilter owners={data?.owners} value={owner} onChange={setOwner} />
       {data?.unusable_inputs?.length ? (
         <p className="info-note">
           Stale or missing inputs: <strong>{data.unusable_inputs.join(', ')}</strong>. Predictions that depend on them are penalised and marked low confidence.
@@ -77,9 +79,11 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
           </button>
         </p>
       ) : null}
-      {data && recs.length === 0 ? <Empty>No action improves the current gaps without breaking a constraint.</Empty> : null}
+      {data && recs.length === 0 ? <Empty>{owner ? `No action improves the gaps owned by ${owner}.` : 'No action improves the current gaps without breaking a constraint.'}</Empty> : null}
       <div className="stack">
-        {recs.map((r) => (
+        {recs.map((r) => {
+          const waiting = r.status === 'precondition-failed';
+          return (
           <Card
             key={r.action}
             title={
@@ -89,6 +93,7 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
             }
             aside={
               <div className="pills">
+                {waiting ? <Pill tone="warn">precondition not met</Pill> : null}
                 {r.actions && r.actions.length > 1 ? <Pill tone="purple">combined</Pill> : null}
                 {r.adapter ? <Pill tone="info">{r.adapter}</Pill> : null}
                 <Pill tone={riskTone(r.risk)}>{r.risk || 'low'} risk</Pill>
@@ -118,11 +123,14 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
               ) : null}
               {r.stale_inputs?.length ? <span className="down">stale: {r.stale_inputs.join(', ')}</span> : null}
             </div>
+            {r.precondition_failures?.length ? (
+              <p className="info-note small">Not approvable now: {r.precondition_failures.join('; ')}</p>
+            ) : null}
             {explain[r.action] ? <p className="prose ai-text">{explain[r.action].text}</p> : null}
             {open === r.action ? <SimResultView r={r.result} /> : null}
             <div className="row-actions">
               {mayPropose ? (
-                <button className="primary" disabled={busy !== ''} onClick={() => propose(r.action)}>
+                <button className="primary" disabled={busy !== '' || waiting} onClick={() => propose(r.action)}>
                   {busy === `p-${r.action}` ? 'Proposing…' : 'Propose for approval'}
                 </button>
               ) : null}
@@ -134,12 +142,13 @@ export default function Plan({ setPage }: { setPage: (p: Page) => void }) {
               </button>
             </div>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       {blocked.length ? (
-        <Card title="Blocked by hard constraints" aside={<Pill tone="bad">{blocked.length}</Pill>}>
-          <p className="muted small">These would improve some KPIs but break a constraint, so Zyntra will not propose them.</p>
+        <Card title="Blocked by constraints and invariants" aside={<Pill tone="bad">{blocked.length}</Pill>}>
+          <p className="muted small">These would improve some KPIs but break a constraint or an invariant, so Zyntra will not propose them.</p>
           <table className="table compact">
             <thead>
               <tr>

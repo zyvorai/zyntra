@@ -1143,3 +1143,9 @@ input, select, textarea {
   .digest-chip { display: none; }
   .table { display: block; overflow-x: auto; }
 }
+
+.owner-filter { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+.owner-filter select { min-width: 140px; }
+.manual-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.manual-form input[type='number'] { width: 120px; }
+.manual-form input[type='text'] { flex: 1; min-width: 160px; }

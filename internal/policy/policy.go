@@ -11,12 +11,12 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/zyvorai/zyntra/internal/calendar"
 	"github.com/zyvorai/zyntra/internal/graph"
 )
 
@@ -83,16 +83,7 @@ type Rule struct {
 
 // Window is a recurring maintenance window. End before Start wraps past
 // midnight.
-type Window struct {
-	Days  []string `yaml:"days,omitempty" json:"days,omitempty"`
-	Start string   `yaml:"start" json:"start"`
-	End   string   `yaml:"end" json:"end"`
-	TZ    string   `yaml:"timezone,omitempty" json:"timezone,omitempty"`
-
-	loc        *time.Location
-	start, end int
-	days       map[time.Weekday]bool
-}
+type Window = calendar.Window
 
 // User is a local account for installs without an identity provider.
 type User struct {
@@ -102,8 +93,8 @@ type User struct {
 }
 
 type Policy struct {
-	Rules        []Rule            `yaml:"rules,omitempty" json:"rules,omitempty"`
-	Windows      map[string]Window `yaml:"maintenanceWindows,omitempty" json:"maintenance_windows,omitempty"`
+	Rules        []Rule       `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Windows      calendar.Set `yaml:"maintenanceWindows,omitempty" json:"maintenance_windows,omitempty"`
 	Revalidation struct {
 		// MaxDrift is the largest fall in predicted improvement, as a
 		// fraction, tolerated between approval and execution.
@@ -124,11 +115,6 @@ type Effective struct {
 	Windows              []string      `json:"maintenance_windows,omitempty"`
 	RequireFresh         bool          `json:"require_fresh"`
 	Keep                 string        `json:"keep"`
-}
-
-var weekdays = map[string]time.Weekday{
-	"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday,
-	"thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday,
 }
 
 // Load reads a policy file; an empty path returns the default policy.
@@ -163,40 +149,9 @@ func Parse(text string) (*Policy, error) {
 	return p, p.validate()
 }
 
-func clock(s string) (int, error) {
-	h, m, ok := strings.Cut(s, ":")
-	hh, err1 := strconv.Atoi(h)
-	mm, err2 := strconv.Atoi(m)
-	if !ok || err1 != nil || err2 != nil || hh < 0 || hh > 24 || mm < 0 || mm > 59 || hh*60+mm > 24*60 {
-		return 0, fmt.Errorf("bad time %q (want HH:MM)", s)
-	}
-	return hh*60 + mm, nil
-}
-
 func (p *Policy) validate() error {
-	for name, w := range p.Windows {
-		var err error
-		if w.start, err = clock(w.Start); err != nil {
-			return fmt.Errorf("window %s: %w", name, err)
-		}
-		if w.end, err = clock(w.End); err != nil {
-			return fmt.Errorf("window %s: %w", name, err)
-		}
-		w.loc = time.UTC
-		if w.TZ != "" {
-			if w.loc, err = time.LoadLocation(w.TZ); err != nil {
-				return fmt.Errorf("window %s: %w", name, err)
-			}
-		}
-		w.days = map[time.Weekday]bool{}
-		for _, d := range w.Days {
-			wd, ok := weekdays[strings.ToLower(d)[:min(3, len(d))]]
-			if !ok {
-				return fmt.Errorf("window %s: unknown day %q", name, d)
-			}
-			w.days[wd] = true
-		}
-		p.Windows[name] = w
+	if err := p.Windows.Compile(nil); err != nil {
+		return err
 	}
 	for i, r := range p.Rules {
 		if r.Approvals < 0 {
@@ -227,15 +182,36 @@ func (p *Policy) validate() error {
 	return nil
 }
 
-// CheckModel reports action policies that name unknown windows.
+// UseModel adds the model's calendars as windows. Windows in the policy
+// file win over model calendars with the same name.
+func (p *Policy) UseModel(m *graph.Model) {
+	if len(m.Calendars) == 0 {
+		return
+	}
+	if p.Windows == nil {
+		p.Windows = calendar.Set{}
+	}
+	for name, w := range m.Calendars {
+		if _, ok := p.Windows[name]; !ok {
+			p.Windows[name] = w
+		}
+	}
+}
+
+// CheckModel reports actions that name unknown windows. Call UseModel first
+// so model calendars count.
 func (p *Policy) CheckModel(m *graph.Model) error {
 	for _, a := range m.Actions {
-		if a.Policy == nil {
-			continue
+		var names []string
+		if a.Window != "" {
+			names = append(names, a.Window)
 		}
-		for _, w := range a.Policy.Windows {
+		if a.Policy != nil {
+			names = append(names, a.Policy.Windows...)
+		}
+		for _, w := range names {
 			if _, ok := p.Windows[w]; !ok {
-				return fmt.Errorf("action %s: unknown maintenance window %q", a.ID, w)
+				return fmt.Errorf("action %s: unknown window %q", a.ID, w)
 			}
 		}
 	}
@@ -284,6 +260,14 @@ func (p *Policy) one(a graph.Action) Effective {
 				}
 			}
 		}
+	}
+	if a.Approvers > 0 || a.Window != "" {
+		r := Rule{Approvals: a.Approvers}
+		if a.Window != "" {
+			r.Windows = []string{a.Window}
+		}
+		apply(r)
+		e.Rules = append(e.Rules, "action:"+a.ID)
 	}
 	if ap := a.Policy; ap != nil {
 		apply(Rule{Approvals: ap.Approvals, Keep: ap.Keep, RequireFresh: ap.RequireFresh, Windows: ap.Windows})
@@ -346,31 +330,11 @@ func (p *Policy) InWindow(names []string, t time.Time) (bool, string) {
 	if len(names) == 0 {
 		return true, ""
 	}
-	for _, n := range names {
-		w, ok := p.Windows[n]
-		if ok && w.contains(t) {
-			return true, ""
-		}
+	if p.Windows.Any(names, t) {
+		return true, ""
 	}
-	return false, "outside maintenance window " + strings.Join(names, ", ")
+	return false, "outside window " + strings.Join(names, ", ")
 }
-
-func (w Window) contains(t time.Time) bool {
-	lt := t.In(w.loc)
-	mins := lt.Hour()*60 + lt.Minute()
-	day := lt.Weekday()
-	if w.start <= w.end {
-		return w.dayOK(day) && mins >= w.start && mins < w.end
-	}
-	// Wraps midnight: the late part belongs to day, the early part to the
-	// day before.
-	if mins >= w.start {
-		return w.dayOK(day)
-	}
-	return mins < w.end && w.dayOK((day+6)%7)
-}
-
-func (w Window) dayOK(d time.Weekday) bool { return len(w.days) == 0 || w.days[d] }
 
 // User looks up a local account.
 func (p *Policy) User(name string) (User, bool) {

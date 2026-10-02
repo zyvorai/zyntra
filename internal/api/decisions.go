@@ -35,20 +35,31 @@ func (s *Server) inputs(m *graph.Model, st []freshness.State) *approvals.Inputs 
 }
 
 // render renders every executable action; advisory actions are skipped.
-func render(acts []graph.Action) (templates []string, display string, err error) {
+func render(m *graph.Model, acts []graph.Action) (templates, kinds []string, display string, err error) {
 	var parts []string
 	for _, a := range acts {
-		if a.Execute == nil {
+		if a.Kind() == "" {
 			continue
 		}
-		templates = append(templates, a.Execute.Template)
-		rd, rerr := executor.Render(a)
+		templates = append(templates, executor.Template(a))
+		kinds = append(kinds, a.Kind())
+		rd, rerr := executor.RenderIn(m, a)
 		if rerr != nil {
-			return templates, "", fmt.Errorf("%s: %w", a.ID, rerr)
+			return templates, kinds, "", fmt.Errorf("%s: %w", a.ID, rerr)
 		}
 		parts = append(parts, rd.Display)
 	}
-	return templates, strings.Join(parts, "---\n"), nil
+	return templates, kinds, strings.Join(parts, "---\n"), nil
+}
+
+func compensations(acts []graph.Action) []string {
+	var out []string
+	for _, a := range acts {
+		if a.Compensate != "" {
+			out = append(out, a.Compensate)
+		}
+	}
+	return out
 }
 
 func describe(acts []graph.Action) (risk graph.Risk, adapter string) {
@@ -91,7 +102,11 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 		for _, v := range res.Violations {
 			why = append(why, v.Text)
 		}
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "blocked by hard constraints", "blocked_reasons": why})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "blocked by constraints or invariants", "blocked_reasons": why})
+		return
+	}
+	if len(res.PreconditionFailures) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "preconditions not met", "blocked_reasons": res.PreconditionFailures})
 		return
 	}
 	eff := s.opt.Policy.For(acts...)
@@ -103,7 +118,7 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	p := approvals.Proposal{
 		Action: res.Action, Actions: ids, ActionName: res.ActionName, Risk: string(risk), Adapter: adapter,
 		ModelVersion: m.Version(), Inputs: s.inputs(m, st), Simulation: &res, Policy: &eff,
-		RequiredApprovals: eff.Approvals,
+		RequiredApprovals: eff.Approvals, Compensate: compensations(acts),
 		Predicted: approvals.Prediction{SeverityBefore: res.SeverityBefore, SeverityAfter: res.SeverityAfter,
 			Closes: res.GapsClosed, Opens: res.GapsOpened, KPIs: map[string]float64{}},
 		Baseline: map[string]float64{},
@@ -114,8 +129,11 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 			p.Baseline[k.KPI] = k.Before
 		}
 	}
-	tpls, display, rerr := render(acts)
-	p.Template = strings.Join(tpls, "+")
+	if m.Pack != nil {
+		p.PackID = m.Pack.ID
+	}
+	tpls, kinds, display, rerr := render(m, acts)
+	p.Template, p.Kinds = strings.Join(tpls, "+"), kinds
 	if rerr != nil {
 		p.RenderErr = rerr.Error()
 	} else {
@@ -370,6 +388,12 @@ func (s *Server) actionsFor(m *graph.Model, p approvals.Proposal) ([]graph.Actio
 	}
 	var out []graph.Action
 	for _, a := range src {
+		if a.Compensate != "" {
+			if ca, ok := m.Action(a.Compensate); ok {
+				out = append(out, *ca)
+				continue
+			}
+		}
 		if ra, ok := executor.RollbackAction(a); ok {
 			out = append(out, ra)
 		}
@@ -425,6 +449,7 @@ func (s *Server) revalidate(p approvals.Proposal, m *graph.Model, acts []graph.A
 	for _, v := range res.Violations {
 		rv.Reasons = append(rv.Reasons, "would breach constraint: "+v.Text)
 	}
+	rv.Reasons = append(rv.Reasons, res.PreconditionFailures...)
 	rv.WeightedImprovement = res.WeightedImprovement()
 	orig := p.Predicted.SeverityBefore - p.Predicted.SeverityAfter
 	if p.Simulation != nil {
@@ -474,16 +499,28 @@ func (s *Server) execute(ctx context.Context, id, by string) approvals.Proposal 
 	}
 	var outputs []string
 	for _, a := range acts {
-		if a.Execute == nil {
+		if a.Kind() == "" {
 			continue
 		}
-		rd, err := executor.Render(a)
+		rd, err := executor.RenderIn(m, a)
 		if err != nil {
 			res.OK, res.Error = false, a.ID+": "+err.Error()
 			break
 		}
+		rd.Key = id
 		one := s.opt.Executor.Execute(ctx, rd)
 		res.Mode = one.Mode
+		if res.Kind == "" {
+			res.Kind = one.Kind
+		} else if one.Kind != res.Kind {
+			res.Kind = "multiple"
+		}
+		if one.Status != 0 {
+			res.Status, res.ResponseHash = one.Status, one.ResponseHash
+		}
+		if one.Written != "" {
+			res.Written = one.Written
+		}
 		if len(res.Args) > 0 {
 			res.Args = append(res.Args, ";")
 		}
@@ -581,14 +618,14 @@ func (s *Server) proposeRollback(m *graph.Model, p approvals.Proposal) {
 		_, _ = s.opt.Store.Record(p.ID, "zyntra", "no rollback available: "+err.Error(), func(*approvals.Proposal) {})
 		return
 	}
-	tpls, display, rerr := render(acts)
+	tpls, kinds, display, rerr := render(m, acts)
 	ids := make([]string, len(acts))
 	for i, a := range acts {
 		ids[i] = a.ID
 	}
 	rb = approvals.Proposal{
-		Action: p.Action + ".rollback", Actions: ids, ActionName: "Roll back: " + p.ActionName,
-		Risk: p.Risk, Adapter: p.Adapter, Template: strings.Join(tpls, "+"), Render: display,
+		Action: p.Action + ".rollback", Actions: ids, ActionName: "Roll back: " + p.ActionName, PackID: p.PackID,
+		Risk: p.Risk, Adapter: p.Adapter, Template: strings.Join(tpls, "+"), Kinds: kinds, Render: display,
 		ModelVersion: m.Version(), Inputs: s.inputs(m, s.freshness(m)), Policy: p.Policy,
 		RequiredApprovals: p.RequiredApprovals, RollbackOf: p.ID, Baseline: map[string]float64{},
 		Predicted: approvals.Prediction{KPIs: map[string]float64{}},

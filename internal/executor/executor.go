@@ -1,8 +1,11 @@
 // Copyright 2026 Zyvor AI Labs · https://zyvor.dev
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
-// Package executor renders approved actions into Gravia custom resources and
-// applies them with kubectl. Server-side dry-run is the default.
+// Package executor renders approved actions and runs them: Gravia custom
+// resources through kubectl, webhooks, files written to an output
+// directory, or noop for changes people carry out. Dry-run is the default:
+// kubectl runs with --dry-run=server, webhooks are printed but not sent and
+// files are shown but not written.
 package executor
 
 import (
@@ -10,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -36,13 +40,24 @@ func ParseMode(s string) (Mode, error) {
 	return "", fmt.Errorf("execute mode must be dry-run or apply, got %q", s)
 }
 
-// Rendered is what an action will do: Display is shown to the approver, Args
-// and Stdin are passed to kubectl (without the dry-run flag).
+// Rendered is what an action will do: Display is shown to the approver.
+// For kubectl, Args and Stdin are passed to kubectl (without the dry-run
+// flag). For webhooks, URL and Headers keep their ${ZYNTRA_*} references
+// until execution so secrets never reach the proposal.
 type Rendered struct {
-	Template string   `json:"template"`
-	Display  string   `json:"display"`
-	Args     []string `json:"args"`
-	Stdin    string   `json:"-"`
+	Kind     string            `json:"kind"`
+	Template string            `json:"template"`
+	Display  string            `json:"display"`
+	Args     []string          `json:"args"`
+	Stdin    string            `json:"-"`
+	Method   string            `json:"method,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	Body     string            `json:"body,omitempty"`
+	Path     string            `json:"path,omitempty"`
+	Content  string            `json:"-"`
+	// Key is an idempotency key (the proposal id) sent with webhooks.
+	Key string `json:"-"`
 }
 
 var dns1123 = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -120,11 +135,42 @@ func RenderRollback(a graph.Action) (Rendered, error) {
 	return Render(ra)
 }
 
-// Render turns an action into a kubectl invocation.
-func Render(a graph.Action) (Rendered, error) {
-	if a.Execute == nil {
-		return Rendered{}, fmt.Errorf("action %q has no execute block", a.ID)
+// Render renders an action without model context; webhook body
+// references and file templates that need KPIs are left unresolved.
+func Render(a graph.Action) (Rendered, error) { return RenderIn(nil, a) }
+
+// RenderIn renders an action against the current model.
+func RenderIn(m *graph.Model, a graph.Action) (Rendered, error) {
+	var (
+		r   Rendered
+		err error
+	)
+	switch k := a.Kind(); k {
+	case graph.KindKubectl:
+		r, err = renderKubectl(a)
+	case graph.KindWebhook:
+		r, err = renderWebhook(m, a)
+	case graph.KindFile:
+		r, err = renderFile(m, a)
+	case graph.KindNoop:
+		r = Rendered{Template: graph.KindNoop, Display: noopDisplay(a)}
+	default:
+		return Rendered{}, fmt.Errorf("action %q has nothing to run", a.ID)
 	}
+	r.Kind = a.Kind()
+	return r, err
+}
+
+// Template is the name recorded on a proposal for an action: the kubectl
+// template, or the kind for webhook, file and noop actions.
+func Template(a graph.Action) string {
+	if a.Execute != nil {
+		return a.Execute.Template
+	}
+	return a.Kind()
+}
+
+func renderKubectl(a graph.Action) (Rendered, error) {
 	p := a.Execute.Params
 	if p == nil {
 		p = map[string]string{}
@@ -254,26 +300,56 @@ func Kubectl(kubeconfig string) Runner {
 type Executor struct {
 	Mode Mode
 	Run  Runner
+	// OutDir is where file actions write; empty refuses file applies.
+	OutDir string
+	// HTTP sends webhooks; nil uses a client with a 15s timeout.
+	HTTP *http.Client
 }
 
 type Result struct {
 	Mode   Mode     `json:"mode"`
+	Kind   string   `json:"kind,omitempty"`
 	Args   []string `json:"args"`
 	Output string   `json:"output"`
 	OK     bool     `json:"ok"`
 	Error  string   `json:"error,omitempty"`
+	// Status is the webhook response code.
+	Status int `json:"status,omitempty"`
+	// ResponseHash is the SHA-256 of the webhook response body.
+	ResponseHash string `json:"response_hash,omitempty"`
+	// Written is the file a file action wrote.
+	Written string `json:"written,omitempty"`
 }
 
-// Execute runs the rendered command; in dry-run mode with --dry-run=server.
+// Execute runs the rendered action. In dry-run mode kubectl gets
+// --dry-run=server and other kinds only describe what they would do.
 func (e *Executor) Execute(ctx context.Context, r Rendered) Result {
+	switch r.Kind {
+	case graph.KindWebhook:
+		return e.webhook(ctx, r)
+	case graph.KindFile:
+		return e.file(r)
+	case graph.KindNoop:
+		res := Result{Mode: e.mode(), Kind: r.Kind, OK: true, Args: []string{"noop"}}
+		res.Output = "approval recorded; no system call (the change is carried out by people)"
+		return res
+	}
+	return e.kubectl(ctx, r)
+}
+
+func (e *Executor) mode() Mode {
+	if e.Mode == "" {
+		return ModeDryRun
+	}
+	return e.Mode
+}
+
+func (e *Executor) kubectl(ctx context.Context, r Rendered) Result {
 	args := append([]string(nil), r.Args...)
 	if e.Mode != ModeApply {
 		args = append(args, "--dry-run=server")
 	}
-	res := Result{Mode: e.Mode, Args: args}
-	if res.Mode == "" {
-		res.Mode = ModeDryRun
-	}
+	res := Result{Mode: e.mode(), Kind: graph.KindKubectl, Args: args}
 	if e.Run == nil {
 		res.Error = "no kubectl runner configured"
 		return res

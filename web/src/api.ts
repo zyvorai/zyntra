@@ -12,6 +12,13 @@ export interface Source {
   agg?: string;
   scale?: number;
   rate?: boolean;
+  file?: string;
+  url?: string;
+  format?: string;
+  name?: string;
+  where?: Record<string, string>;
+  denominator?: string;
+  stale_after?: string;
 }
 
 export interface KPI {
@@ -26,7 +33,12 @@ export interface KPI {
   min?: number;
   max?: number;
   source?: Source;
+  unit_class?: string;
+  currency?: string;
+  calendar?: string;
 }
+
+export const unitOf = (k: { unit?: string; currency?: string }) => k.currency || k.unit;
 
 export interface Edge { from: string; to: string; weight: number; why?: string }
 export interface Effect { kpi: string; change: number }
@@ -38,8 +50,16 @@ export interface Action {
   risk?: Risk;
   effects: Effect[];
   execute?: { template: string; params?: Record<string, string> };
+  window?: string;
+  approvers?: number;
+  compensate?: string;
+  preconditions?: { kpi: string; worse_than?: number; better_than?: number; why?: string }[];
+  invariants?: { kpi: string; max_worsen: number; why?: string }[];
+  webhook?: { method?: string; url: string };
+  file?: { path: string };
 }
-export interface Model { name: string; kpis: KPI[]; edges: Edge[]; actions: Action[] }
+export interface PackInfo { id: string; title?: string; industry?: string; version?: string; owners?: string[] }
+export interface Model { name: string; kpis: KPI[]; edges: Edge[]; actions: Action[]; pack?: PackInfo; timezone?: string }
 
 export interface Gap {
   kpi: string;
@@ -87,6 +107,7 @@ export interface SimResult {
   weighted_after_best?: number;
   weighted_after_worst?: number;
   violations?: Violation[];
+  precondition_failures?: string[];
   stale_inputs?: string[];
   settles_after?: string;
 }
@@ -104,6 +125,7 @@ export interface Recommendation {
   confidence: 'high' | 'medium' | 'low';
   stale_inputs?: string[];
   blocked_reasons?: string[];
+  precondition_failures?: string[];
   settles_after?: string;
   status: string;
   result: SimResult;
@@ -113,12 +135,14 @@ export interface PlanResponse {
   blocked: Recommendation[];
   unusable_inputs: string[];
   model_version: string;
+  owners?: string[];
 }
 
 export interface SourceStatus {
   name: string;
   kind: string;
   ok: boolean;
+  state?: 'ok' | 'stale' | 'error' | 'fallback';
   error?: string;
   latency_ms: number;
   kpis: string[];
@@ -176,7 +200,7 @@ export type Phase =
   | 'rolled-back';
 export interface FreshnessState {
   kpi: string;
-  status: 'fresh' | 'stale' | 'missing' | 'static';
+  status: 'fresh' | 'stale' | 'missing' | 'static' | 'held';
   last_success?: string;
   last_error?: string;
   age_seconds?: number;
@@ -226,8 +250,20 @@ export interface OutcomeRecord {
   samples: OutcomeSample[];
   reasons?: string[];
   decided_at?: string;
+  predicted?: Record<string, number>;
+  accuracy?: { kpi: string; baseline: number; predicted: number; actual: number; abs_error: number; hit: boolean }[];
 }
-export interface ExecResult { mode: string; args: string[]; output: string; ok: boolean; error?: string }
+export interface ExecResult {
+  mode: string;
+  kind?: string;
+  args: string[];
+  output: string;
+  ok: boolean;
+  error?: string;
+  status?: number;
+  response_hash?: string;
+  written?: string;
+}
 export interface KeepRef { mode: string; session_id?: string; approval_id?: string; receipt_id?: string; error?: string }
 export interface Proposal {
   id: string;
@@ -238,6 +274,9 @@ export interface Proposal {
   template?: string;
   render?: string;
   render_error?: string;
+  kinds?: string[];
+  compensate?: string[];
+  pack?: string;
   predicted: {
     severity_before: number;
     severity_after: number;
@@ -293,6 +332,7 @@ export interface Meta {
   version: string;
   host: string;
   model: string;
+  pack?: PackInfo | null;
   auth_required: boolean;
   auth_methods?: string[];
   sources: { total: number; healthy: number };
@@ -405,4 +445,26 @@ export function duration(sec: number): string {
   if (sec < 3600) return `${Math.round(sec / 60)} min`;
   if (sec < 86400) return `${(sec / 3600).toFixed(1)} h`;
   return `${(sec / 86400).toFixed(1)} days`;
+}
+
+export interface ManualInput {
+  kpi: string;
+  name: string;
+  unit?: string;
+  owner?: string;
+  value: number;
+  entry?: { value: number; at: string; by: string; reason?: string };
+}
+export interface WebhookChannel { name: string; kpis: string[]; received_at?: string; from?: string }
+export interface InputsResponse { manual: ManualInput[]; webhooks: WebhookChannel[] }
+
+export const setManual = (kpi: string, value: number, reason: string) =>
+  api<{ kpi: string }>(`/api/v1/kpis/${encodeURIComponent(kpi)}/value`, { method: 'POST', json: { value, reason } });
+
+/** renderLabel names what a proposal will do when it runs. */
+export function renderLabel(kinds?: string[], template?: string): string {
+  const k = kinds?.length ? kinds : template ? ['kubectl'] : [];
+  if (!k.length) return 'Advisory (nothing to run)';
+  const names: Record<string, string> = { kubectl: 'Gravia resource (kubectl)', webhook: 'Webhook request', file: 'File to write', noop: 'Done by people (no system call)' };
+  return Array.from(new Set(k)).map((x) => names[x] ?? x).join(' + ');
 }

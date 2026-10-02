@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.0 — unreleased
+
+Phase A of the packs plan: one engine, and every industry is a pack. A shop runs from CSV exports with no Kubernetes in the loop.
+
+### Added
+
+- **Packs.** `packs/<id>/` holds `pack.yaml` (id, title, industry, version, owners, timezone, calendars), `kpis.yaml`, `sources.example.yaml`, a README and a fixture. `-f` accepts a pack directory. `zyntra pack list` and `zyntra pack validate DIR` check the manifest, KPI owners, documented variables, fixture reads, and that every action simulates and renders.
+- **Shop pack** (`packs/shop`) with fixture CSVs. On the fixture the plan closes the stockout gap with a purchase-order file and refuses a 30% markdown that would break the margin invariant.
+- **Generic sources:** `file` (CSV, JSON, YAML, Prometheus text; reloaded on change), `http`, `sheet`, `webhook-in` (`POST /api/v1/ingest/{channel}` with `ZYNTRA_INGEST_TOKEN`) and `manual` (`POST /api/v1/kpis/{id}/value`, audited). Row filters (`where`), `agg` (adds `first`, `last`), `denominator` and `stale_after`. Every source reports `ok`, `stale`, `error` or `fallback`. Only `${ZYNTRA_*}` variables are expanded, and URLs are stripped from errors.
+- **Generic actions:** `webhook` (dry-run prints the request; apply sends it with an `Idempotency-Key` and records the status code and response sha256), `file` (written under `ZYNTRA_OUTPUT_DIR`, never overwritten or outside it) and `noop` (the approval is the record).
+- **Action guards:** `preconditions` fail closed (status `precondition-failed`, ranked but not approvable, rechecked before execution), `invariants` (`max_worsen`) block an action whose simulation breaks them, `compensate` links the undo action on the proposal, and per-action `window` and `approvers`.
+- **Units and calendars.** KPI `unitClass` (`percent`, `count`, `currency`, `duration`, `ratio`) and ISO `currency`. One weekly-window calendar shared by KPIs, actions and the approval policy; outside its window a KPI holds its last in-window value (`held`).
+- **Owner filter:** `gaps -owner`, `plan -owner`, and `?owner=` on `/gaps`, `/plan` and `/ai/digest`.
+- **Predicted versus actual per KPI** on the outcome record, with absolute error, hit or miss, and a hit rate.
+- **Console:** webhook, file and noop payloads in Approvals with the compensating action; source states, manual value entry and webhook-in channels in Signals; owner filter and precondition state in Gaps and Plan; predicted versus actual in the decision record; pack and action kinds on the Model page.
+
+### Changed
+
+- `docs/PRODUCT_PLAN.md` is rewritten around packs, with the build order in Phases A to D.
+- Unserved sources now appear in source health as `fallback` instead of being omitted.
+- Policy maintenance windows use the shared calendar; the refusal reads "outside window NAME".
+
 ## v0.3.0 — 2026-10-02
 
 Zyntra becomes a decision engine: it ranks safe changes, gets them approved under policy, re-checks them right before they run, verifies the outcome, and keeps a signed record of every decision.

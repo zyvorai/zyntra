@@ -1,9 +1,10 @@
-import { pct, sev, type Gap } from '../api';
-import { useApi } from '../hooks';
-import { Card, Empty, ErrorNote, Meter, PageHero, Stat } from '../components/ui';
+import { fmt, pct, sev, type Gap } from '../api';
+import { useApi, useOwner, withOwner } from '../hooks';
+import { Card, Empty, ErrorNote, Meter, OwnerFilter, PageHero, Stat } from '../components/ui';
 
 export default function Gaps() {
-  const { data, error } = useApi<{ gaps: Gap[]; severity_total: number }>('/api/v1/gaps', 15000);
+  const [owner, setOwner] = useOwner();
+  const { data, error } = useApi<{ gaps: Gap[]; severity_total: number; owners?: string[] }>(withOwner('/api/v1/gaps', owner), 15000);
   const gaps = data?.gaps ?? [];
   return (
     <>
@@ -14,6 +15,7 @@ export default function Gaps() {
         lede="KPIs that miss their target, ranked by relative shortfall. Severity 25% means the value is a quarter of the way off target."
       />
       <ErrorNote message={error} />
+      <OwnerFilter owners={data?.owners} value={owner} onChange={setOwner} />
       <div className="stats">
         <Stat label="Gaps" value={data ? gaps.length : '—'} tone={gaps.length ? 'warn' : 'ok'} />
         <Stat label="Total severity" value={data ? sev(data.severity_total) : '—'} />
@@ -21,7 +23,7 @@ export default function Gaps() {
       </div>
       <Card>
         {data && gaps.length === 0 ? (
-          <Empty>No gaps. Every KPI with a target meets it.</Empty>
+          <Empty>{owner ? `No gaps owned by ${owner}.` : 'No gaps. Every KPI with a target meets it.'}</Empty>
         ) : (
           <table className="table">
             <thead>
@@ -42,7 +44,7 @@ export default function Gaps() {
                   </td>
                   <td>{g.owner || '—'}</td>
                   <td className="num">
-                    {g.value.toFixed(2)} {g.unit}
+                    {fmt(g.value)} {g.unit}
                   </td>
                   <td className="num">
                     {g.direction === 'lower' ? '≤' : '≥'} {g.target} {g.unit}

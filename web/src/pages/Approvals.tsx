@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
-import { ago, api, can, fmt, sev, until, type Proposal, type ProposalStatus } from '../api';
+import { ago, api, can, fmt, sev, until, renderLabel, type Proposal, type ProposalStatus } from '../api';
 import { useApi } from '../hooks';
 import { openDecision } from '../nav';
 import { useWho } from '../session';
@@ -238,13 +238,21 @@ export default function Approvals() {
 
             {p.render ? (
               <details className="trace" open={p.status === 'pending'}>
-                <summary>Gravia change ({p.template})</summary>
+                <summary>
+                  {renderLabel(p.kinds, p.template)}
+                  {p.template && p.kinds?.every((k) => k === 'kubectl') !== false ? ` (${p.template})` : ''}
+                </summary>
                 <pre className="code">{p.render}</pre>
               </details>
             ) : p.render_error ? (
-              <p className="error-note">Cannot render {p.template}: {p.render_error}</p>
-            ) : !p.template ? (
-              <p className="muted small">Advisory action — no execute template; approving records the decision only.</p>
+              <p className="error-note">Cannot render {p.template || p.action}: {p.render_error}</p>
+            ) : !p.template && !p.kinds?.length ? (
+              <p className="muted small">Advisory action — nothing to run; approving records the decision only.</p>
+            ) : null}
+            {p.compensate?.length ? (
+              <p className="muted small">
+                Undo if it goes wrong: <span className="mono">{p.compensate.join(', ')}</span> (proposed for approval, never run on its own)
+              </p>
             ) : null}
 
             {p.execution ? (
@@ -252,7 +260,18 @@ export default function Approvals() {
                 <summary>
                   Execution · {p.execution.mode} · {p.execution.ok ? 'ok' : 'failed'} {p.executed_at ? ago(p.executed_at) : ''}
                 </summary>
-                <pre className="code">{[`$ ${p.execution.args.join(' ')}`, p.execution.output, p.execution.error].filter(Boolean).join('\n')}</pre>
+                <pre className="code">
+                  {[
+                    p.execution.args?.length ? `$ ${p.execution.args.join(' ')}` : '',
+                    p.execution.status ? `HTTP ${p.execution.status}` : '',
+                    p.execution.response_hash ? `response sha256 ${p.execution.response_hash}` : '',
+                    p.execution.written ? `wrote ${p.execution.written}` : '',
+                    p.execution.output,
+                    p.execution.error,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')}
+                </pre>
               </details>
             ) : null}
 

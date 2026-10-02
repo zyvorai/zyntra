@@ -41,6 +41,8 @@ type Spec struct {
 	Success    []graph.Criterion
 	Guardrails []string
 	Tolerance  float64
+	// Predicted holds the simulated after-values scored for accuracy.
+	Predicted map[string]float64
 }
 
 // SpecFor builds the observation spec for actions taken together. Explicit
@@ -48,7 +50,10 @@ type Spec struct {
 // target meets it (or, without targets, moves the healthy way), and the
 // guardrails are the critical and constrained KPIs.
 func SpecFor(m *graph.Model, actions []graph.Action, baseline, predicted map[string]float64) Spec {
-	s := Spec{Tolerance: -1}
+	s := Spec{Tolerance: -1, Predicted: map[string]float64{}}
+	for k, v := range predicted {
+		s.Predicted[k] = v
+	}
 	guard := map[string]bool{}
 	for _, a := range actions {
 		o := a.Outcome
@@ -154,6 +159,47 @@ type Record struct {
 	Samples    []Sample           `json:"samples"`
 	Reasons    []string           `json:"reasons,omitempty"`
 	DecidedAt  *time.Time         `json:"decided_at,omitempty"`
+	Predicted  map[string]float64 `json:"predicted,omitempty"`
+	// Accuracy scores each prediction against the last fresh value seen.
+	Accuracy []Accuracy `json:"accuracy,omitempty"`
+}
+
+// Accuracy compares one predicted KPI with what happened. A hit moved the
+// predicted way and landed within half of the predicted change of the
+// prediction.
+type Accuracy struct {
+	KPI       string  `json:"kpi"`
+	Baseline  float64 `json:"baseline"`
+	Predicted float64 `json:"predicted"`
+	Actual    float64 `json:"actual"`
+	AbsError  float64 `json:"abs_error"`
+	Hit       bool    `json:"hit"`
+}
+
+// Score returns the accuracy of predicted against actual from baseline.
+func Score(kpi string, baseline, predicted, actual float64) Accuracy {
+	a := Accuracy{KPI: kpi, Baseline: baseline, Predicted: predicted, Actual: actual, AbsError: math.Abs(actual - predicted)}
+	want, got := predicted-baseline, actual-baseline
+	if want == 0 {
+		a.Hit = a.AbsError <= 1e-9*(1+math.Abs(baseline))
+		return a
+	}
+	a.Hit = math.Signbit(want) == math.Signbit(got) && got != 0 && a.AbsError <= 0.5*math.Abs(want)
+	return a
+}
+
+// HitRate is the fraction of scored KPIs that were hits.
+func (r *Record) HitRate() (float64, bool) {
+	if len(r.Accuracy) == 0 {
+		return 0, false
+	}
+	n := 0
+	for _, a := range r.Accuracy {
+		if a.Hit {
+			n++
+		}
+	}
+	return float64(n) / float64(len(r.Accuracy)), true
 }
 
 // Start opens an observation. baseline holds KPI values from before the
@@ -163,10 +209,14 @@ func Start(s Spec, baseline map[string]float64, at time.Time) *Record {
 	for k, v := range baseline {
 		b[k] = v
 	}
+	p := map[string]float64{}
+	for k, v := range s.Predicted {
+		p[k] = v
+	}
 	return &Record{
 		State: Observing, StartedAt: at, Until: at.Add(s.Window), Window: s.Window.String(),
 		Required: s.Samples, Tolerance: s.Tolerance, Success: s.Success, Guardrails: s.Guardrails,
-		Baseline: b, Samples: []Sample{},
+		Baseline: b, Samples: []Sample{}, Predicted: p,
 	}
 }
 
@@ -176,6 +226,29 @@ func (r *Record) Done() bool { return r.State != Observing }
 func (r *Record) finish(st State, at time.Time, reasons ...string) {
 	r.State, r.Reasons = st, reasons
 	r.DecidedAt = &at
+	r.Accuracy = nil
+	ids := make([]string, 0, len(r.Predicted))
+	for id := range r.Predicted {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		actual, ok := r.lastFresh(id)
+		b, has := r.Baseline[id]
+		if !ok || !has {
+			continue
+		}
+		r.Accuracy = append(r.Accuracy, Score(id, b, r.Predicted[id], actual))
+	}
+}
+
+func (r *Record) lastFresh(id string) (float64, bool) {
+	for i := len(r.Samples) - 1; i >= 0; i-- {
+		if v, ok := r.Samples[i].Values[id]; ok {
+			return v, true
+		}
+	}
+	return 0, false
 }
 
 // Observe records a sample from m. unusable lists KPIs whose current value
@@ -194,6 +267,11 @@ func (r *Record) Observe(m *graph.Model, unusable map[string]bool, at time.Time)
 		}
 		smp.Values[id] = k.Value
 		return false
+	}
+	for id := range r.Predicted {
+		if k, ok := m.KPI(id); ok && !unusable[id] {
+			smp.Values[id] = k.Value
+		}
 	}
 	for _, c := range r.Success {
 		if stale(c.KPI) {
