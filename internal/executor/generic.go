@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -103,9 +104,7 @@ func renderWebhook(m *graph.Model, a graph.Action) (Rendered, error) {
 		method = http.MethodPost
 	}
 	r := Rendered{Template: graph.KindWebhook, Method: method, URL: w.URL, Headers: map[string]string{}}
-	for k, v := range w.Headers {
-		r.Headers[k] = v
-	}
+	maps.Copy(r.Headers, w.Headers)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s\n", method, w.URL)
 	if w.Body != nil && method != http.MethodGet {
@@ -274,8 +273,7 @@ func (e *Executor) webhook(ctx context.Context, r Rendered) Result {
 	}
 	resp, err := e.client().Do(req)
 	if err != nil {
-		var ue *url.Error
-		if errors.As(err, &ue) {
+		if ue, ok := errors.AsType[*url.Error](err); ok {
 			err = ue.Err
 		}
 		res.Error = fmt.Sprintf("%s %s: %v", r.Method, pu.Host, err)

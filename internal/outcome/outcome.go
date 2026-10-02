@@ -10,8 +10,11 @@ package outcome
 
 import (
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zyvorai/zyntra/internal/graph"
@@ -51,9 +54,7 @@ type Spec struct {
 // guardrails are the critical and constrained KPIs.
 func SpecFor(m *graph.Model, actions []graph.Action, baseline, predicted map[string]float64) Spec {
 	s := Spec{Tolerance: -1, Predicted: map[string]float64{}}
-	for k, v := range predicted {
-		s.Predicted[k] = v
-	}
+	maps.Copy(s.Predicted, predicted)
 	guard := map[string]bool{}
 	for _, a := range actions {
 		o := a.Outcome
@@ -206,13 +207,9 @@ func (r *Record) HitRate() (float64, bool) {
 // action ran.
 func Start(s Spec, baseline map[string]float64, at time.Time) *Record {
 	b := map[string]float64{}
-	for k, v := range baseline {
-		b[k] = v
-	}
+	maps.Copy(b, baseline)
 	p := map[string]float64{}
-	for k, v := range s.Predicted {
-		p[k] = v
-	}
+	maps.Copy(p, s.Predicted)
 	return &Record{
 		State: Observing, StartedAt: at, Until: at.Add(s.Window), Window: s.Window.String(),
 		Required: s.Samples, Tolerance: s.Tolerance, Success: s.Success, Guardrails: s.Guardrails,
@@ -243,8 +240,8 @@ func (r *Record) finish(st State, at time.Time, reasons ...string) {
 }
 
 func (r *Record) lastFresh(id string) (float64, bool) {
-	for i := len(r.Samples) - 1; i >= 0; i-- {
-		if v, ok := r.Samples[i].Values[id]; ok {
+	for _, v := range slices.Backward(r.Samples) {
+		if v, ok := v.Values[id]; ok {
 			return v, true
 		}
 	}
@@ -349,12 +346,12 @@ func uniq(s []string) []string {
 }
 
 func join(s []string) string {
-	out := ""
+	var out strings.Builder
 	for i, x := range s {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += x
+		out.WriteString(x)
 	}
-	return out
+	return out.String()
 }

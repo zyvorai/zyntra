@@ -9,6 +9,7 @@ package inputs
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -132,8 +133,6 @@ func (s *Store) ManualValues() map[string]Manual {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for k, v := range s.s.Manual {
-		out[k] = v
-	}
+	maps.Copy(out, s.s.Manual)
 	return out
 }

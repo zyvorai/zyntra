@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -108,10 +109,8 @@ func normalize(roles []Role) []Role {
 // Has reports whether the identity holds any of roles.
 func (id Identity) Has(roles ...Role) bool {
 	for _, have := range id.Roles {
-		for _, want := range roles {
-			if have == want {
-				return true
-			}
+		if slices.Contains(roles, have) {
+			return true
 		}
 	}
 	return false
@@ -264,7 +263,7 @@ func (a *Auth) Valid(v string) (Identity, bool) {
 		return Identity{}, false
 	}
 	var rs []Role
-	for _, r := range strings.Split(roles, "+") {
+	for r := range strings.SplitSeq(roles, "+") {
 		rs = append(rs, Role(r))
 	}
 	id := newIdentity(op, method, rs...)

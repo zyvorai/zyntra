@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1071,9 +1072,7 @@ func cloneMap(m map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 
@@ -1084,9 +1083,7 @@ func cloneExec(e *Execute) *Execute {
 	ex := *e
 	if ex.Params != nil {
 		p := make(map[string]string, len(ex.Params))
-		for pk, pv := range ex.Params {
-			p[pk] = pv
-		}
+		maps.Copy(p, ex.Params)
 		ex.Params = p
 	}
 	return &ex
