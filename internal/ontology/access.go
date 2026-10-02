@@ -6,6 +6,7 @@ package ontology
 import (
 	"errors"
 	"slices"
+	"sort"
 )
 
 // Principal is who is asking. Retrieval and execution both take one.
@@ -310,4 +311,33 @@ func (r Reader) Scan(typ string, fn func(Object) bool) {
 		}
 		cursor = next
 	}
+}
+
+// VisibleTypes lists the object types this principal can see at least one
+// object of. A deployment-wide principal sees every type in the schema; a
+// tenant-bound one sees only types that exist in its own space (or are shared
+// with it), each confirmed by finding a visible object, so a type hidden by an
+// access rule is not offered.
+func (r Reader) VisibleTypes() []string {
+	if r.p.Tenant == "" {
+		var all []string
+		for _, ot := range r.st.schema.Objects {
+			all = append(all, ot.Name)
+		}
+		return all
+	}
+	own, shared := r.st.TypesIn(r.p.Tenant)
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range append(own, shared...) {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		if items, _ := r.Page(t, "", 1, nil); len(items) > 0 {
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

@@ -26,9 +26,10 @@ const rollout = (state: string, current: string | undefined, reason = '') => ({
 
 describe('Rollout panel on a decision', () => {
   const routes = (r: unknown) => ({
-    'GET /api/v1/decisions/prop-1': { decision: decision, audit: [] },
+    'GET /api/v1/decisions/prop-1': { decision: decision, audit: null },
     'GET /api/v1/proposals/prop-1/explanation': { status: 409, body: { error: 'none' } },
-    'GET /api/v1/proposals/prop-1/similar': { items: [] },
+    // The server sends null, not [], when there is no precedent. A fixture with [] hid a crash.
+    'GET /api/v1/proposals/prop-1/similar': { items: null, text: 'No similar past decision on record.' },
     'GET /api/v1/rollouts/prop-1': r,
   });
 

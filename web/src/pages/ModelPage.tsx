@@ -98,7 +98,7 @@ export default function ModelPage() {
           </div>
           <div className="grid-2">
             <Card title="Proposed edges" aside={<Pill tone="warn">not in the model</Pill>}>
-              {edges.data?.edges.length ? (
+              {edges.data?.edges?.length ? (
                 <ul className="list">
                   {edges.data.edges.map((e) => (
                     <li key={`${e.from}-${e.to}`}>
@@ -124,7 +124,7 @@ export default function ModelPage() {
               )}
             </Card>
             <Card title="Pack rules check" aside={rules.data ? <Pill tone={rules.data.mode === 'llm' ? 'purple' : 'neutral'}>{rules.data.rules} rule lines</Pill> : null}>
-              {rules.data?.contradictions.length ? (
+              {rules.data?.contradictions?.length ? (
                 <ul className="list">
                   {rules.data.contradictions.map((c, i) => (
                     <li key={i}>

@@ -140,7 +140,7 @@ function DraftProposal() {
   const [text, setText] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [note, setNote] = useState('');
-  if (types.error || !types.data?.actions.length) return null;
+  if (types.error || !types.data?.actions?.length) return null;
   const run = async () => {
     setNote('');
     setDraft(await api<Draft>('/api/v1/ai/propose', { method: 'POST', json: { text } }));

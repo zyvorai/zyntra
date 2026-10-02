@@ -60,7 +60,7 @@ export default function Simulate() {
             <label>
               Action
               <select value={action} onChange={(e) => setAction(e.target.value)}>
-                {model?.actions.map((a) => (
+                {model?.actions?.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
                   </option>
@@ -72,7 +72,7 @@ export default function Simulate() {
               <label>
                 KPI
                 <select value={kpi} onChange={(e) => setKpi(e.target.value)}>
-                  {model?.kpis.map((k) => (
+                  {model?.kpis?.map((k) => (
                     <option key={k.id} value={k.id}>
                       {k.name}
                     </option>

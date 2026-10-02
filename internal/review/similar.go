@@ -74,7 +74,9 @@ func tokens(s string) map[string]bool {
 func Similar(all []approvals.Proposal, cur approvals.Proposal, n int) Precedents {
 	want := kpiSet(cur)
 	words := tokens(strings.Join(append([]string{cur.Action}, cur.Actions...), " "))
-	var items []Precedent
+	// Never nil: this is sent as JSON, and a null list crashes a client that
+	// reads its length.
+	items := []Precedent{}
 	for _, p := range all {
 		if p.ID == cur.ID || p.Status == approvals.Pending || p.RollbackOf != "" {
 			continue

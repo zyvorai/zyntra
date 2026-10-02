@@ -609,3 +609,21 @@ func (s *Store) RebuildBindings() {
 		}
 	}
 }
+
+// TypesIn lists the object types that exist in a tenant's own space and in the
+// tenant-less (shared) space, from an index: no scan of the store.
+func (s *Store) TypesIn(tenant string) (own, shared []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for t := range s.ix.tenantTypes[tenant] {
+		own = append(own, t)
+	}
+	if tenant != "" {
+		for t := range s.ix.tenantTypes[""] {
+			shared = append(shared, t)
+		}
+	}
+	sort.Strings(own)
+	sort.Strings(shared)
+	return own, shared
+}

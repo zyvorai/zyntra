@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type OntSchema, type OntViewRow, type OntViewSpec, type Proposal } from '../api';
 import { useApi } from '../hooks';
+import { display } from '../format';
 import { openObject } from '../nav';
 import { Card, Empty, ErrorNote, PageHero, Pill, Stat } from '../components/ui';
 
@@ -94,7 +95,7 @@ export default function Workflows({ setPage }: { setPage?: (p: Page) => void }) 
                     <div className="muted mono small">{r.id}</div>
                   </td>
                   {cols.filter((c) => c !== 'name').map((c) => (
-                    <td key={c}>{r.cells[c] === undefined ? '—' : String(r.cells[c])}</td>
+                    <td key={c}>{r.cells[c] === undefined ? '—' : display(r.cells[c])}</td>
                   ))}
                   <td>
                     {r.failing_kpis?.length ? <Pill tone="bad">failing {r.failing_kpis.join(', ')}</Pill> : null}

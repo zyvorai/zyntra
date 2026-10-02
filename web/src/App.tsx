@@ -20,6 +20,7 @@ import Objects from './pages/Objects';
 import Workflows from './pages/Workflows';
 import Scenarios from './pages/Scenarios';
 import ServiceLevels from './pages/ServiceLevels';
+import ErrorBoundary from './components/ErrorBoundary';
 import { WhoContext } from './session';
 
 type Session = { state: 'loading' } | { state: 'anon' } | { state: 'in'; who: WhoAmI };
@@ -74,21 +75,23 @@ function Console({ who, meta, onLogout }: { who: WhoAmI; meta: Meta | null; onLo
             </span>
           </div>
         ) : null}
-        {page === 'overview' && <Overview pulse={pulse} setPage={setPage} />}
-        {page === 'gaps' && <Gaps />}
-        {page === 'plan' && <Plan setPage={setPage} />}
-        {page === 'simulate' && <Simulate />}
-        {page === 'approvals' && <Approvals />}
-        {page === 'audit' && <Audit />}
-        {page === 'signals' && <Signals />}
-        {page === 'insights' && <Insights setPage={setPage} />}
-        {page === 'ask' && <Ask />}
-        {page === 'model' && <ModelPage />}
-        {page === 'objects' && <Objects />}
-        {page === 'workflows' && <Workflows setPage={setPage} />}
-        {page === 'scenarios' && <Scenarios />}
-        {page === 'servicelevels' && <ServiceLevels />}
-        {page === 'decision' && <Decision />}
+        <ErrorBoundary key={page} label={pageTitles[page]}>
+          {page === 'overview' && <Overview pulse={pulse} setPage={setPage} />}
+          {page === 'gaps' && <Gaps />}
+          {page === 'plan' && <Plan setPage={setPage} />}
+          {page === 'simulate' && <Simulate />}
+          {page === 'approvals' && <Approvals />}
+          {page === 'audit' && <Audit />}
+          {page === 'signals' && <Signals />}
+          {page === 'insights' && <Insights setPage={setPage} />}
+          {page === 'ask' && <Ask />}
+          {page === 'model' && <ModelPage />}
+          {page === 'objects' && <Objects />}
+          {page === 'workflows' && <Workflows setPage={setPage} />}
+          {page === 'scenarios' && <Scenarios />}
+          {page === 'servicelevels' && <ServiceLevels />}
+          {page === 'decision' && <Decision />}
+        </ErrorBoundary>
       </main>
       <footer className="app-footer">
         <span>

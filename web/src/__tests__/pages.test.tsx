@@ -170,6 +170,17 @@ describe('Workflows page', () => {
     expect(post?.body).toEqual({ action: 'raise', inputs: { service: 'Service:x:s' } });
   });
 
+  it('shows times as readable local times, not raw ISO strings', async () => {
+    const due = '2026-10-04T17:00:00Z';
+    mockApi({
+      'GET /api/v1/ontology/schema': schema,
+      'GET /api/v1/ontology/views/services': { view: { ...schema.views[0], columns: ['name', 'due'] }, rows: [{ id: 'Order:x:o1', cells: { name: 'O-1001', due } }] },
+    });
+    render(withWho(admin, <Workflows />));
+    expect(await screen.findByText(new Date(due).toLocaleString())).toBeTruthy();
+    expect(screen.queryByText(due)).toBeNull();
+  });
+
   it('says when a view was capped, and how many objects it really holds', async () => {
     mockApi({
       'GET /api/v1/ontology/schema': schema,

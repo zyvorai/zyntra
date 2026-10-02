@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ago, type Candidate, type ConnectorStatus, type OntStats, type OntChange, type OntObject, type OntObjectDetail, type OntSchema } from '../api';
 import { useApi } from '../hooks';
+import { display } from '../format';
 import { objectFromHash, openObject } from '../nav';
 import { useWho } from '../session';
 import { Card, Empty, ErrorNote, PageHero, Pill } from '../components/ui';
@@ -23,7 +24,7 @@ function Provenance({ o }: { o: OntObject }) {
         {Object.entries(o.props).map(([k, v]) => (
           <tr key={k}>
             <td className="mono">{k}</td>
-            <td>{String(v.v)}</td>
+            <td>{display(v.v)}</td>
             <td className="mono small" title={v.prov.transform?.join(' → ')}>
               {v.prov.source}
               {v.prov.source_id ? <div className="muted">{v.prov.source_id}</div> : null}
@@ -58,8 +59,8 @@ function History({ id }: { id: string }) {
             <tr key={i}>
               <td className="small">{when(c.after.prov.ingested_at)}</td>
               <td className="mono">{c.property}</td>
-              <td>{c.before ? String(c.before.v) : <span className="muted">new</span>}</td>
-              <td>{String(c.after.v)}</td>
+              <td>{c.before ? display(c.before.v) : <span className="muted">new</span>}</td>
+              <td>{display(c.after.v)}</td>
               <td className="mono small">{c.after.prov.source}</td>
             </tr>
           ))}
@@ -188,7 +189,7 @@ function Connectors() {
   const who = useWho();
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
-  if (error || !data?.connectors.length) return null;
+  if (error || !data?.connectors?.length) return null;
   const admin = !!who && (who.identity.roles?.includes('admin') || who.identity.role === 'admin');
   const run = async (name: string) => {
     setBusy(name);

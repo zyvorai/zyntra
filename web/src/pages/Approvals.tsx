@@ -87,8 +87,8 @@ export default function Approvals() {
         title="Approvals"
         lede={
           <>
-            Proposals wait here for a human decision. Approved actions run as Gravia CRDs in{' '}
-            <strong>{data?.execute_mode ?? '…'}</strong> mode
+            Proposals wait here for a human decision. Approved actions run through the executor shown on each proposal (a kubectl command, a webhook, a file, or a task a person
+            does) in <strong>{data?.execute_mode ?? '…'}</strong> mode
             {keepMode ? ', executed by a signed Fabric Keep agent through the Keep broker.' : '.'}
           </>
         }
@@ -110,7 +110,8 @@ export default function Approvals() {
             )}{' '}
             {data.execute_mode === 'dry-run' ? (
               <>
-                Execution is <strong>dry-run</strong>: kubectl validates against the API server without persisting.
+                Execution is <strong>dry-run</strong>: nothing is changed. A kubectl action is validated by the API server, a webhook or file is rendered and shown, and an advisory
+                action records only the decision.
               </>
             ) : (
               <>

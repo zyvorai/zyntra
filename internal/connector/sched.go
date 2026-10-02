@@ -92,7 +92,7 @@ func NewScheduler(st *ontology.Store, def *ontology.Definition, dir string, load
 		s.add(&job{name: ontology.PackFilesJob, kind: "files", interval: iv, timeout: defaultTimeout,
 			run: func(ctx context.Context, _ time.Time) (ontology.IngestReport, error) {
 				reps, err := st.IngestMappings(def, dir, s.by, load, s.now().UTC())
-				var total ontology.IngestReport
+				total := ontology.IngestReport{Source: ontology.PackFilesJob}
 				for _, r := range reps {
 					total.Objects += r.Objects
 					total.Links += r.Links
