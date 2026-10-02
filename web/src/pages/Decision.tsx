@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Download } from 'lucide-react';
-import { ago, fmt, sev, type AuditEvent, type Phase, type Proposal } from '../api';
+import { ago, fmt, sev, type AuditEvent, type ExplanationResponse, type Phase, type Precedents, type Proposal } from '../api';
 import { useApi } from '../hooks';
 import { decisionFromHash, openDecision } from '../nav';
 import SimResultView from '../components/SimResultView';
@@ -57,6 +57,9 @@ export default function Decision() {
   }, []);
   const { data, error } = useApi<DecisionResponse>(id ? `/api/v1/decisions/${encodeURIComponent(id)}` : null, 5000);
   const p = data?.decision;
+  const decided = !!p?.outcome && p.outcome.state !== 'observing';
+  const { data: why } = useApi<ExplanationResponse>(decided && id ? `/api/v1/proposals/${encodeURIComponent(id)}/explanation` : null);
+  const { data: prec } = useApi<Precedents>(id ? `/api/v1/proposals/${encodeURIComponent(id)}/similar` : null);
 
   if (!id) return <Empty>No decision selected.</Empty>;
   return (
@@ -148,6 +151,69 @@ export default function Decision() {
                   </ul>
                 </details>
               ) : null}
+              {p.evidence && Object.keys(p.evidence).length ? (
+                <details className="trace">
+                  <summary>Source rows behind the payload</summary>
+                  {Object.entries(p.evidence).map(([act, ev]) => (
+                    <div key={act} className="small">
+                      {Object.entries(ev.rows ?? {}).map(([kpi, rows]) => (
+                        <div key={kpi}>
+                          <strong className="mono">{kpi}</strong>{' '}
+                          <span className="muted">
+                            {rows.length ? `${rows[0].source} rows ${rows.map((r) => r.index).join(', ')}` : 'no rows matched'}
+                          </span>
+                          {rows.length ? (
+                            <table className="table compact">
+                              <thead>
+                                <tr>
+                                  <th>#</th>
+                                  {Object.keys(rows[0].values).sort().map((c) => (
+                                    <th key={c}>{c}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.slice(0, 20).map((r) => (
+                                  <tr key={r.index}>
+                                    <td className="mono">{r.index}</td>
+                                    {Object.keys(rows[0].values).sort().map((c) => (
+                                      <td key={c} className="mono">
+                                        {String(r.values[c] ?? '')}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ) : null}
+                        </div>
+                      ))}
+                      {Object.entries(ev.fills ?? {}).map(([n, f]) => (
+                        <p key={n} className="small">
+                          <span className="mono">fill:{n}</span> ← column <span className="mono">{f.column}</span>{' '}
+                          {f.by === 'model' ? <Pill tone="purple">column chosen by model</Pill> : null} · {f.values.length} value(s) from {f.kpis.join(', ')}
+                        </p>
+                      ))}
+                    </div>
+                  ))}
+                </details>
+              ) : null}
+              {prec?.items.length ? (
+                <details className="trace" open>
+                  <summary>Similar past decisions</summary>
+                  <p className="small">{prec.text}</p>
+                  <ul className="small">
+                    {prec.items.map((x) => (
+                      <li key={x.proposal}>
+                        <button className="linklike" onClick={() => openDecision(x.proposal)}>
+                          {x.text}
+                        </button>{' '}
+                        <span className="muted">overlap {x.overlap.join(', ') || 'action'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
               {p.policy ? (
                 <p className="small muted">
                   Policy: {p.policy.approvals} approval{p.policy.approvals === 1 ? '' : 's'}
@@ -234,6 +300,24 @@ export default function Decision() {
                     </tbody>
                   </table>
                 ) : null}
+                {why ? (
+                  <div className="info-note small">
+                    <strong>Why it {p.outcome.state === 'verified' ? 'landed' : 'missed'}</strong>{' '}
+                    <Pill tone={why.verified ? 'ok' : 'bad'}>{why.stored ? (why.verified ? 'in audit chain' : 'hash mismatch') : 'not stored yet'}</Pill>
+                    {why.mode === 'llm' ? <Pill tone="purple">worded by {why.model}</Pill> : null}
+                    <p>{why.narrative}</p>
+                    <ul>
+                      {why.explanation.findings
+                        .filter((f) => f.kind !== 'hit')
+                        .map((f, i) => (
+                          <li key={i}>
+                            <Pill tone={f.kind.startsWith('stale') || f.kind === 'fallback-source' ? 'warn' : 'bad'}>{f.kind}</Pill> {f.text}
+                          </li>
+                        ))}
+                    </ul>
+                    <span className="mono muted">sha256 {why.explanation.hash.slice(0, 16)}</span>
+                  </div>
+                ) : null}
                 {p.outcome.samples.length ? (
                   <table className="table compact">
                     <thead>
@@ -288,6 +372,11 @@ export default function Decision() {
                     <td>{e.by}</td>
                     <td className="muted">
                       {e.note}
+                      {e.explanation_sha256 ? (
+                        <div className="mono small" title={e.explanation_sha256}>
+                          explanation {e.explanation_sha256.slice(0, 12)}
+                        </div>
+                      ) : null}
                       {e.payload_sha256 ? (
                         <div className="mono small" title={e.payload_sha256}>
                           payload {e.payload_sha256.slice(0, 12)}

@@ -131,7 +131,11 @@ actions:
         - Stockout rate: {{pct (index .KPIs "stockout_rate").Value}} (target {{pct (index .KPIs "stockout_rate").Target}})
         - Gross margin: {{pct (index .KPIs "gross_margin").Value}}
 
-        Reorder every fast-moving SKU with zero stock or under two days of cover.
+        | SKU | Class | On hand | Cover (days) |
+        | --- | --- | --- | --- |
+        {{range rows "stockout_rate"}}| {{.sku}} | {{.class}} | {{.on_hand}} | {{.cover_days}} |
+        {{end}}
+        Also reorder any fast mover under two days of cover.
 
   - id: markdown_dead_stock
     title: Mark down dead stock 30%
@@ -148,7 +152,7 @@ actions:
     webhook:
       method: POST
       url: ${ZYNTRA_POS_URL}/markdowns
-      body: {class: slow, percent: 30, reason: dead_stock, gap: "gap:dead_stock_days"}
+      body: {class: slow, percent: 30, reason: dead_stock, skus: "fill:sku", gap: "gap:dead_stock_days"}
 
   - id: markdown_capped
     title: Mark down dead stock 10% (capped)
@@ -165,7 +169,7 @@ actions:
     webhook:
       method: POST
       url: ${ZYNTRA_POS_URL}/markdowns
-      body: {class: slow, percent: 10, reason: dead_stock, gap: "gap:dead_stock_days"}
+      body: {class: slow, percent: 10, reason: dead_stock, skus: "fill:sku", gap: "gap:dead_stock_days"}
 
   - id: open_second_counter
     title: Open a second counter

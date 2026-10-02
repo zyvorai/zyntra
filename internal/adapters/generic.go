@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -402,4 +404,59 @@ func (r *run) fetch(ctx context.Context, u string, s graph.Source) (any, error) 
 		format = "csv"
 	}
 	return Parse(formatFor(format, "", resp.Header.Get("Content-Type")), b)
+}
+
+// FormatOf guesses a document format from a file name.
+func FormatOf(path string) string { return formatFor("", path, "") }
+
+// Row is one record behind a KPI, with its position in the source file.
+type Row struct {
+	Source string         `json:"source"`
+	Index  int            `json:"index"`
+	Values map[string]any `json:"values"`
+}
+
+var countMatch = regexp.MustCompile(`^#\(([^=()]+)=([^()]*)\)`)
+
+// Rows returns the records a KPI's file source reads: the rows its where
+// filter keeps, narrowed by a "#(k=v)" field when it counts matches. Other
+// source kinds have no rows.
+func Rows(m *graph.Model, k graph.KPI, files *FileCache) ([]Row, error) {
+	if k.Source == nil || k.Source.Kind != graph.SourceFile {
+		return nil, nil
+	}
+	if files == nil {
+		files = NewFileCache()
+	}
+	doc, err := files.Load(FilePath(m, k.Source.File), k.Source.Format)
+	if err != nil {
+		return nil, err
+	}
+	all, ok := doc.([]any)
+	if !ok {
+		return nil, nil
+	}
+	match := map[string]string{}
+	maps.Copy(match, k.Source.Where)
+	if g := countMatch.FindStringSubmatch(k.Source.Field); g != nil {
+		match[g[1]] = g[2]
+	}
+	var out []Row
+	for i, el := range all {
+		row, ok := el.(map[string]any)
+		if !ok {
+			continue
+		}
+		keep := true
+		for col, want := range match {
+			if !strings.EqualFold(fmt.Sprint(row[col]), want) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			out = append(out, Row{Source: k.Source.File, Index: i + 1, Values: row})
+		}
+	}
+	return out, nil
 }

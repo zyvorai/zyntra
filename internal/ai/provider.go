@@ -26,11 +26,8 @@ type Provider struct {
 }
 
 func NewProvider(baseURL, apiKey, model, label string, insecure bool) *Provider {
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = DefaultModel
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if insecure {
@@ -38,9 +35,15 @@ func NewProvider(baseURL, apiKey, model, label string, insecure bool) *Provider 
 	}
 	return &Provider{
 		BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, Model: model, Label: label,
-		HTTP: &http.Client{Timeout: 25 * time.Second, Transport: tr},
+		HTTP: &http.Client{Timeout: 180 * time.Second, Transport: tr},
 	}
 }
+
+// DefaultModel is the small local model documented for air-gapped sites:
+// served by Fabric's AI gateway or Ollama on the same network. Zyntra never
+// picks a cloud endpoint by itself; with no ZYNTRA_AI_BASE_URL it stays on
+// the heuristic answers.
+const DefaultModel = "qwen2.5:7b-instruct"
 
 const systemPrompt = `You are Zyntra, a decision-intelligence assistant for infrastructure operators.
 Rewrite the DRAFT answer so it reads naturally for an operator. Rules:
@@ -63,28 +66,37 @@ func (p *Provider) Rewrite(ctx context.Context, question, draft string, snapshot
 	if len(snap) > 24<<10 {
 		snap = snap[:24<<10]
 	}
-	body, _ := json.Marshal(map[string]any{
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	return p.Chat(ctx, systemPrompt, "QUESTION: "+question+"\n\nDRAFT:\n"+draft+"\n\nSNAPSHOT:\n"+string(snap), false)
+}
+
+// Chat sends one system and one user message. With jsonOut the model is
+// asked for a JSON object and any code fence around it is removed.
+func (p *Provider) Chat(ctx context.Context, system, user string, jsonOut bool) (string, error) {
+	req := map[string]any{
 		"model":       p.Model,
 		"temperature": 0.2,
-		"messages": []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "QUESTION: " + question + "\n\nDRAFT:\n" + draft + "\n\nSNAPSHOT:\n" + string(snap)},
-		},
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+"/chat/completions", bytes.NewReader(body))
+		"messages":    []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: user}},
+	}
+	if jsonOut {
+		req["response_format"] = map[string]string{"type": "json_object"}
+	}
+	body, _ := json.Marshal(req)
+	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	hr.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+		hr.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
-	resp, err := p.HTTP.Do(req)
+	resp, err := p.HTTP.Do(hr)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("llm: HTTP %d: %.200s", resp.StatusCode, b)
 	}
@@ -99,7 +111,21 @@ func (p *Provider) Rewrite(ctx context.Context, question, draft string, snapshot
 	if len(out.Choices) == 0 || strings.TrimSpace(out.Choices[0].Message.Content) == "" {
 		return "", fmt.Errorf("llm: empty response")
 	}
-	return stripThinking(out.Choices[0].Message.Content), nil
+	text := stripThinking(out.Choices[0].Message.Content)
+	if jsonOut {
+		text = stripFence(text)
+	}
+	return text, nil
+}
+
+// stripFence removes a ```json ... ``` fence and anything outside the
+// outermost braces.
+func stripFence(s string) string {
+	i, j := strings.Index(s, "{"), strings.LastIndex(s, "}")
+	if i < 0 || j < i {
+		return s
+	}
+	return s[i : j+1]
 }
 
 // stripThinking drops <think>...</think> blocks some open models emit.

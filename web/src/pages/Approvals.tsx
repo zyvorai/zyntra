@@ -1,11 +1,24 @@
 import { useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
-import { ago, api, can, fmt, sev, until, renderLabel, type Proposal, type ProposalStatus } from '../api';
+import { ago, api, can, fmt, sev, until, renderLabel, type Precedents, type Proposal, type ProposalStatus } from '../api';
 import { useApi } from '../hooks';
 import { openDecision } from '../nav';
 import { useWho } from '../session';
 import { Card, Empty, ErrorNote, PageHero, Pill, riskTone } from '../components/ui';
 import { phaseTone } from './Decision';
+
+function PrecedentLine({ id }: { id: string }) {
+  const r = useApi<Precedents>(`/api/v1/proposals/${encodeURIComponent(id)}/similar`, 0);
+  if (!r.data?.items?.length) return null;
+  return (
+    <p className="small muted">
+      <button className="linklike" onClick={() => openDecision(r.data!.items[0].proposal)}>
+        Precedent
+      </button>
+      : {r.data.text}
+    </p>
+  );
+}
 
 interface ProposalList {
   proposals: Proposal[];
@@ -212,6 +225,7 @@ export default function Approvals() {
                 </Pill>
               ))}
             </div>
+            <PrecedentLine id={p.id} />
 
             {Object.keys(p.predicted.kpis).length ? (
               <table className="table compact">

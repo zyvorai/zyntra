@@ -19,7 +19,8 @@ Zyntra reads infrastructure metrics, cluster inventory and, through packs, busin
 - **Ingest token.** `ZYNTRA_INGEST_TOKEN` can only POST to `/api/v1/ingest/<channel>` for channels a KPI reads. Give each gateway this token, never the access key. Manual KPI values need the proposer role and are written to the audit chain.
 - Terminate TLS at a trusted ingress or reverse proxy. The Keep exec listener uses its own loopback TLS certificate and a separate exec token that can only call the execution endpoint.
 - **Containers and Kubernetes.** The image is distroless and runs as uid 65532 with state only in `/var/lib/zyntra`, so run it with a read-only root filesystem, all capabilities dropped and `no-new-privileges` (the compose file and Helm chart do). The chart does not mount a service account token, runs one replica so the audit chain has a single writer, and keeps the credentials Secret and the state PVC on uninstall. The Secret is generated once by Helm; for GitOps, create it yourself and set `auth.existingSecret`. Enable `networkPolicy` to limit who can reach the console. The test receiver (`receiver.enabled`, `zyntra-receiver`) is for pilots and has no authentication; do not expose it.
-- The server limits request bodies to 1 MiB.
+- **Model boundaries.** `ZYNTRA_AI_BASE_URL` is never set by default and Zyntra never picks a cloud endpoint, so nothing leaves the network unless you configure it. When set, the model receives KPI names, values, gaps, sample column names and sample rows (for pack drafts and payload fills). It cannot pick, rank, approve or run an action: it rewrites text, drafts pack YAML that is validated and never loaded automatically, chooses a fill column from a validated list, and reads README rules whose line and action must exist. Payload values always come from the source rows frozen on the proposal.
+- The server limits request bodies to 1 MiB (4 MiB for pack-draft samples).
 
 ## Reporting vulnerabilities
 

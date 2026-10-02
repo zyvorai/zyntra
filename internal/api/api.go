@@ -318,6 +318,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/ai/insights", read(s.handleAIInsights))
 	mux.Handle("POST /api/v1/ai/ask", read(s.handleAIAsk))
 	mux.Handle("POST /api/v1/ai/explain", read(s.handleAIExplain))
+	mux.Handle("POST /api/v1/ai/pack-draft", propose(http.HandlerFunc(s.handlePackDraft)))
+	mux.Handle("GET /api/v1/ai/edges", read(s.handleEdges))
+	mux.Handle("GET /api/v1/ai/contradictions", read(s.handleContradictions))
+	mux.Handle("GET /api/v1/similar", read(s.handleSimilar))
+	mux.Handle("GET /api/v1/proposals/{id}/explanation", read(s.handleExplanation))
+	mux.Handle("GET /api/v1/proposals/{id}/similar", read(s.handleProposalSimilar))
 
 	mux.Handle("GET /api/v1/proposals", read(s.handleProposals))
 	mux.Handle("POST /api/v1/proposals", propose(s.handlePropose))
@@ -596,7 +602,20 @@ func (s *Server) handleAIStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAIDigest(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.opt.AI.Digest(r.Context(), s.aiSnapshot(r.URL.Query().Get("owner"))))
+	owner, window := r.URL.Query().Get("owner"), r.URL.Query().Get("window")
+	snap := s.aiSnapshot(owner)
+	if window == "" {
+		writeJSON(w, http.StatusOK, s.opt.AI.Digest(r.Context(), snap))
+		return
+	}
+	f, ok := s.shiftFacts(snap.Model, owner, window, time.Now())
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "unknown window "+window)
+		return
+	}
+	a := s.opt.AI.Shift(r.Context(), snap, f)
+	writeJSON(w, http.StatusOK, map[string]any{"text": a.Text, "intent": a.Intent, "grounding": a.Grounding, "mode": a.Mode,
+		"model": a.Model, "llm_error": a.LLMError, "facts": f})
 }
 
 func (s *Server) handleAIInsights(w http.ResponseWriter, _ *http.Request) {

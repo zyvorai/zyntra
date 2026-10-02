@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,22 +35,73 @@ func (s *Server) inputs(m *graph.Model, st []freshness.State) *approvals.Inputs 
 	return in
 }
 
+// rendered is what render produces for a proposal.
+type rendered struct {
+	templates, kinds []string
+	display          string
+	evidence         map[string]*executor.Evidence
+}
+
 // render renders every executable action; advisory actions are skipped.
-func render(m *graph.Model, acts []graph.Action) (templates, kinds []string, display string, err error) {
+// The source rows each payload cites are captured as evidence; a fill the
+// rows cannot answer by column name may have its column chosen by the
+// model, but its values always come from the rows.
+func (s *Server) render(ctx context.Context, m *graph.Model, acts []graph.Action) (rendered, error) {
+	var out rendered
 	var parts []string
 	for _, a := range acts {
 		if a.Kind() == "" {
 			continue
 		}
-		templates = append(templates, executor.Template(a))
-		kinds = append(kinds, a.Kind())
-		rd, rerr := executor.RenderIn(m, a)
+		out.templates = append(out.templates, executor.Template(a))
+		out.kinds = append(out.kinds, a.Kind())
+		ev, err := executor.Collect(m, a, nil)
+		if err != nil {
+			return out, fmt.Errorf("%s: %w", a.ID, err)
+		}
+		if ev != nil {
+			s.modelFills(ctx, a, ev)
+		}
+		rd, rerr := executor.RenderWith(m, a, ev)
 		if rerr != nil {
-			return templates, kinds, "", fmt.Errorf("%s: %w", a.ID, rerr)
+			return out, fmt.Errorf("%s: %w", a.ID, rerr)
+		}
+		if ev != nil {
+			if out.evidence == nil {
+				out.evidence = map[string]*executor.Evidence{}
+			}
+			out.evidence[a.ID] = ev
 		}
 		parts = append(parts, rd.Display)
 	}
-	return templates, kinds, strings.Join(parts, "---\n"), nil
+	out.display = strings.Join(parts, "---\n")
+	return out, nil
+}
+
+// modelFills asks the model which row column answers each unfilled
+// placeholder. The answer must be one of the columns; the values are read
+// from the rows, never from the model.
+func (s *Server) modelFills(ctx context.Context, a graph.Action, ev *executor.Evidence) {
+	if s.opt.AI == nil || s.opt.AI.LLM == nil {
+		return
+	}
+	_, names := executor.Needs(a)
+	cols := ev.Columns(a)
+	for _, n := range names {
+		if _, ok := ev.Fills[n]; ok || len(cols) == 0 {
+			continue
+		}
+		col, err := s.opt.AI.ChooseColumn(ctx, a, n, cols)
+		if err != nil || !slices.Contains(cols, col) {
+			continue
+		}
+		if f, ok := ev.FillFrom(a, n, col, "model"); ok {
+			if ev.Fills == nil {
+				ev.Fills = map[string]executor.Fill{}
+			}
+			ev.Fills[n] = f
+		}
+	}
 }
 
 func compensations(acts []graph.Action) []string {
@@ -132,12 +184,12 @@ func (s *Server) handlePropose(w http.ResponseWriter, r *http.Request) {
 	if m.Pack != nil {
 		p.PackID = m.Pack.ID
 	}
-	tpls, kinds, display, rerr := render(m, acts)
-	p.Template, p.Kinds = strings.Join(tpls, "+"), kinds
+	rd, rerr := s.render(r.Context(), m, acts)
+	p.Template, p.Kinds, p.Evidence = strings.Join(rd.templates, "+"), rd.kinds, rd.evidence
 	if rerr != nil {
 		p.RenderErr = rerr.Error()
 	} else {
-		p.Render = display
+		p.Render = rd.display
 	}
 	if plan, _, err := s.plan(m); err == nil {
 		for _, rec := range plan.Recommendations {
@@ -502,7 +554,7 @@ func (s *Server) execute(ctx context.Context, id, by string) approvals.Proposal 
 		if a.Kind() == "" {
 			continue
 		}
-		rd, err := executor.RenderIn(m, a)
+		rd, err := executor.RenderWith(m, a, p.Evidence[a.ID])
 		if err != nil {
 			res.OK, res.Error = false, a.ID+": "+err.Error()
 			break
@@ -603,6 +655,9 @@ func (s *Server) observe(now time.Time) {
 			continue
 		}
 		p, _ = s.opt.Store.Record(id, "zyntra", fmt.Sprintf("outcome %s: %s", p.Outcome.State, strings.Join(p.Outcome.Reasons, "; ")), func(*approvals.Proposal) {})
+		if verdictReady(p) {
+			s.explainVerdict(p)
+		}
 		if p.Outcome.State == outcome.Regressed {
 			s.proposeRollback(m, p)
 		}
@@ -618,14 +673,15 @@ func (s *Server) proposeRollback(m *graph.Model, p approvals.Proposal) {
 		_, _ = s.opt.Store.Record(p.ID, "zyntra", "no rollback available: "+err.Error(), func(*approvals.Proposal) {})
 		return
 	}
-	tpls, kinds, display, rerr := render(m, acts)
+	rd, rerr := s.render(context.Background(), m, acts)
+	tpls, kinds, display := rd.templates, rd.kinds, rd.display
 	ids := make([]string, len(acts))
 	for i, a := range acts {
 		ids[i] = a.ID
 	}
 	rb = approvals.Proposal{
 		Action: p.Action + ".rollback", Actions: ids, ActionName: "Roll back: " + p.ActionName, PackID: p.PackID,
-		Risk: p.Risk, Adapter: p.Adapter, Template: strings.Join(tpls, "+"), Kinds: kinds, Render: display,
+		Risk: p.Risk, Adapter: p.Adapter, Template: strings.Join(tpls, "+"), Kinds: kinds, Render: display, Evidence: rd.evidence,
 		ModelVersion: m.Version(), Inputs: s.inputs(m, s.freshness(m)), Policy: p.Policy,
 		RequiredApprovals: p.RequiredApprovals, RollbackOf: p.ID, Baseline: map[string]float64{},
 		Predicted: approvals.Prediction{KPIs: map[string]float64{}},

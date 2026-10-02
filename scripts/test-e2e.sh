@@ -104,6 +104,10 @@ assert not any(r["action"] == "markdown_dead_stock" for r in d["recommendations"
 ' || fail "markdown_dead_stock must be blocked by the margin invariant"
 expect "shop dry-run PO" 'Purchase order: fast movers below cover' $BIN simulate -f packs/shop -action reorder_fast_movers
 expect "shop owner filter" 'queue_wait' $BIN gaps -f packs/shop -owner floor
+expect "dry-run cites source rows" '# rows used for stockout_rate' $BIN simulate -f packs/shop -action reorder_fast_movers
+DRAFT=$(mktemp -d)/kirana
+env -u ZYNTRA_AI_BASE_URL $BIN pack draft -industry "kirana counter" -sample packs/shop/fixture/stock.csv -out "$DRAFT" >/tmp/zyntra-e2e-draft.log 2>&1 || fail "pack draft: $(cat /tmp/zyntra-e2e-draft.log)"
+expect "drafted pack validates" 'ok' $BIN pack validate "$DRAFT"
 
 SPORT=$((PORT + 2))
 RPORT=$((PORT + 3))
@@ -134,6 +138,8 @@ expect "owner filter api" '"owner": "floor"' api "$S/gaps?owner=floor"
 wh=$(api -X POST "${json[@]}" -d '{"action":"markdown_capped"}' "$S/proposals")
 grep -q '"webhook"' <<<"$wh" || fail "webhook proposal kinds: $wh"
 grep -q '${ZYNTRA_POS_URL}' <<<"$wh" || fail "rendered webhook must keep the variable reference: $wh"
+grep -q '"evidence"' <<<"$wh" || fail "proposal must store the rows behind the payload: $wh"
+grep -q '# fill sku' <<<"$wh" || fail "payload fill must be cited: $wh"
 wid=$(sed -n 's/^  "id": "\([^"]*\)".*/\1/p' <<<"$wh" | head -1)
 out=$(api -X POST "${json[@]}" -d '{"reason":"e2e"}' "$S/proposals/$wid/approve")
 grep -q '"status": "executed"' <<<"$out" || fail "webhook approve: $out"
@@ -141,6 +147,23 @@ grep -q '"response_hash"' <<<"$out" || fail "webhook response hash: $out"
 expect "receiver got the markdown" "\"idempotency_key\":\"$wid\"" curl -fsS "http://127.0.0.1:$RPORT/"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Idempotency-Key: $wid" -d '{}' "http://127.0.0.1:$RPORT/pos/markdowns")
 [ "$code" = 200 ] || fail "receiver must acknowledge a repeated key with 200, got $code"
+expect "executed body carries filled SKUs" 'SKU-' curl -fsS "http://127.0.0.1:$RPORT/"
+[ "$(code "${auth[@]}" "$S/proposals/$wid/explanation")" = 409 ] || fail "explanation must wait for a verdict"
+expect "similar decisions" '"items"' api "$S/similar?action=markdown_capped"
+expect "proposal precedents" '"text"' api "$S/proposals/$wid/similar"
+expect "proposed edges" '"edges"' api "$S/ai/edges"
+expect "rules check" '"contradictions": \[\]' api "$S/ai/contradictions"
+expect "shift digest" 'shift-digest' api "$S/ai/digest?owner=floor&window=$(api "$S/graph" | python3 -c 'import json,sys; print(next(iter(json.load(sys.stdin)["model"].get("calendars") or {"x":0})))')"
+[ "$(code "${auth[@]}" "$S/ai/digest?window=nope")" = 400 ] || fail "unknown window must be 400"
+sample=$(python3 -c 'import json; print(json.dumps({"industry":"kirana counter","samples":[{"name":"stock.csv","content":open("packs/shop/fixture/stock.csv").read()}]}))')
+api -X POST "${json[@]}" -d "$sample" "$S/ai/pack-draft" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+v = d["validation"]
+assert v and not v.get("errors"), v
+assert "pack.yaml" in d["files"] and "kpis.yaml" in d["files"], list(d["files"])
+' || fail "api pack draft must validate"
+echo "ok   api pack draft validates"
 
 fp=$(api -X POST "${json[@]}" -d '{"action":"drop_slow_supplier"}' "$S/proposals")
 fid=$(sed -n 's/^  "id": "\([^"]*\)".*/\1/p' <<<"$fp" | head -1)

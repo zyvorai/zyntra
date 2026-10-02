@@ -56,6 +56,15 @@ Closes: queue_wait
 
 Compensating actions are linked on the proposal and never run on their own.
 
+## Rules
+
+`zyntra serve` checks these lines against the live plan (Model page → Pack rules check, or `/api/v1/ai/contradictions`). Keep them true or change the YAML.
+
+- `reorder_fast_movers` runs only in `buy-hours`, precondition: `stockout_rate`, compensate: `cancel_open_po`.
+- `open_second_counter` runs only in `evening`.
+- `markdown_capped` must be undone by compensate: `reverse_markdown`.
+- Never approve `markdown_dead_stock` while it breaks the margin invariant.
+
 ## Running a pilot
 
 1. Replace the files in `fixture/` with your exports (same columns, see `sources.example.yaml`), or change the `file:` paths.

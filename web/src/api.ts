@@ -59,7 +59,7 @@ export interface Action {
   file?: { path: string };
 }
 export interface PackInfo { id: string; title?: string; industry?: string; version?: string; owners?: string[] }
-export interface Model { name: string; kpis: KPI[]; edges: Edge[]; actions: Action[]; pack?: PackInfo; timezone?: string }
+export interface Model { name: string; kpis: KPI[]; edges: Edge[]; actions: Action[]; pack?: PackInfo; timezone?: string; calendars?: Record<string, { days?: string[]; start: string; end: string }> }
 
 export interface Gap {
   kpi: string;
@@ -315,6 +315,50 @@ export interface Proposal {
   keep?: KeepRef;
   rollback_of?: string;
   rollback_id?: string;
+  evidence?: Record<string, Evidence>;
+  explanation?: Explanation;
+}
+export interface EvidenceRow { source: string; index: number; values: Record<string, unknown> }
+export interface Evidence {
+  rows?: Record<string, EvidenceRow[]>;
+  fills?: Record<string, { column: string; values: unknown[]; kpis: string[]; by: 'column' | 'model' }>;
+}
+export interface Finding {
+  kpi: string;
+  kind: string;
+  edge?: string;
+  weight?: number;
+  predicted_change: number;
+  actual_change: number;
+  suggested_weight?: number;
+  text: string;
+}
+export interface Explanation { proposal: string; verdict: string; hit_rate?: number; findings: Finding[]; text: string; grounding: string[]; hash: string }
+export interface ExplanationResponse { explanation: Explanation; stored: boolean; verified: boolean; narrative: string; mode: string; model?: string; llm_error?: string }
+export interface Precedent { proposal: string; action: string; name: string; at: string; score: number; overlap: string[]; result: string; hit_rate?: number; text: string }
+export interface Precedents { items: Precedent[]; text: string }
+export interface EdgeProposal {
+  from: string;
+  to: string;
+  direction: 'leads' | 'together';
+  r: number;
+  n: number;
+  weight: number;
+  weight_low: number;
+  weight_high: number;
+  why: string;
+  status: string;
+  yaml: string;
+}
+export interface Contradiction { action: string; rule: { line: number; text: string; action?: string }; why: string; by: 'rule' | 'model' }
+export interface PackDraft {
+  files: Record<string, string>;
+  refused?: string[];
+  notes?: string[];
+  mode: string;
+  model?: string;
+  llm_error?: string;
+  validation?: { ok: string[]; warnings?: string[]; errors?: string[] };
 }
 export interface AuditEvent {
   seq?: number;
@@ -328,6 +372,7 @@ export interface AuditEvent {
   note?: string;
   payload_sha256?: string;
   response_sha256?: string;
+  explanation_sha256?: string;
   prev_hash?: string;
   hash?: string;
 }

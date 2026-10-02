@@ -6,6 +6,10 @@
 # Console: http://127.0.0.1:8080  Receiver inbox: http://127.0.0.1:9099
 # Set ZYNTRA_EXECUTE=apply to send approved webhooks to the receiver;
 # the default dry-run records what would be sent and sends nothing.
+#
+# Local model, no outbound calls after the first pull (optional):
+#   ZYNTRA_AI_BASE_URL=http://ollama:11434/v1 docker compose --profile ai up -d
+#   docker compose exec ollama ollama pull qwen2.5:7b-instruct
 services:
   zyntra:
     build:
@@ -23,6 +27,8 @@ services:
       ZYNTRA_EXECUTE: ${ZYNTRA_EXECUTE:-dry-run}
       ZYNTRA_POS_URL: http://receiver:9099/pos
       ZYNTRA_ERP_URL: http://receiver:9099/erp
+      ZYNTRA_AI_BASE_URL: ${ZYNTRA_AI_BASE_URL:-}
+      ZYNTRA_AI_MODEL: ${ZYNTRA_AI_MODEL:-}
     volumes:
       - zyntra-state:/var/lib/zyntra
     read_only: true
@@ -48,6 +54,14 @@ services:
     cap_drop: [ALL]
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ai]
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   zyntra-state:
   receiver-inbox:
+  ollama-models:

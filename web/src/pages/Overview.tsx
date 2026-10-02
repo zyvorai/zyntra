@@ -1,11 +1,20 @@
+import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import { ago, pct, type Answer, type Pulse } from '../api';
+import { ago, pct, type Answer, type Model, type Pulse } from '../api';
 import { useApi } from '../hooks';
 import type { Page } from '../nav';
 import { Card, Empty, Meter, PageHero, Pill, Stat, riskTone } from '../components/ui';
 
 export default function Overview({ pulse, setPage }: { pulse: Pulse | null; setPage: (p: Page) => void }) {
-  const digest = useApi<Answer>('/api/v1/ai/digest', 30000);
+  const [owner, setOwner] = useState('');
+  const [win, setWin] = useState('');
+  const graph = useApi<{ model: Model }>('/api/v1/graph', 60000);
+  const owners = graph.data?.model.pack?.owners ?? [];
+  const windows = Object.keys(graph.data?.model.calendars ?? {});
+  const q = new URLSearchParams();
+  if (owner) q.set('owner', owner);
+  if (win) q.set('window', win);
+  const digest = useApi<Answer>(`/api/v1/ai/digest${q.size ? `?${q}` : ''}`, 30000);
   const sources = pulse?.sources ?? [];
   const healthy = sources.filter((s) => s.ok).length;
   const gaps = pulse?.gaps ?? [];
@@ -46,11 +55,31 @@ export default function Overview({ pulse, setPage }: { pulse: Pulse | null; setP
         className="digest-card"
         title={
           <>
-            <Sparkles size={16} aria-hidden /> Zyntra digest
+            <Sparkles size={16} aria-hidden /> {win ? 'Close-of-window note' : 'Zyntra digest'}
           </>
         }
         aside={digest.data ? <Pill tone={digest.data.mode === 'llm' ? 'purple' : 'neutral'}>{digest.data.mode === 'llm' ? digest.data.model || 'LLM' : 'grounded'}</Pill> : null}
       >
+        {owners.length || windows.length ? (
+          <div className="row-actions">
+            <select aria-label="Owner" value={owner} onChange={(e) => setOwner(e.target.value)}>
+              <option value="">All owners</option>
+              {owners.map((o) => (
+                <option key={o}>{o}</option>
+              ))}
+            </select>
+            {windows.length ? (
+              <select aria-label="Window" value={win} onChange={(e) => setWin(e.target.value)}>
+                <option value="">Now</option>
+                {windows.map((w) => (
+                  <option key={w} value={w}>
+                    close of {w}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+        ) : null}
         {digest.data ? <p className="prose">{digest.data.text}</p> : <Empty>{digest.error || 'Summarising…'}</Empty>}
         <div className="row-actions">
           <button className="btn-diag" onClick={() => setPage('ask')}>
