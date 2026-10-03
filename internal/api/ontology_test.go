@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -592,5 +593,20 @@ func TestWorkflowViewIsCappedWithFlaggedRowsFirst(t *testing.T) {
 	}
 	if len(v.Rows[0].Failing) == 0 || len(v.Rows[1].Failing) == 0 {
 		t.Errorf("flagged rows should come first: %+v %+v", v.Rows[0], v.Rows[1])
+	}
+}
+
+// An object with no links and nothing depending on it must send empty lists, not null: the console
+// reads their length and the Objects page crashed on null.
+func TestOntologyObjectWithoutLinksSendsEmptyLists(t *testing.T) {
+	f := ontSetup(t, nil)
+	var got map[string]json.RawMessage
+	if c := f.as(t, "GET", "/api/v1/ontology/objects/Cluster:x:c2", "root", []auth.Role{auth.RoleAdmin}, "", &got); c != 200 {
+		t.Fatalf("status %d", c)
+	}
+	for _, k := range []string{"links", "impact"} {
+		if string(got[k]) != "[]" {
+			t.Errorf("%s = %s, want []", k, got[k])
+		}
 	}
 }

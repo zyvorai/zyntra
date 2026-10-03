@@ -99,11 +99,11 @@ function Detail({ id }: { id: string }) {
         </p>
       ) : null}
       <h3>Links</h3>
-      {data.links.length === 0 ? (
+      {(data.links ?? []).length === 0 ? (
         <Empty>No links you can see.</Empty>
       ) : (
         <div className="chips">
-          {data.links.map((l) => (
+          {(data.links ?? []).map((l) => (
             <button key={l.link.id} className="btn-secondary" onClick={() => openObject(l.other.id)}>
               {l.out ? `${l.link.type} →` : `← ${l.link.type}`} {nameOf(l.other)}
             </button>
@@ -112,11 +112,11 @@ function Detail({ id }: { id: string }) {
       )}
       <h3>Depends on this</h3>
       <p className="muted small">Reachability through links, not a prediction of how much each would be affected.</p>
-      {data.impact.length === 0 ? (
+      {(data.impact ?? []).length === 0 ? (
         <Empty>Nothing visible depends on this object.</Empty>
       ) : (
         <ul className="plain">
-          {data.impact.map((i) => (
+          {(data.impact ?? []).map((i) => (
             <li key={i.object.id} style={{ marginLeft: (i.depth - 1) * 16 }}>
               <button className="linklike" onClick={() => openObject(i.object.id)}>
                 {nameOf(i.object)}
